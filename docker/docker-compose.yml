@@ -1,0 +1,19 @@
+version: '3.8'
+services:
+  app:
+    build: .
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+  api:
+    image: tiangolo/uvicorn-gunicorn-fastapi:python3.9
+    ports:
+      - "8000:80"
+    volumes:
+      - .:/app
+    environment:
+      - MODULE_NAME=api.main
+      - VARIABLE_NAME=app

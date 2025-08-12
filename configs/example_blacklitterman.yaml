@@ -1,0 +1,9 @@
+universe:
+  assets: [SPY, IVV, VOO]
+views:
+  - asset: SPY
+    expected_return: 0.07
+  - asset: IVV
+    expected_return: 0.06
+  - asset: VOO
+    expected_return: 0.065

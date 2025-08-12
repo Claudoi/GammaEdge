@@ -1,0 +1,6 @@
+universe:
+  assets: [SPY, IVV, VOO]
+constraints:
+  max_weight: 0.1
+costs:
+  transaction: 0.001
