@@ -1,19 +1,38 @@
-version: '3.8'
+version: "3.8"
+
 services:
+  api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    container_name: gammaedge_api
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app
+    environment:
+      - PYTHONUNBUFFERED=1
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request as u; u.urlopen('http://127.0.0.1:8000/health'); print('ok')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
   app:
-    build: .
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    container_name: gammaedge_app
+    command: streamlit run app/Home.py --server.port=8501 --server.address=0.0.0.0
     ports:
       - "8501:8501"
     volumes:
       - .:/app
     environment:
       - PYTHONUNBUFFERED=1
-  api:
-    image: tiangolo/uvicorn-gunicorn-fastapi:python3.9
-    ports:
-      - "8000:80"
-    volumes:
-      - .:/app
-    environment:
-      - MODULE_NAME=api.main
-      - VARIABLE_NAME=app
+      - PIP_NO_CACHE_DIR=1
+    depends_on:
+      api:
+        condition: service_healthy
+    restart: unless-stopped

@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.egg-info/
+.venv/
+.env
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Build
+dist/
+build/
+
+# Data 
+data/
+*.parquet
+*.h5
+*.hdf5
+data/cache/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+
+

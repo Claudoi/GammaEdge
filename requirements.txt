@@ -1,7 +1,10 @@
-pandas
 numpy
-scipy
-fastapi
-streamlit
+pandas
+yfinance
 pyyaml
+joblib
+scikit-learn
 plotly
+fastapi
+uvicorn
+streamlit
