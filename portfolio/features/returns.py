@@ -296,8 +296,11 @@ def summary_stats(
     tickers = [c for c in df_ret_wide.columns if c != "date"]
     if not tickers:
         return pl.DataFrame(
-            {"ticker": [], "mean": [], "std": [], "skew": [], "kurt": [], "sharpe": [], "n_obs": [], "missing_pct": []}
+            rows,
+            schema=["ticker", "mean", "std", "skew", "kurt", "sharpe", "n_obs", "missing_pct"],
+            orient="row",   
         )
+
 
     # Agregaciones de toda la tabla -> .select() (no .agg() en LazyFrame)
     aggs = []
@@ -357,8 +360,11 @@ def missing_report_wide(df: pl.DataFrame) -> pl.DataFrame:
         pct = (miss / total * 100.0) if total else None
         rows.append((t, miss, pct, bool(endm)))
     return pl.DataFrame(
-        rows, schema=["ticker", "missing_rows", "missing_pct", "ends_missing"]
+        rows,
+        schema=["ticker", "missing_rows", "missing_pct", "ends_missing"],
+        orient="row",
     )
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Compatibilidad pandas (por si tienes celdas/notebooks antiguos)
