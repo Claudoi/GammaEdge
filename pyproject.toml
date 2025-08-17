@@ -1,19 +1,109 @@
 [tool.poetry]
 name = "gammaedge"
 version = "0.1.0"
-description = "Portfolio optimization and analytics platform"
+description = "Portfolio optimization, risk analytics, and backtesting platform"
 authors = ["Tu Nombre <tu@email.com>"]
+readme = "README.md"
+license = "MIT"
+packages = [{ include = "app" }, { include = "portfolio" }]
 
+# ──────────────────────────────────────────────────────────────────────────────
+# DEPENDENCIAS PRINCIPALES
+# ──────────────────────────────────────────────────────────────────────────────
 [tool.poetry.dependencies]
-python = "^3.9"
-pandas = "*"
-numpy = "*"
-scipy = "*"
-fastapi = "*"
-streamlit = "*"
-pyyaml = "*"
-plotly = "*"
+python = "^3.11"
 
+# Core numérico / tabular
+numpy = ">=1.26,<2.0"
+scipy = ">=1.11"
+polars = ">=1.4.0"         # Core del pipeline (lazy, expr)
+pyarrow = ">=16.0.0"       # IO parquet/arrow estable y rápido
+
+# Interoperabilidad y modelos estadísticos
+pandas = ">=2.2.2"         # Sólo en los bordes (arch, yfinance)
+scikit-learn = ">=1.4.2"   # Ledoit-Wolf / OAS
+statsmodels = ">=0.14.2"
+
+# Finanzas e IO
+yfinance = ">=0.2.40"      # Ingestión de precios
+requests = ">=2.32.0"
+
+# Visualización / UI
+plotly = ">=5.22.0"
+streamlit = ">=1.36.0"
+
+# API
+fastapi = ">=0.112.0"
+uvicorn = { version = ">=0.30.0", extras = ["standard"] }
+
+# Config
+pyyaml = ">=6.0.1"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# GRUPOS OPCIONALES (extras) — instala con:
+#   poetry install --with dev
+#   poetry install --with {dev,docs}
+#   poetry install --extras "ml garch opt notebooks"
+# ──────────────────────────────────────────────────────────────────────────────
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.2.0"
+pytest-cov = ">=5.0.0"
+hypothesis = ">=6.103.0"
+ruff = ">=0.5.0"
+black = ">=24.4.2"
+mypy = ">=1.10.0"
+types-requests = ">=2.32.0.20240712"
+types-PyYAML = ">=6.0.12.20240808"
+
+[tool.poetry.group.docs.dependencies]
+mkdocs = ">=1.6.0"
+mkdocs-material = ">=9.5.26"
+mkdocstrings = { version = ">=0.24.0", extras = ["python"] }
+
+# Extras funcionales (por características)
+[tool.poetry.extras]
+ml = ["torch", "scikit-learn"]
+garch = ["arch>=6.3.0"]
+opt = ["cvxpy>=1.4.3"]
+notebooks = ["jupyterlab>=4.2.0", "ipykernel>=6.29.0"]
+
+# ──────────────────────────────────────────────────────────────────────────────
+# ENTRY POINTS (opcional)
+# ──────────────────────────────────────────────────────────────────────────────
+[tool.poetry.scripts]
+gammaedge-api = "api.main:run"         # si defines un run() en api/main.py
+gammaedge-app = "app.Home:main"        # si expones un main() en Streamlit (opcional)
+
+# ──────────────────────────────────────────────────────────────────────────────
+# LINTER/FORMATTER/TYPECHECKER
+# ──────────────────────────────────────────────────────────────────────────────
+[tool.black]
+line-length = 100
+target-version = ["py311"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-select = ["I", "N", "E", "F", "UP", "SIM", "B", "C90"]
+ignore = ["E203", "E266", "E501"]  # black-compat, etc.
+
+[tool.isort]
+profile = "black"
+line_length = 100
+
+[tool.mypy]
+python_version = "3.11"
+ignore_missing_imports = true
+strict_optional = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+warn_unreachable = true
+check_untyped_defs = true
+disallow_untyped_defs = true
+
+# ──────────────────────────────────────────────────────────────────────────────
+# BUILD-SYSTEM
+# ──────────────────────────────────────────────────────────────────────────────
 [build-system]
-requires = ["poetry-core>=1.0.0"]
+requires = ["poetry-core>=1.9.0"]
 build-backend = "poetry.core.masonry.api"

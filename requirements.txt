@@ -8,3 +8,4 @@ plotly
 fastapi
 uvicorn
 streamlit
+polars
