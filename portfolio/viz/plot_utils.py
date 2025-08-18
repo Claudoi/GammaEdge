@@ -382,3 +382,238 @@ def loss_distribution(
         bargap=0.02,
     )
     return fig
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Scree Plot (explained variance)
+# ──────────────────────────────────────────────────────────────────────────────
+def scree_plot(
+    eigvals: ArrayLike,
+    *,
+    title: str = "Scree Plot (Explained Variance)",
+) -> go.Figure:
+    """
+    Barras de varianza explicada por autovalor + línea de acumulada.
+    Acepta eigenvalues no negativos (no hace falta que estén normalizados).
+    """
+    lam = np.asarray(eigvals, dtype=float)
+    lam = lam[np.isfinite(lam)]
+    lam = np.clip(lam, 0.0, None)
+    if lam.size == 0:
+        lam = np.array([0.0])
+
+    lam_sorted = np.sort(lam)[::-1]
+    total = float(lam_sorted.sum()) if lam_sorted.size else 1.0
+    exp = lam_sorted / max(total, 1e-16)
+    cum = np.cumsum(exp)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(x=np.arange(1, len(exp) + 1), y=exp, name="Explained"))
+    fig.add_trace(go.Scatter(x=np.arange(1, len(cum) + 1), y=cum, mode="lines+markers",
+                             name="Cumulative", yaxis="y2",
+                             hovertemplate="k=%{x}<br>cum=%{y:.1%}<extra></extra>"))
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Component (k)",
+        yaxis=dict(title="Explained (share)", tickformat=".0%"),
+        yaxis2=dict(title="Cumulative", overlaying="y", side="right", tickformat=".0%"),
+        barmode="group",
+        margin=dict(l=60, r=60, t=60, b=60),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    return fig
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Correlation Network Graph
+# ──────────────────────────────────────────────────────────────────────────────
+def network_corr_graph(
+    Sigma_or_Corr: Union[np.ndarray, pl.DataFrame],
+    labels: Optional[Sequence[str]] = None,
+    *,
+    is_cov: bool = True,
+    threshold: float = 0.3,        # dibuja aristas con |ρ|>=threshold
+    title: str = "Correlation Network Graph",
+) -> go.Figure:
+    """
+    Grafo de correlaciones con layout circular (sin networkx).
+    - Nodos: activos
+    - Aristas: |ρ_ij|>=threshold (ancho/alpha según |ρ|)
+    - Color de arista: tono por signo (positivo/negativo)
+    """
+    M = _to_numpy_matrix(Sigma_or_Corr)
+    Corr = _safe_corr_from_cov(M) if is_cov else np.copy(M)
+    n = Corr.shape[0]
+    if labels is None:
+        labels = [f"A{i}" for i in range(n)]
+
+    # Layout circular
+    theta = np.linspace(0, 2*np.pi, n, endpoint=False)
+    xs = np.cos(theta)
+    ys = np.sin(theta)
+
+    edge_x, edge_y, edge_width, edge_color = [], [], [], []
+    for i in range(n):
+        for j in range(i+1, n):
+            rho = float(Corr[i, j])
+            if np.isnan(rho) or abs(rho) < threshold: 
+                continue
+            edge_x += [xs[i], xs[j], None]
+            edge_y += [ys[i], ys[j], None]
+            edge_width.append(1.0 + 3.0*abs(rho))
+            edge_color.append("rgba(0,0,0,0)")  # dummy; se usa en traces separados
+
+    # Para colorear por signo, creamos dos trazas: positivas y negativas
+    pos_x, pos_y, pos_w = [], [], []
+    neg_x, neg_y, neg_w = [], [], []
+    k = 0
+    for i in range(n):
+        for j in range(i+1, n):
+            rho = float(Corr[i, j])
+            if np.isnan(rho) or abs(rho) < threshold: 
+                continue
+            segx = [xs[i], xs[j], None]
+            segy = [ys[i], ys[j], None]
+            if rho >= 0:
+                pos_x += segx; pos_y += segy; pos_w.append(1.0 + 3.0*abs(rho))
+            else:
+                neg_x += segx; neg_y += segy; neg_w.append(1.0 + 3.0*abs(rho))
+            k += 1
+
+    fig = go.Figure()
+
+    if pos_x:
+        fig.add_trace(go.Scatter(x=pos_x, y=pos_y, mode="lines", name="ρ ≥ 0",
+                                 line=dict(width=np.mean(pos_w) if pos_w else 1.5, color="rgba(0,120,255,0.5)"),
+                                 hoverinfo="none"))
+    if neg_x:
+        fig.add_trace(go.Scatter(x=neg_x, y=neg_y, mode="lines", name="ρ < 0",
+                                 line=dict(width=np.mean(neg_w) if neg_w else 1.5, color="rgba(255,80,80,0.5)"),
+                                 hoverinfo="none"))
+
+    # Nodos (tamaño ~ grado)
+    deg = (np.abs(Corr) >= threshold).sum(axis=0) - 1
+    node_size = 10 + 3*np.clip(deg, 0, None)
+    fig.add_trace(go.Scatter(
+        x=xs, y=ys, mode="markers+text", text=list(labels), textposition="top center",
+        marker=dict(size=node_size, line=dict(width=1, color="#333")),
+        hovertemplate="%{text}<extra></extra>", name="assets"
+    ))
+
+    fig.update_layout(
+        title=title,
+        xaxis=dict(visible=False), yaxis=dict(visible=False),
+        showlegend=True,
+        margin=dict(l=20, r=20, t=60, b=20),
+        height=600
+    )
+    return fig
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Risk Contributions bar
+# ──────────────────────────────────────────────────────────────────────────────
+def risk_contributions_bar(
+    rc: ArrayLike,
+    labels: Sequence[str],
+    *,
+    sort: bool = True,
+    topn: Optional[int] = None,
+    title: str = "Risk Contributions",
+) -> go.Figure:
+    """
+    Barras horizontales de contribución al riesgo (por ejemplo, marginal*weight o RC%).
+    `rc` puede estar en unidades absolutas o en porcentaje; aquí sólo graficamos.
+    """
+    v = np.asarray(rc, dtype=float)
+    if v.ndim != 1 or len(v) != len(labels):
+        raise ValueError("rc must be 1D and aligned with labels")
+    idx = np.arange(len(v))
+    if sort:
+        idx = np.argsort(v)
+    if topn is not None:
+        idx = idx[-topn:]
+    v_plot = v[idx]
+    l_plot = [labels[i] for i in idx]
+
+    fig = go.Figure(go.Bar(x=v_plot, y=l_plot, orientation="h",
+                           hovertemplate="%{y}: %{x:.4f}<extra></extra>"))
+    fig.update_layout(
+        title=title, margin=dict(l=80, r=20, t=60, b=40),
+        xaxis_title="Contribution", yaxis_title=""
+    )
+    return fig
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Rolling lines (multi-series)
+# ──────────────────────────────────────────────────────────────────────────────
+def rolling_lines(
+    dates: Sequence,
+    series_dict: Dict[str, ArrayLike],
+    *,
+    title: str = "Rolling Metrics",
+) -> go.Figure:
+    """
+    Línea por cada serie (p.ej. vol 26/52, corr rolling, etc.).
+    `series_dict` = {"label": array_like_alineada_con_dates, ...}
+    """
+    fig = go.Figure()
+    for name, arr in series_dict.items():
+        y = np.asarray(arr, dtype=float)
+        fig.add_trace(go.Scatter(x=dates, y=y, mode="lines", name=name,
+                                 hovertemplate="%{x}<br>%{y:.4f}<extra></extra>"))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Value",
+        margin=dict(l=60, r=20, t=60, b=60),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    return fig
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Heatmap WebGL (para N grandes)
+# ──────────────────────────────────────────────────────────────────────────────
+def corr_heatmap_gl(
+    Sigma_or_Corr: Union[np.ndarray, pl.DataFrame],
+    labels: Optional[Sequence[str]] = None,
+    *,
+    is_cov: bool = True,
+    order: HeatmapOrder = HeatmapOrder(),
+    zlim: Tuple[float, float] = (-1.0, 1.0),
+    title: str = "Correlation Heatmap (WebGL)",
+) -> go.Figure:
+    """
+    Igual que corr_heatmap pero usando Heatmapgl (más rápido para N>200).
+    """
+    M = _to_numpy_matrix(Sigma_or_Corr)
+    Corr = _safe_corr_from_cov(M) if is_cov else np.copy(M)
+    n = Corr.shape[0]
+    if labels is None:
+        labels = [f"A{i}" for i in range(n)]
+
+    if order.clustered and n >= 3:
+        ord_idx = _hierarchical_order(Corr, order)
+        Corr_ord = _apply_order(Corr, ord_idx)
+        labels_ord = [labels[i] for i in ord_idx]
+    else:
+        Corr_ord, labels_ord = Corr, list(labels)
+
+    fig = go.Figure(
+        data=go.Heatmapgl(
+            z=Corr_ord, x=labels_ord, y=labels_ord,
+            zmin=zlim[0], zmax=zlim[1],
+            colorbar=dict(title="ρ"),
+            hovertemplate="x=%{x}<br>y=%{y}<br>ρ=%{z:.3f}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=title,
+        xaxis=dict(tickangle=45, automargin=True),
+        yaxis=dict(autorange="reversed"),
+        margin=dict(l=60, r=20, t=60, b=60),
+    )
+    return fig

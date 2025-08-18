@@ -416,3 +416,5 @@ if st.session_state.get("data_ready"):
         )
 
     st.success(f"Data loaded in {p['t_elapsed']:.2f}s and stored in session_state.")
+    # Handoff explícito para otros módulos (RiskModel, Optimization, etc.)
+    st.session_state["returns_wide"] = df_ret_wide
