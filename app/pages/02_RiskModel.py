@@ -9,9 +9,12 @@ import polars as pl
 import streamlit as st
 from datetime import datetime, timezone
 import sys, os
+from typing import List, Tuple
 
+# Para importar módulos del proyecto
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+# Core risk
 from portfolio.features.risk_models import (
     compute_mu_sigma,
     correlation_from_cov,
@@ -19,6 +22,8 @@ from portfolio.features.risk_models import (
     capm_mu,
     pca_factor_cov,
 )
+
+# Viz
 from portfolio.viz.plot_utils import (
     HeatmapOrder,
     corr_heatmap,
@@ -29,6 +34,10 @@ from portfolio.viz.plot_utils import (
     network_corr_graph,
     risk_contributions_bar,
 )
+
+# Cache persistente de artefactos (para risk_model.json)
+from portfolio.io.cache import save_json
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Config & guards
@@ -45,14 +54,17 @@ df_ret_wide: pl.DataFrame = st.session_state["returns_wide"]
 def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
     # 0) Tipo y columna fecha
     if not isinstance(df, pl.DataFrame):
-        st.error("returns_wide in session_state is not a Polars DataFrame."); st.stop()
+        st.error("returns_wide in session_state is not a Polars DataFrame.")
+        st.stop()
     if "date" not in df.columns:
-        st.error("returns_wide must include a 'date' column."); st.stop()
+        st.error("returns_wide must include a 'date' column.")
+        st.stop()
 
     # 1) Normaliza fecha + orden + unicidad
-    df = (df
-          .with_columns(pl.col("date").cast(pl.Datetime, strict=False))
-          .sort("date"))
+    df = (
+        df.with_columns(pl.col("date").cast(pl.Datetime, strict=False))
+          .sort("date")
+    )
     if df["date"].n_unique() < df.height:
         st.warning("Duplicate dates detected — keeping last per timestamp.")
         df = df.unique(subset=["date"], keep="last")
@@ -62,8 +74,10 @@ def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
     df = df.with_columns([pl.col(c).cast(pl.Float64, strict=False).alias(c) for c in value_cols])
 
     # 3) Limpieza de no finitos: ±inf → null
-    df = df.with_columns([pl.when(pl.col(c).is_finite()).then(pl.col(c)).otherwise(None).alias(c)
-                          for c in value_cols])
+    df = df.with_columns([
+        pl.when(pl.col(c).is_finite()).then(pl.col(c)).otherwise(None).alias(c)
+        for c in value_cols
+    ])
 
     # 4) Elimina columnas completamente vacías
     null_counts = df.select([pl.col(c).is_null().sum().alias(c) for c in value_cols]).row(0)
@@ -82,14 +96,14 @@ def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
             st.warning(f"Dropping near-constant columns (σ≈0): {', '.join(const_cols)}")
             df = df.drop(const_cols)
 
-    # 6) Asegura datos mínimos
+    # 6) Asegura al menos 2 filas útiles
     if df.height < 2 or len([c for c in df.columns if c != "date"]) == 0:
-        st.error("Not enough valid data after validation for risk modeling."); st.stop()
+        st.error("Not enough valid data after validation for risk modeling.")
+        st.stop()
 
     return df
 
 df_ret_wide = _validate_returns_wide(df_ret_wide)
-
 tickers = [c for c in df_ret_wide.columns if c != "date"]
 if not tickers:
     st.error("No return columns found.")
@@ -98,6 +112,7 @@ if not tickers:
 # Estado persistente
 st.session_state.setdefault("risk_payload", None)
 st.session_state.setdefault("risk_ready", False)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
@@ -118,7 +133,6 @@ def _json_default(o):
     return str(o)
 
 def _infer_per_year(dates: pl.Series) -> int:
-    """Infer periods/year from median spacing (day/week/month granularity)."""
     s = dates.sort()
     if s.len() < 2:
         return 252
@@ -137,9 +151,7 @@ def _apply_fill_policy(df_wide: pl.DataFrame, policy: str):
         original_h = df_wide.height
         df_filled = df_wide.drop_nulls()
         dropped = original_h - df_filled.height
-        report = pl.DataFrame(
-            {"policy": ["drop"], "rows_dropped": [int(dropped)], "imputed_pct": [0.0]}
-        )
+        report = pl.DataFrame({"policy": ["drop"], "rows_dropped": [int(dropped)], "imputed_pct": [0.0]})
         return df_filled, report
     else:
         value_cols = [c for c in df_wide.columns if c != "date"]
@@ -154,9 +166,7 @@ def _apply_fill_policy(df_wide: pl.DataFrame, policy: str):
         total_cells = df_wide.height * len(value_cols)
         total_na = int(sum(na_counts.row(0)))
         imputed_pct = (100.0 * total_na / total_cells) if total_cells else 0.0
-        report = pl.DataFrame(
-            {"policy": ["mean"], "rows_dropped": [0], "imputed_pct": [imputed_pct]}
-        )
+        report = pl.DataFrame({"policy": ["mean"], "rows_dropped": [0], "imputed_pct": [imputed_pct]})
         return df_filled, report
 
 def _annualize(mu: np.ndarray, Sigma: np.ndarray, per_year: int) -> tuple[np.ndarray, np.ndarray]:
@@ -184,12 +194,56 @@ def _fingerprint(names: list[str], params: dict) -> str:
     return hashlib.sha256(blob).hexdigest()[:12]
 
 def _ewma_default(per_year: int) -> float:
-    # Defaults coherentes con granularidad
     if per_year >= 250:
         return 0.94
     if per_year >= 50:
         return 0.80
     return 0.60
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Black–Litterman helpers (simple views builder)
+# ──────────────────────────────────────────────────────────────────────────────
+def _build_PQ_absolute(names: List[str], asset: str, q: float) -> Tuple[np.ndarray, np.ndarray]:
+    """Vista absoluta: r_i = q."""
+    N = len(names)
+    P = np.zeros((1, N), dtype=float)
+    try:
+        idx = names.index(asset)
+    except ValueError:
+        raise ValueError(f"Asset '{asset}' not found in universe.")
+    P[0, idx] = 1.0
+    Q = np.array([q], dtype=float)
+    return P, Q
+
+def _build_PQ_relative(names: List[str], long: str, short: str, q: float) -> Tuple[np.ndarray, np.ndarray]:
+    """Vista relativa: r_i - r_j = q."""
+    N = len(names)
+    P = np.zeros((1, N), dtype=float)
+    try:
+        i = names.index(long); j = names.index(short)
+    except ValueError as e:
+        raise ValueError(f"Relative view asset not in universe: {e}")
+    P[0, i] = 1.0
+    P[0, j] = -1.0
+    Q = np.array([q], dtype=float)
+    return P, Q
+
+def _omega_from_confidence(P: np.ndarray, Sigma: np.ndarray, tau: float, confidence: float | List[float]) -> np.ndarray:
+    """
+    Ω diagonal a partir de P, Σ y tau. Mayor confidence → menor varianza (Ω escala por 1/conf).
+    """
+    K = P.shape[0]
+    base = np.diag(np.diag(P @ (tau * Sigma) @ P.T))  # KxK
+    if np.isscalar(confidence):
+        c = float(np.clip(confidence, 1e-3, 1.0))
+        return base * (1.0 / c)
+    conf = np.asarray(confidence, dtype=float).reshape(-1)
+    if conf.shape[0] != K:
+        raise ValueError("Length of confidence list must equal number of views.")
+    conf = np.clip(conf, 1e-3, 1.0)
+    return base * (1.0 / conf)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Core pipeline
@@ -220,11 +274,10 @@ def _risk_pipeline(
     # 2) μ & Σ (no anualizar aquí)
     mu_shrink_to_vec = None
     if mu_method == "shrunk" and mu_shrink_target is not None:
-        # Construimos target: zero / equal-mean / rf (per-period)
         if mu_shrink_target == "zero":
             mu_shrink_to_vec = np.zeros(len(names))
         elif mu_shrink_target == "equal":
-            base = np.nanmean(X, axis=0)  # por activo
+            base = np.nanmean(X, axis=0)
             target_val = float(np.nanmean(base))
             mu_shrink_to_vec = np.full(len(names), target_val, dtype=float)
         elif mu_shrink_target == "rf":
@@ -233,10 +286,9 @@ def _risk_pipeline(
             mu_shrink_to_vec = np.full(len(names), rf_per, dtype=float)
 
     if mu_method == "capm":
-        mu = capm_mu(df_clean, market="SPY", annualize=False)  # por periodo
+        mu = capm_mu(df_clean, market="SPY", annualize=False)
         Sigma = np.cov(X, rowvar=False)
     elif mu_method == "black-litterman":
-        # Prior de equilibrio π = δ Σ w_mkt (equal-weight si no hay pesos)
         mu = black_litterman_mu(df_clean, Sigma=None, annualize=False)
         Sigma = np.cov(X, rowvar=False)
     elif cov_method == "pca":
@@ -265,7 +317,7 @@ def _risk_pipeline(
     # 3) Annualización consistente
     mu, Sigma = _annualize(mu, Sigma, per_year)
 
-    # 4) Condicionamiento antes de ridge (para diagnóstico)
+    # 4) Condicionamiento antes de ridge (diagnóstico)
     cond_pre = _cond_number(Sigma)
 
     # 5) Ridge opcional
@@ -319,6 +371,7 @@ def _risk_pipeline(
         "meta": meta,
     }
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Inputs (UI)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -354,10 +407,8 @@ if mu_method == "shrunk":
     with _tcol1:
         mu_shrink_target = st.selectbox("Target", ["zero", "equal", "rf"], index=0)
     with _tcol2:
-        mu_rf_annual = st.number_input(
-            "Risk-free (annual, in return units)",
-            min_value=-1.0, max_value=1.0, value=0.0, step=0.001, format="%.3f"
-        )
+        mu_rf_annual = st.number_input("Risk-free (annual, in return units)", min_value=-1.0, max_value=1.0,
+                                       value=0.0, step=0.001, format="%.3f")
 
 c4, c5, c6 = st.columns(3)
 with c4:
@@ -367,7 +418,8 @@ with c4:
         index=[252, 260, 52, 12].index(default_per_year if default_per_year in (252, 260, 52, 12) else 252),
     )
 with c5:
-    ridge_eps = st.number_input("Ridge ε on Σ (0 = off)", min_value=0.0, max_value=1.0, value=0.0, step=0.0001, format="%.4f")
+    ridge_eps = st.number_input("Ridge ε on Σ (0 = off)", min_value=0.0, max_value=1.0, value=0.0,
+                                step=0.0001, format="%.4f")
 with c6:
     stress_test = st.checkbox("Enable Stress Testing (+20% vol, -50% corr)", value=False)
 
@@ -379,6 +431,7 @@ with h2:
     heatmap_optimal = st.checkbox("Optimal leaf ordering", value=True)
 with h3:
     show_dendro = st.checkbox("Show dendrogram", value=False)
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Acción (cálculo) → guarda en session_state
@@ -403,6 +456,7 @@ if st.button("Estimate μ and Σ", type="primary"):
     )
     st.session_state["risk_payload"] = payload
     st.session_state["risk_ready"] = True
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Render desde session_state (persistente)
@@ -435,11 +489,8 @@ if st.session_state.get("risk_ready"):
 
     # Σ/ρ visualizations
     st.subheader("Correlation heatmap (clustered)")
-    order_cfg = HeatmapOrder(
-        clustered=True,
-        method=meta["params"]["heatmap_method"],
-        optimal=bool(meta["params"]["heatmap_optimal"])
-    )
+    order_cfg = HeatmapOrder(clustered=True, method=meta["params"]["heatmap_method"],
+                             optimal=bool(meta["params"]["heatmap_optimal"]))
     if len(names) > 200:
         st.plotly_chart(corr_heatmap_gl(Sigma, labels=names, is_cov=True, order=order_cfg), use_container_width=True)
     else:
@@ -447,10 +498,8 @@ if st.session_state.get("risk_ready"):
 
     if show_dendro:
         st.subheader("Correlation dendrogram")
-        st.plotly_chart(
-            corr_dendrogram(Sigma, labels=names, is_cov=True, method=meta["params"]["heatmap_method"]),
-            use_container_width=True
-        )
+        st.plotly_chart(corr_dendrogram(Sigma, labels=names, is_cov=True,
+                                        method=meta["params"]["heatmap_method"]), use_container_width=True)
 
     st.subheader("Covariance spectrum")
     st.plotly_chart(covariance_spectrum(Sigma), use_container_width=True)
@@ -466,22 +515,140 @@ if st.session_state.get("risk_ready"):
     if len(names) > 0:
         w_eq = np.full(len(names), 1.0 / len(names))
         rc = w_eq * (Sigma @ w_eq)  # contribución absoluta
-        st.plotly_chart(
-            risk_contributions_bar(rc, names, sort=True, topn=min(30, len(names))),
-            use_container_width=True
-        )
+        st.plotly_chart(risk_contributions_bar(rc, names, sort=True, topn=min(30, len(names))),
+                        use_container_width=True)
 
-    # Handoff & exports
-    st.session_state["mu_vec"] = mu
+    # ──────────────────────────────────────────────────────────────────────────
+    # Black–Litterman (Views) – esqueleto operativo
+    # ──────────────────────────────────────────────────────────────────────────
+    with st.expander("🧠 Black–Litterman (Views)", expanded=False):
+        st.caption("Construye vistas absolutas o relativas; ajusta Ω desde 'confidence'.")
+        col_bl1, col_bl2, col_bl3 = st.columns(3)
+        with col_bl1:
+            bl_tau = st.number_input("τ (tau)", min_value=0.0001, max_value=1.0, value=0.05, step=0.01, format="%.4f")
+        with col_bl2:
+            bl_conf_mode = st.selectbox("Confidence mode", ["scalar", "per-view"], index=0)
+        with col_bl3:
+            bl_conf_scalar = st.slider("Confidence (scalar)", min_value=0.05, max_value=1.0, value=0.5, step=0.05)
+
+        if "bl_views" not in st.session_state:
+            st.session_state["bl_views"] = []   # lista de dicts: {"kind":"abs"/"rel", ...}
+
+        st.markdown("**Añadir vista**")
+        kind = st.radio("Tipo", ["absolute", "relative"], horizontal=True)
+        if kind == "absolute":
+            ca1, ca2 = st.columns([2,1])
+            with ca1:
+                a_asset = st.selectbox("Asset", names, index=0, key="bl_abs_asset")
+            with ca2:
+                a_q = st.number_input("q (target return, per-period)", value=0.001, step=0.001, format="%.4f", key="bl_abs_q")
+            a_conf = st.slider("Confidence (this view)", 0.05, 1.0, 0.5, 0.05, key="bl_abs_conf")
+            if st.button("➕ Add absolute view"):
+                st.session_state["bl_views"].append({"kind":"absolute","asset":a_asset,"q":float(a_q),"conf":float(a_conf)})
+        else:
+            cr1, cr2, cr3 = st.columns([2,2,1])
+            with cr1:
+                long_a = st.selectbox("Long asset", names, index=0, key="bl_rel_long")
+            with cr2:
+                short_a = st.selectbox("Short asset", names, index=1, key="bl_rel_short")
+            with cr3:
+                r_q = st.number_input("q (r_i - r_j)", value=0.0, step=0.001, format="%.4f", key="bl_rel_q")
+            r_conf = st.slider("Confidence (this view)", 0.05, 1.0, 0.5, 0.05, key="bl_rel_conf")
+            if st.button("➕ Add relative view"):
+                if long_a == short_a:
+                    st.warning("Long y Short no pueden ser el mismo activo.")
+                else:
+                    st.session_state["bl_views"].append({"kind":"relative","long":long_a,"short":short_a,"q":float(r_q),"conf":float(r_conf)})
+
+        # Tabla de vistas
+        if st.session_state["bl_views"]:
+            st.write("**Vistas actuales**")
+            st.dataframe(pl.DataFrame(st.session_state["bl_views"]).to_pandas(), use_container_width=True)
+            if st.button("🗑️ Clear views"):
+                st.session_state["bl_views"] = []
+
+        # Calcular μ_post
+        if st.session_state["bl_views"]:
+            P_list, Q_list, conf_list = [], [], []
+            for v in st.session_state["bl_views"]:
+                if v["kind"] == "absolute":
+                    P, Q = _build_PQ_absolute(names, v["asset"], v["q"])
+                else:
+                    P, Q = _build_PQ_relative(names, v["long"], v["short"], v["q"])
+                P_list.append(P); Q_list.append(Q); conf_list.append(v["conf"])
+            P = np.vstack(P_list)                   # (K,N)
+            Q = np.concatenate(Q_list)              # (K,)
+            per_y = int(meta["params"]["per_year"])
+
+            # Llevar Σ, μ a per-period para coherencia BL
+            mu_prior = np.asarray(mu, dtype=float)
+            mu_prior_per = mu_prior / max(per_y, 1)
+            Sigma_per = Sigma / max(per_y, 1)
+
+            Omega = (_omega_from_confidence(P, Sigma_per, bl_tau, bl_conf_scalar)
+                     if bl_conf_mode == "scalar"
+                     else _omega_from_confidence(P, Sigma_per, bl_tau, conf_list))
+
+            inv_term = np.linalg.inv(P @ (bl_tau * Sigma_per) @ P.T + Omega)
+            middle = (bl_tau * Sigma_per) @ P.T @ inv_term
+            mu_post_per = mu_prior_per + middle @ (Q - P @ mu_prior_per)
+            mu_post = mu_post_per * float(per_y)
+
+            st.subheader("μ prior vs μ posterior (annualized)")
+            mu_tbl = pl.DataFrame({
+                "ticker": names,
+                "mu_prior": mu_prior,
+                "mu_post": mu_post,
+                "delta": mu_post - mu_prior
+            }).sort("delta", descending=True)
+            st.dataframe(mu_tbl.to_pandas().round(6), use_container_width=True)
+
+            use_bl_for_optimizer = st.toggle("Use BL posterior μ for Optimizer", value=False)
+            if use_bl_for_optimizer:
+                st.session_state["mu_vec"] = mu_post  # Handoff con μ posterior
+                # peguemos meta mínimo de BL
+                meta_bl = dict(meta)
+                meta_bl = {**meta_bl, "bl": {"tau": float(bl_tau), "K": int(P.shape[0]),
+                                             "conf_mode": bl_conf_mode}}
+                st.session_state["risk_meta"] = meta_bl
+                st.success("Using Black–Litterman posterior μ for Optimizer handoff.")
+
+    # ──────────────────────────────────────────────────────────────────────────
+    # Handoff & exports (con persistencia a caché)
+    # ──────────────────────────────────────────────────────────────────────────
+    st.session_state["mu_vec"] = st.session_state.get("mu_vec", mu)
     st.session_state["cov_mat"] = Sigma
     st.session_state["asset_names"] = names
+
+    # Config compacta para indexar en caché (reproducible/hydration Optimizer)
+    risk_cfg = {
+        "tickers": ",".join(names),
+        "per_year": int(meta["params"]["per_year"]),
+        "mu_method": meta["params"]["mu_method"],
+        "cov_method": meta["params"]["cov_method"],
+        "ewma_lambda": float(meta["params"]["ewma_lambda"]),
+        "ridge_eps": float(meta["params"]["ridge_eps"]),
+        "psd": bool(meta["params"]["enforce_psd"]),
+        "fingerprint": meta["fingerprint"],
+    }
+
+    # Persistimos risk_model.json en caché
+    try:
+        save_json("risk_model", risk_cfg, meta)
+        st.caption(f"Saved risk model metadata to cache (fingerprint: **{meta['fingerprint']}**).")
+    except Exception as e:
+        st.warning(f"Could not persist risk_model.json to cache: {e}")
+
+    st.session_state["risk_meta"] = meta
+    st.session_state["risk_config"] = risk_cfg
+    st.session_state["risk_timestamp"] = datetime.now(timezone.utc).isoformat()
 
     st.subheader("📤 Export artifacts")
     colx, coly, colz, colw, colm = st.columns(5)
 
     with colx:
         buf_mu = io.StringIO()
-        pl.DataFrame({"ticker": names, "mu": mu}).write_csv(buf_mu)
+        pl.DataFrame({"ticker": names, "mu": st.session_state["mu_vec"]}).write_csv(buf_mu)
         st.download_button("Download μ (CSV)", buf_mu.getvalue(), file_name="mu.csv", mime="text/csv")
 
     with coly:
