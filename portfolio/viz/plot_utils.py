@@ -617,3 +617,58 @@ def corr_heatmap_gl(
         margin=dict(l=60, r=20, t=60, b=60),
     )
     return fig
+
+
+
+def weights_path_gammas(
+    Ws: np.ndarray, gammas: Sequence[float], labels: Sequence[str], *, topn: int = 20,
+    title: str = "Weights path vs γ (top names)"
+) -> go.Figure:
+    """
+    Cada fila de Ws corresponde a un γ. Dibuja trayectorias de pesos por γ (log10).
+    Muestra las top 'topn' por max peso a lo largo del barrido.
+    """
+    if Ws.ndim != 2:
+        raise ValueError("Ws must be 2D (n_gamma x N)")
+    nG, N = Ws.shape
+    g = np.asarray(gammas)
+    x = np.log10(g)
+    peak = np.max(Ws, axis=0)
+    idx = np.argsort(peak)[::-1][:min(topn, N)]
+    fig = go.Figure()
+    for i in idx:
+        fig.add_trace(go.Scatter(x=x, y=Ws[:, i], mode="lines", name=labels[i],
+                                 hovertemplate="log10 γ=%{x:.2f}<br>w=%{y:.2%}<extra></extra>"))
+    fig.update_layout(title=title, xaxis_title="log10(γ)", yaxis_title="Weight", yaxis_tickformat=".0%")
+    return fig
+
+def turnover_vs_gamma(
+    Ws: np.ndarray, w_ref: np.ndarray, gammas: Sequence[float], *,
+    title: str = "Turnover vs γ"
+) -> go.Figure:
+    """
+    Curva L1/L2 turnover vs γ tomando Ws (n_gamma x N).
+    """
+    L1 = np.sum(np.abs(Ws - w_ref[None, :]), axis=1)
+    L2 = np.sqrt(np.sum((Ws - w_ref[None, :]) ** 2, axis=1))
+    x = np.log10(np.asarray(gammas))
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=x, y=L1, mode="lines+markers", name="L1"))
+    fig.add_trace(go.Scatter(x=x, y=L2, mode="lines+markers", name="L2"))
+    fig.update_layout(title=title, xaxis_title="log10(γ)", yaxis_title="Turnover")
+    return fig
+
+def te_frontier(
+    mu: np.ndarray, Sigma: np.ndarray, w_bench: np.ndarray, Ws: np.ndarray, *,
+    title: str = "Tracking-Error Frontier"
+) -> go.Figure:
+    """
+    Dibuja μ_p vs TE_p para una familia de carteras (Ws).
+    TE(w) = sqrt( (w-w_b)' Σ (w-w_b) )
+    """
+    dW = Ws - w_bench[None, :]
+    mu_p = Ws @ mu
+    te = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", dW, Sigma, dW), 0.0))
+    fig = go.Figure(go.Scatter(x=te, y=mu_p, mode="markers+lines"))
+    fig.update_layout(title=title, xaxis_title="Tracking Error", yaxis_title="Expected Return")
+    return fig
