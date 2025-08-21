@@ -195,46 +195,181 @@ def covariance_spectrum(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def efficient_frontier(
-    risks: ArrayLike,
-    rets: ArrayLike,
-    *,
+    *args,
+    mu: Optional[np.ndarray] = None,
+    Sigma: Optional[np.ndarray] = None,
+    rf: float = 0.0,
+    risks_closed: Optional[Iterable[float]] = None,
+    rets_closed: Optional[Iterable[float]] = None,
+    risks_box: Optional[Iterable[float]] = None,
+    rets_box: Optional[Iterable[float]] = None,
     msr_point: Optional[Tuple[float, float]] = None,
     minvar_point: Optional[Tuple[float, float]] = None,
     custom_points: Optional[Dict[str, Tuple[float, float]]] = None,
     title: str = "Efficient Frontier",
+    **kwargs,
 ) -> go.Figure:
     """
-    Dibuja frontera eficiente (riesgo vs retorno). Añade marcadores clave:
-    - MSR (max Sharpe)
-    - MinVar
-    - Cualquier otro (dict nombre → (σ, μ))
+    Frontera eficiente con:
+      - curva cerrada (short permitido):   risks_closed / rets_closed
+      - curva con caja (proyectada):       risks_box / rets_box
+      - sombreado entre ambas (constraint gap)
+      - puntos clave: MinVar, Max Sharpe (msr) y custom
+      - CAL si se pasa msr_point y rf
+
+    Retro‑compatible con efficient_frontier(risks, rets) posicional.
     """
-    x = np.asarray(risks)
-    y = np.asarray(rets)
+
+    # Compat: efficient_frontier(risks, rets)
+    if len(args) == 2 and risks_closed is None and rets_closed is None:
+        risks_closed = np.asarray(args[0], dtype=float)
+        rets_closed  = np.asarray(args[1], dtype=float)
+
+    def _clean_and_sort(xy):
+        x_raw, y_raw = xy
+        if x_raw is None or y_raw is None:
+            return np.array([]), np.array([])
+        x = np.asarray(x_raw, dtype=float)
+        y = np.asarray(y_raw, dtype=float)
+        m = np.isfinite(x) & np.isfinite(y)
+        x, y = x[m], y[m]
+        if x.size == 0:
+            return x, y
+        idx = np.argsort(x)
+        return x[idx], y[idx]
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=x, y=y, mode="lines", name="Frontier"))
 
-    if minvar_point is not None:
-        fig.add_trace(go.Scatter(x=[minvar_point[0]], y=[minvar_point[1]], mode="markers",
-                                 name="MinVar", marker=dict(size=10, symbol="diamond")))
+    # Curvas limpias/ordenadas
+    x_c, y_c = _clean_and_sort((risks_closed, rets_closed))
+    x_b, y_b = _clean_and_sort((risks_box, rets_box))
 
-    if msr_point is not None:
-        fig.add_trace(go.Scatter(x=[msr_point[0]], y=[msr_point[1]], mode="markers",
-                                 name="Max Sharpe", marker=dict(size=10, symbol="star")))
+    # (Opcional) sombreado entre closed y box si existen ambas
+    # Interpolamos sobre el dominio común en σ (riesgo)
+    def _add_constraint_gap_fill(fig, x1, y1, x2, y2):
+        try:
+            if x1.size and x2.size:
+                xmin = max(x1.min(), x2.min())
+                xmax = min(x1.max(), x2.max())
+                if xmax > xmin:
+                    xs = np.linspace(xmin, xmax, 200)
+                    y1i = np.interp(xs, x1, y1)
+                    y2i = np.interp(xs, x2, y2)
+                    # gap = diferencia en retorno para mismo riesgo (visual)
+                    # rellenamos entre y1 y y2
+                    fig.add_trace(go.Scatter(
+                        x=np.concatenate([xs, xs[::-1]]),
+                        y=np.concatenate([y1i, y2i[::-1]]),
+                        fill="toself",
+                        mode="lines",
+                        line=dict(width=0),
+                        fillcolor="rgba(99, 110, 250, 0.15)",  # suave
+                        name="Constraint gap",
+                        hoverinfo="skip",
+                        showlegend=True,
+                    ))
+        except Exception:
+            pass
 
+    # Primero el fill (para que quede por detrás de las líneas)
+    if x_c.size and x_b.size:
+        _add_constraint_gap_fill(fig, x_c, y_c, x_b, y_b)
+
+    # Curva cerrada
+    if x_c.size:
+        fig.add_trace(go.Scatter(
+            x=x_c, y=y_c, mode="lines",
+            name="Closed‑form (no box)",
+            line=dict(width=2),
+            hovertemplate="σ=%{x:.4f}<br>μ=%{y:.4f}<extra>Closed‑form</extra>"
+        ))
+
+    # Curva con caja
+    if x_b.size:
+        fig.add_trace(go.Scatter(
+            x=x_b, y=y_b, mode="lines",
+            name="Box‑projected",
+            line=dict(width=2, dash="dash"),
+            hovertemplate="σ=%{x:.4f}<br>μ=%{y:.4f}<extra>Box‑projected</extra>"
+        ))
+
+    # Puntos clave
+    if minvar_point is not None and np.all(np.isfinite(minvar_point)):
+        sx, ry = float(minvar_point[0]), float(minvar_point[1])
+        fig.add_trace(go.Scatter(
+            x=[sx], y=[ry], mode="markers", name="MinVar",
+            marker=dict(size=10, symbol="diamond"),
+            hovertemplate="MinVar<br>σ=%{x:.4f}<br>μ=%{y:.4f}<extra></extra>"
+        ))
+
+    if msr_point is not None and np.all(np.isfinite(msr_point)):
+        sx, ry = float(msr_point[0]), float(msr_point[1])
+        fig.add_trace(go.Scatter(
+            x=[sx], y=[ry], mode="markers", name="Max Sharpe",
+            marker=dict(size=11, symbol="star"),
+            hovertemplate="Max Sharpe<br>σ=%{x:.4f}<br>μ=%{y:.4f}<extra></extra>"
+        ))
+
+    # Puntos custom
     if custom_points:
-        for k, (sx, mu) in custom_points.items():
-            fig.add_trace(go.Scatter(x=[sx], y=[mu], mode="markers", name=k, marker=dict(size=8)))
+        for label, (sx, ry) in custom_points.items():
+            if np.isfinite(sx) and np.isfinite(ry):
+                fig.add_trace(go.Scatter(
+                    x=[float(sx)], y=[float(ry)], mode="markers+text",
+                    name=str(label),
+                    text=[str(label)], textposition="top center",
+                    marker=dict(size=8),
+                    hovertemplate=f"{label}<br>σ=%{{x:.4f}}<br>μ=%{{y:.4f}}<extra></extra>"
+                ))
+
+    # CAL (Capital Allocation Line) + Sharpe en título si msr_point & rf
+    title_suffix = ""
+    if msr_point is not None and np.isfinite(rf):
+        try:
+            s_msr, r_msr = float(msr_point[0]), float(msr_point[1])
+            if s_msr > 1e-12:
+                sharpe = (r_msr - rf) / s_msr
+                title_suffix = f" · Sharpe*={sharpe:.2f}"
+                fig.add_trace(go.Scatter(
+                    x=[0.0, s_msr], y=[rf, r_msr],
+                    mode="lines", name="CAL",
+                    line=dict(width=1, dash="dot"),
+                    hovertemplate="CAL<extra></extra>"
+                ))
+        except Exception:
+            pass
+
+    # Ejes y layout
+    x_max = float(np.nanmax([
+        x_c.max() if x_c.size else np.nan,
+        x_b.max() if x_b.size else np.nan,
+        msr_point[0] if msr_point is not None else np.nan
+    ]))
+    y_max = float(np.nanmax([
+        y_c.max() if y_c.size else np.nan,
+        y_b.max() if y_b.size else np.nan,
+        msr_point[1] if msr_point is not None else np.nan,
+        minvar_point[1] if minvar_point is not None else np.nan
+    ]))
 
     fig.update_layout(
-        title=title,
-        xaxis_title="Risk (σ)",
-        yaxis_title="Return (μ)",
+        title=(title + title_suffix),
+        xaxis=dict(
+            title="Risk (σ)", rangemode="tozero",
+            range=[0, x_max * 1.05 if np.isfinite(x_max) and x_max > 0 else None],
+            showgrid=True, zeroline=True
+        ),
+        yaxis=dict(
+            title="Return (μ)",
+            range=[None, y_max * 1.06 if np.isfinite(y_max) and y_max > 0 else None],
+            showgrid=True, zeroline=True
+        ),
         margin=dict(l=60, r=20, t=60, b=60),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        hovermode="x unified"
     )
     return fig
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────

@@ -290,19 +290,20 @@ def summary_stats(
 ) -> pl.DataFrame:
     """
     Estadísticos por activo: mean, std, skew, kurt, Sharpe, n_obs, missing_pct.
+    Devuelve un DF en orientación 'row' (cada tupla = fila) para evitar warnings.
     """
     if "date" not in df_ret_wide.columns:
         raise ValueError("'date' column required.")
+
     tickers = [c for c in df_ret_wide.columns if c != "date"]
     if not tickers:
         return pl.DataFrame(
-            rows,
+            [],  # sin filas
             schema=["ticker", "mean", "std", "skew", "kurt", "sharpe", "n_obs", "missing_pct"],
-            orient="row",   
+            orient="row",
         )
 
-
-    # Agregaciones de toda la tabla -> .select() (no .agg() en LazyFrame)
+    # Agregaciones a nivel de tabla → .select()
     aggs = []
     for t in tickers:
         r = pl.col(t)
@@ -316,10 +317,9 @@ def summary_stats(
                 r.is_null().sum().alias(f"{t}__n_na"),
             ]
         )
-    tmp = df_ret_wide.select(aggs)  # ← clave
+    tmp = df_ret_wide.select(aggs)
 
     rows = []
-    total_rows = df_ret_wide.height
     for t in tickers:
         mean = tmp.select(f"{t}__mean").item()
         stdv = tmp.select(f"{t}__std").item()
@@ -327,14 +327,19 @@ def summary_stats(
         kurt = tmp.select(f"{t}__kurt").item()
         n_total = tmp.select(f"{t}__n_total").item()
         n_na = tmp.select(f"{t}__n_na").item()
+
         n_obs = (n_total - n_na) if (n_total is not None and n_na is not None) else None
-        sharpe = ((mean - risk_free) / stdv) if (stdv and stdv > 0 and mean is not None) else None
+        sharpe = ((mean - risk_free) / stdv) if (stdv is not None and stdv > 0 and mean is not None) else None
         missing_pct = (n_na / n_total * 100.0) if n_total else None
+
         rows.append((t, mean, stdv, skew, kurt, sharpe, n_obs, missing_pct))
 
     return pl.DataFrame(
-        rows, schema=["ticker", "mean", "std", "skew", "kurt", "sharpe", "n_obs", "missing_pct"]
+        rows,
+        schema=["ticker", "mean", "std", "skew", "kurt", "sharpe", "n_obs", "missing_pct"],
+        orient="row",  # 👈 evita DataOrientationWarning
     )
+
 
 
 def missing_report_wide(df: pl.DataFrame) -> pl.DataFrame:
