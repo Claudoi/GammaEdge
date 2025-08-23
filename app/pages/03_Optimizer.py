@@ -59,6 +59,28 @@ Sigma = ensure_psd(Sigma)
 # Opcional: metadatos de activos (sector/país) desde Data (si lo guardaste allí)
 meta_df: pl.DataFrame | None = st.session_state.get("asset_meta", None)
 
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ──────────────────────────────────────────────────────────────────────────────
+def _box_feasible(n: int, w_min: float, w_max: float) -> bool:
+    # Factibilidad: existe w con sum=1 y w_min ≤ w_i ≤ w_max  ⟺  n*w_min ≤ 1 ≤ n*w_max
+    return (n * w_min) <= 1.0 <= (n * w_max)
+
+def _safe_project(w: np.ndarray, w_min: float, w_max: float) -> np.ndarray:
+    w = np.asarray(w, dtype=float)
+    if not np.isfinite(w).all():
+        w = np.nan_to_num(w, nan=0.0, posinf=0.0, neginf=0.0)
+    N = w.size
+    # Si la caja es infactible, vuelve a equal-weight
+    if (N * w_min - 1.0) > 1e-12 or (1.0 - N * w_max) > 1e-12:
+        return np.full(N, 1.0 / N)
+    # Proyecta a {sum=1, w_min ≤ w ≤ w_max} y renormaliza por seguridad
+    w_proj = project_to_box_simplex(w, w_min, w_max)
+    s = float(w_proj.sum())
+    return (w_proj / s) if s > 1e-12 else np.full(N, 1.0 / N)
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Sidebar – opciones comunes
 # ──────────────────────────────────────────────────────────────────────────────
@@ -90,19 +112,22 @@ with st.sidebar:
         w_bench = np.full(N, 1.0 / N)
     else:
         w_bench_str = st.text_area(
-            "Custom weights (comma-separated, aligned to asset order)",
-            value=",".join([f"{1/N:.6f}"] * N),
-            height=80,
+            "Custom weights (comma-separated)", 
+            value=",".join([f"{1/N:.6f}"]*N)
         )
         try:
             w_bench = np.array([float(x) for x in w_bench_str.split(",")], dtype=float)
             if w_bench.shape != (N,):
                 raise ValueError
-            s = float(w_bench.sum())
-            w_bench = w_bench / (s if s != 0 else 1.0)
         except Exception:
             st.error("Invalid custom weights; falling back to equal-weight.")
             w_bench = np.full(N, 1.0 / N)
+
+    # Normaliza y proyecta benchmark de forma segura
+    w_bench = _safe_project(w_bench, w_min, w_max)
+    if not _box_feasible(N, w_min, w_max):
+        st.warning("Box infeasible for benchmark (N*w_min ≤ 1 ≤ N*w_max no se cumple). Usando benchmark normalizado sin proyección.")
+
 
     # Exposiciones activas: sector/país
     st.markdown("---")
@@ -176,6 +201,9 @@ elif mode == "Active (TE penalized)":
         iters=iters
     )
 
+    if w_out is not None:
+        w_out = _safe_project(w_out, w_min, w_max)
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Resultados / plots
 # ──────────────────────────────────────────────────────────────────────────────
@@ -193,10 +221,16 @@ if w_out is not None:
             use_container_width=True
         )
 
-    # Export pesos
+    # (5) Export pesos — usar proyección defensiva antes de exportar
+    w_export = _safe_project(w_out, w_min, w_max)
     buf = io.StringIO()
-    pl.DataFrame({"ticker": names, "weight": w_out}).write_csv(buf)
-    st.download_button("Download weights.csv", buf.getvalue(), file_name="weights.csv", mime="text/csv")
+    pl.DataFrame({"ticker": names, "weight": w_export}).write_csv(buf)
+    st.download_button(
+        "Download weights.csv",
+        buf.getvalue(),
+        file_name="weights.csv",
+        mime="text/csv"
+    )
 
     # Diags Active
     if mode == "Active (TE penalized)" and diag:
@@ -214,11 +248,12 @@ if w_out is not None:
             lam_l2=0.0, w_ref=w_bench, X=X_use, lb=lb_use, ub=ub_use,
             rho_expo=(rho_expo if use_expos else 0.0), iters=400
         )
+
+        # (7) Proyección defensiva de TODAS las carteras del sweep
+        Ws = [_safe_project(w, w_min, w_max) for w in Ws]
         st.plotly_chart(weights_path_gammas(Ws, gammas, names, topn=min(25, N)), use_container_width=True)
         st.plotly_chart(turnover_vs_gamma(Ws, w_bench, gammas), use_container_width=True)
         st.plotly_chart(te_frontier(mu, Sigma, w_bench, Ws), use_container_width=True)
-
-
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -297,30 +332,45 @@ lbk  = st.number_input("Lookback (periods)", min_value=30, max_value=2000, value
 cost = st.number_input("Cost (bps per turnover)", min_value=0.0, max_value=100.0, value=2.0, step=0.5)
 
 def allocator(win: pl.DataFrame) -> np.ndarray:
-    # μ/Σ de la ventana
+    # Usa el mismo modo seleccionado, recalculando con Σ y μ de la ventana
     R = win.select([c for c in win.columns if c != "date"]).to_numpy()
     mu_win = np.nanmean(R, axis=0)
     Sigma_win = np.cov(R, rowvar=False)
-    Sigma_win = ensure_psd(Sigma_win)  # ← evita fallos de eigh
+
+    # higiene numérica
+    mu_win = np.where(np.isfinite(mu_win), mu_win, 0.0)
+    Sigma_win = np.where(np.isfinite(Sigma_win), Sigma_win, 0.0)
 
     if mode == "Risk Parity":
-        return risk_parity(Sigma_win, w_min=w_min, w_max=w_max)
+        w = risk_parity(Sigma_win, w_min=w_min, w_max=w_max)
     elif mode == "HRP":
-        return hrp_weights(Sigma_win, w_min=w_min, w_max=w_max)
+        w = hrp_weights(Sigma_win, w_min=w_min, w_max=w_max)
     elif mode == "CVaR":
-        return cvar_minimization(R, alpha=0.95, w_min=w_min, w_max=w_max,
-                                 budget=1.0, lam_l1_turnover=0.0, w_ref=np.full(N, 1.0 / N))
+        w = cvar_minimization(
+            R, alpha=0.95, w_min=w_min, w_max=w_max, budget=1.0,
+            lam_l1_turnover=0.0, w_ref=np.full(N, 1.0/N)
+        )
     elif mode == "Active (TE penalized)":
-        X_use, lb_use, ub_use = (X, lb, ub) if use_expos else (None, None, None)
-        w_new, _ = te_active_pgd(mu_win, Sigma_win, w_bench, gamma=10.0,
-                                 w_min=w_min, w_max=w_max, lam_l2=0.0, w_ref=w_bench,
-                                 X=X_use, lb=lb_use, ub=ub_use, rho_expo=(rho_expo if use_expos else 0.0),
-                                 iters=400)
-        return w_new
+        w, _diag = te_active_pgd(
+            mu_win, Sigma_win, w_bench, gamma=10.0,
+            w_min=w_min, w_max=w_max, lam_l2=0.0, w_ref=w_bench,
+            X=(X if use_expos else None),
+            lb=(lb if use_expos else None),
+            ub=(ub if use_expos else None),
+            rho_expo=(rho_expo if use_expos else 0.0)
+        )
     else:
-        return pgd_box_simplex_l2(mu_win, Sigma_win, gamma=10.0,
-                                  w_min=w_min, w_max=w_max, lam_turnover=0.0,
-                                  w_ref=np.full(N, 1.0 / N))
+        w = pgd_box_simplex_l2(
+            mu_win, Sigma_win, gamma=10.0,
+            w_min=w_min, w_max=w_max,
+            lam_turnover=0.0, w_ref=np.full(N, 1.0/N)
+        )
+
+    # Proyección final segura para el backtest (normaliza y proyecta si es factible)
+    w = _safe_project(w, w_min, w_max)
+    return w
+
+
 
 from portfolio.backtest.engine import backtest_rebalanced
 bt = backtest_rebalanced(df_ret_wide, lookback=int(lbk), rebalance_freq=freq,
