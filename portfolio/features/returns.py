@@ -437,6 +437,6 @@ def missing_report_wide(df: pl.DataFrame) -> pl.DataFrame:
         rows.append((t, miss, pct, bool(endm)))
 
     return pl.DataFrame(
-        rows, schema=["ticker", "missing_rows", "missing_pct", "ends_missing"]
+        rows, schema=["ticker", "missing_rows", "missing_pct", "ends_missing"], orient="row"
     )
 
