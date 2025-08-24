@@ -191,7 +191,7 @@ def _run_data_pipeline(
             "stats": empty_df,
             "eff": empty_df,
             "meta": meta_partial,
-            "coverage": coverage,
+            "coverage": coverage_full,
             "dropped_tickers": tickers,
             "t_elapsed": time.perf_counter() - t0,
         }
