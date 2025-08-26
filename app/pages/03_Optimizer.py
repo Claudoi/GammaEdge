@@ -5,6 +5,8 @@ import io
 import numpy as np
 import polars as pl
 import streamlit as st
+import json
+
 
 import sys, os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
@@ -48,6 +50,13 @@ mu    = np.asarray(st.session_state["mu_vec"], dtype=float)
 names = list(st.session_state["asset_names"])
 df_ret_wide: pl.DataFrame = st.session_state["returns_wide"]
 
+# —— saneo duro de Σ (evita HRP crashes; mantiene simetría) ——
+Sigma = np.asarray(Sigma, float)
+Sigma[~np.isfinite(Sigma)] = 0.0
+Sigma = 0.5 * (Sigma + Sigma.T)
+np.fill_diagonal(Sigma, np.maximum(np.diag(Sigma), 1e-12))
+
+
 N = len(names)
 if Sigma.shape != (N, N) or mu.shape != (N,):
     st.error("Shape mismatch between μ, Σ and names.")
@@ -79,6 +88,109 @@ def _safe_project(w: np.ndarray, w_min: float, w_max: float) -> np.ndarray:
     w_proj = project_to_box_simplex(w, w_min, w_max)
     s = float(w_proj.sum())
     return (w_proj / s) if s > 1e-12 else np.full(N, 1.0 / N)
+
+
+def _clean_returns_matrix(df_ret_wide: pl.DataFrame, names_order: list[str]) -> tuple[np.ndarray, list[str]]:
+    """
+    Selecciona columnas en el orden de 'names_order', droppea filas con cualquier NaN/inf
+    y devuelve (R_clean, cols_used) con R_clean shape (T_clean, N_used).
+    """
+    cols_use = [c for c in names_order if c in df_ret_wide.columns]
+    if not cols_use:
+        return np.empty((0, 0)), []
+
+    R = df_ret_wide.select(cols_use).to_numpy()
+    if R.size == 0:
+        return np.empty((0, 0)), []
+
+    mask_rows = np.isfinite(R).all(axis=1)
+    R = R[mask_rows]
+    return R, cols_use
+
+def _hrp_safe(Sigma: np.ndarray, w_min: float, w_max: float) -> np.ndarray:
+    """
+    HRP con fallback robusto: si falla, retorna equal-weight en caja+simplex.
+    """
+    try:
+        return hrp_weights(Sigma, method="ward", optimal=True, w_min=w_min, w_max=w_max)
+    except Exception:
+        n = Sigma.shape[0]
+        w0 = np.full(n, 1.0 / max(n, 1))
+        return project_to_box_simplex(w0, w_min, w_max)
+
+def _portfolio_stats(w: np.ndarray, mu: np.ndarray, Sigma: np.ndarray, rf: float = 0.0):
+    """Devuelve (mu_p, sigma_p, sharpe)."""
+    w = np.asarray(w, float)
+    mu_p = float(w @ mu)
+    var_p = float(max(w @ Sigma @ w, 0.0))
+    sigma_p = float(np.sqrt(var_p))
+    sharpe = (mu_p - rf) / sigma_p if sigma_p > 1e-12 else np.nan
+    return mu_p, sigma_p, sharpe
+
+def _gini(x: np.ndarray) -> float:
+    """Gini de un vector (útil para medir concentración de RC)."""
+    x = np.asarray(x, float)
+    if x.size == 0:
+        return np.nan
+    x = np.abs(x)
+    s = x.sum()
+    if s <= 0:
+        return 0.0
+    x = np.sort(x)
+    n = x.size
+    cumx = np.cumsum(x)
+    # fórmula estándar del Gini para muestras discretas
+    g = (n + 1 - 2 * np.sum(cumx) / cumx[-1]) / n
+    return float(g)
+
+def _cvar_estimate(port_rets: np.ndarray, alpha: float = 0.95) -> float:
+    """Estimación in-sample de CVaR (Conditional VaR) para la cola izquierda."""
+    r = np.asarray(port_rets, float)
+    r = r[np.isfinite(r)]
+    if r.size == 0:
+        return np.nan
+    q = np.percentile(r, (1.0 - alpha) * 100.0)  # VaR (cuantil de cola izquierda)
+    tail = r[r <= q]
+    return float(tail.mean()) if tail.size > 0 else float(q)
+
+def _solve_cvar(
+    R: np.ndarray, cols_used: list[str],
+    mu: np.ndarray, Sigma: np.ndarray, names: list[str],
+    w_bench: np.ndarray, w_min: float, w_max: float,
+    alpha: float, lam_l1: float
+) -> np.ndarray:
+    """
+    Resuelve CVaR sobre (R, cols_used). Si no hay datos suficientes o falla el LP,
+    fallback a Mean-Variance (L2) en el subuniverso, y mapea a universo completo.
+    """
+    if R.size == 0 or R.shape[0] < 2 or len(cols_used) < 2:
+        # Fallback: MV (L2) en universo completo → robusto
+        return pgd_box_simplex_l2(mu, Sigma, gamma=10.0, w_min=w_min, w_max=w_max,
+                                  lam_turnover=0.0, w_ref=w_bench.copy())
+
+    # Subconjunto consistente (μ, Σ, w_ref) con cols_used
+    idx = [names.index(c) for c in cols_used]
+    mu_sub = mu[idx]
+    Sigma_sub = Sigma[np.ix_(idx, idx)]
+    w_ref_sub = w_bench[idx]
+
+    try:
+        w_sub = cvar_minimization(
+            R, alpha=alpha, w_min=w_min, w_max=w_max, budget=1.0,
+            lam_l1_turnover=lam_l1, w_ref=w_ref_sub
+        )
+    except Exception:
+        # Fallback → MV (L2) en el subuniverso
+        w_sub = pgd_box_simplex_l2(
+            mu_sub, Sigma_sub, gamma=10.0, w_min=w_min, w_max=w_max,
+            lam_turnover=0.0, w_ref=np.full(len(idx), 1.0 / len(idx))
+        )
+
+    # Map back a universo completo y proyecta de forma segura
+    w_full = np.zeros(len(names), dtype=float)
+    for i, c in enumerate(cols_used):
+        w_full[names.index(c)] = w_sub[i]
+    return project_to_box_simplex(w_full, w_min, w_max)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -178,15 +290,23 @@ elif mode == "Risk Parity":
     w_out = risk_parity(Sigma, w_min=w_min, w_max=w_max)
 
 elif mode == "HRP":
-    w_out = hrp_weights(Sigma, method="ward", optimal=True, w_min=w_min, w_max=w_max)
+    w_out = _hrp_safe(Sigma, w_min=w_min, w_max=w_max)
 
 elif mode == "CVaR":
-    alpha = st.slider("α (CVaR)", 0.80, 0.995, 0.95, 0.005)
-    R = df_ret_wide.select([c for c in df_ret_wide.columns if c != "date"]).to_numpy()
-    w_ref = w_bench.copy()
-    lam_l1 = st.slider("λ L1 turnover", 0.0, 5.0, 0.0, 0.01)
-    w_out = cvar_minimization(R, alpha=alpha, w_min=w_min, w_max=w_max,
-                              budget=1.0, lam_l1_turnover=lam_l1, w_ref=w_ref)
+    alpha = st.slider("α (CVaR)", 0.80, 0.995, st.session_state.get("cvar_alpha", 0.95), 0.005, key="cvar_alpha")
+    lam_l1 = st.slider("λ L1 turnover", 0.0, 5.0, st.session_state.get("cvar_lam1", 0.0), 0.01, key="cvar_lam1")
+
+    # Datos limpios (alineados a names y sin filas con NaNs/Inf)
+    R_all, cols_used = _clean_returns_matrix(df_ret_wide, names)
+
+    # Asegura PSD (por si arrastra menor conditioning)
+    Sigma = ensure_psd(Sigma)
+
+    w_out = _solve_cvar(
+        R_all, cols_used, mu, Sigma, names, w_bench, w_min, w_max,
+        alpha=st.session_state["cvar_alpha"], lam_l1=st.session_state["cvar_lam1"]
+    )
+
 
 elif mode == "Active (TE penalized)":
     st.markdown("### Active TE optimizer (penalized)")
@@ -343,13 +463,32 @@ def allocator(win: pl.DataFrame) -> np.ndarray:
 
     if mode == "Risk Parity":
         w = risk_parity(Sigma_win, w_min=w_min, w_max=w_max)
+
     elif mode == "HRP":
-        w = hrp_weights(Sigma_win, w_min=w_min, w_max=w_max)
+        w = _hrp_safe(Sigma_win, w_min=w_min, w_max=w_max)
+
     elif mode == "CVaR":
-        w = cvar_minimization(
-            R, alpha=0.95, w_min=w_min, w_max=w_max, budget=1.0,
-            lam_l1_turnover=0.0, w_ref=np.full(N, 1.0/N)
+        # Parámetros desde session_state (ya definidos en rama principal)
+        alpha = st.session_state.get("cvar_alpha", 0.95)
+        lam_l1 = st.session_state.get("cvar_lam1", 0.0)
+
+        # Retornos de la ventana, limpios y alineados a 'names'
+        R_win, cols_used = _clean_returns_matrix(win, names)
+
+        # Higiene numérica en μ y Σ de la ventana
+        mu_win = np.nanmean(win.select([c for c in win.columns if c != "date"]).to_numpy(), axis=0)
+        Sigma_win = np.cov(win.select([c for c in win.columns if c != "date"]).to_numpy(), rowvar=False)
+        mu_win = np.where(np.isfinite(mu_win), mu_win, 0.0)
+        Sigma_win = np.where(np.isfinite(Sigma_win), Sigma_win, 0.0)
+        Sigma_win = ensure_psd(Sigma_win)
+
+        w = _solve_cvar(
+            R_win, cols_used, mu_win, Sigma_win, names, w_bench,
+            w_min, w_max, alpha=alpha, lam_l1=lam_l1
         )
+
+
+
     elif mode == "Active (TE penalized)":
         w, _diag = te_active_pgd(
             mu_win, Sigma_win, w_bench, gamma=10.0,
@@ -359,6 +498,7 @@ def allocator(win: pl.DataFrame) -> np.ndarray:
             ub=(ub if use_expos else None),
             rho_expo=(rho_expo if use_expos else 0.0)
         )
+
     else:
         w = pgd_box_simplex_l2(
             mu_win, Sigma_win, gamma=10.0,
