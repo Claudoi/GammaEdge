@@ -193,6 +193,27 @@ def _solve_cvar(
     return project_to_box_simplex(w_full, w_min, w_max)
 
 
+def _stack_Ws(Ws_list: list[np.ndarray], N: int) -> np.ndarray:
+    """
+    Convierte una lista de carteras en una matriz (nG x N), filtrando entradas
+    vacías o con tamaño incorrecto. Lanza ValueError si no queda ninguna.
+    """
+    good = []
+    for w in Ws_list:
+        if w is None:
+            continue
+        w = np.asarray(w, float).reshape(-1)
+        if w.size != N:
+            continue
+        if not np.all(np.isfinite(w)):
+            w = np.nan_to_num(w, nan=0.0, posinf=0.0, neginf=0.0)
+        good.append(w)
+    if not good:
+        raise ValueError("No valid weight vectors to stack (after filtering).")
+    return np.vstack(good)
+
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Sidebar – opciones comunes
 # ──────────────────────────────────────────────────────────────────────────────
@@ -369,11 +390,22 @@ if w_out is not None:
             rho_expo=(rho_expo if use_expos else 0.0), iters=400
         )
 
-        # (7) Proyección defensiva de TODAS las carteras del sweep
-        Ws = [_safe_project(w, w_min, w_max) for w in Ws]
-        st.plotly_chart(weights_path_gammas(Ws, gammas, names, topn=min(25, N)), use_container_width=True)
-        st.plotly_chart(turnover_vs_gamma(Ws, w_bench, gammas), use_container_width=True)
-        st.plotly_chart(te_frontier(mu, Sigma, w_bench, Ws), use_container_width=True)
+        # (7) Proyección defensiva de TODAS las carteras del sweep + apilado robusto
+        def _stack_Ws(Ws_list: list[np.ndarray]) -> np.ndarray:
+            out = []
+            for w in Ws_list:
+                try:
+                    out.append(_safe_project(w, w_min, w_max))
+                except Exception:
+                    out.append(np.full(len(names), 1.0 / len(names)))
+            return np.vstack(out) if out else np.zeros((0, len(names)))
+
+        Ws_arr = _stack_Ws(Ws)
+
+        st.plotly_chart(weights_path_gammas(Ws_arr, gammas, names, topn=min(25, N)), use_container_width=True)
+        st.plotly_chart(turnover_vs_gamma(Ws_arr, w_bench, gammas), use_container_width=True)
+        st.plotly_chart(te_frontier(mu, Sigma, w_bench, Ws_arr), use_container_width=True)
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -486,7 +518,6 @@ def allocator(win: pl.DataFrame) -> np.ndarray:
             R_win, cols_used, mu_win, Sigma_win, names, w_bench,
             w_min, w_max, alpha=alpha, lam_l1=lam_l1
         )
-
 
 
     elif mode == "Active (TE penalized)":
