@@ -37,6 +37,7 @@ from typing import (
     TypeVar,
     Union,
     cast,
+    overload,
 )
 from typing_extensions import (
     Self,
@@ -549,8 +550,8 @@ class PageElement(object):
     getText = get_text
     text = property(get_text)
 
-    def replace_with(self, *args: PageElement) -> Self:
-        """Replace this `PageElement` with one or more other `PageElement`,
+    def replace_with(self, *args: _InsertableElement) -> Self:
+        """Replace this `PageElement` with one or more other elements,
         objects, keeping the rest of the tree the same.
 
         :return: This `PageElement`, no longer part of the tree.
@@ -1318,8 +1319,8 @@ class NavigableString(str, PageElement):
         return (str(self),)
 
     # TODO-TYPING This should be SupportsIndex|slice but SupportsIndex
-    # is introduced in 3.8.
-    def __getitem__(self, key: Union[int|slice]) -> str:
+    # is introduced in 3.8. This can be changed once 3.7 support is dropped.
+    def __getitem__(self, key: Union[int|slice]) -> str: # type:ignore
         """Raise an exception """
         if isinstance(key, str):
             raise TypeError("string indices must be integers, not '{0}'. Are you treating a NavigableString like a Tag?".format(key.__class__.__name__))
@@ -1511,7 +1512,7 @@ class Doctype(PreformattedString):
 
     @classmethod
     def _string_for_name_and_ids(
-        self, name: str, pub_id: Optional[str], system_id: Optional[str]
+        cls, name: str, pub_id: Optional[str], system_id: Optional[str]
     ) -> str:
         """Generate a string to be used as the basis of a Doctype object.
 
@@ -2605,6 +2606,22 @@ class Tag(PageElement):
             not self.preserve_whitespace_tags
             or self.name not in self.preserve_whitespace_tags
         )
+
+    @overload
+    def prettify(
+        self,
+        encoding: None = None,
+        formatter: _FormatterOrName = "minimal",
+    ) -> str:
+        ...
+
+    @overload
+    def prettify(
+        self,
+        encoding: _Encoding,
+        formatter: _FormatterOrName = "minimal",
+    ) -> bytes:
+        ...
 
     def prettify(
         self,

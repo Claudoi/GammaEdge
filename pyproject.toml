@@ -16,16 +16,16 @@ python = "^3.11"
 # Core numérico / tabular
 numpy = ">=1.26,<2.0"
 scipy = ">=1.11"
-polars = ">=1.4.0"         # Core del pipeline (lazy, expr)
-pyarrow = ">=16.0.0"       # IO parquet/arrow estable y rápido
+polars = ">=1.4.0"
+pyarrow = ">=16.0.0"
 
 # Interoperabilidad y modelos estadísticos
-pandas = ">=2.2.2"         # Sólo en los bordes (arch, yfinance)
-scikit-learn = ">=1.4.2"   # Ledoit-Wolf / OAS
+pandas = ">=2.2.2"
+scikit-learn = ">=1.4.2"
 statsmodels = ">=0.14.2"
 
 # Finanzas e IO
-yfinance = ">=0.2.40"      # Ingestión de precios
+yfinance = ">=0.2.40"
 requests = ">=2.32.0"
 
 # Visualización / UI
@@ -39,11 +39,16 @@ uvicorn = { version = ">=0.30.0", extras = ["standard"] }
 # Config
 pyyaml = ">=6.0.1"
 
+# ── DEPENDENCIAS OPCIONALES (para extras) ─────────────────────────────────────
+# OJO: aquí se ponen con version + optional=true. Luego se referencian por nombre en [tool.poetry.extras]
+arch = { version = ">=6.3.0", optional = true }
+cvxpy = { version = ">=1.4.3", optional = true }
+torch = { version = "*", optional = true }
+jupyterlab = { version = ">=4.2.0", optional = true }
+ipykernel = { version = ">=6.29.0", optional = true }
+
 # ──────────────────────────────────────────────────────────────────────────────
-# GRUPOS OPCIONALES (extras) — instala con:
-#   poetry install --with dev
-#   poetry install --with {dev,docs}
-#   poetry install --extras "ml garch opt notebooks"
+# GRUPOS OPCIONALES (dev/docs)
 # ──────────────────────────────────────────────────────────────────────────────
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.2.0"
@@ -54,25 +59,29 @@ black = ">=24.4.2"
 mypy = ">=1.10.0"
 types-requests = ">=2.32.0.20240712"
 types-PyYAML = ">=6.0.12.20240808"
+pre-commit = ">=3.7.0"
+nbstripout = ">=0.7.1"
 
 [tool.poetry.group.docs.dependencies]
 mkdocs = ">=1.6.0"
 mkdocs-material = ">=9.5.26"
 mkdocstrings = { version = ">=0.24.0", extras = ["python"] }
 
-# Extras funcionales (por características)
+# ──────────────────────────────────────────────────────────────────────────────
+# EXTRAS (solo nombres, SIN versiones)
+# ──────────────────────────────────────────────────────────────────────────────
 [tool.poetry.extras]
-ml = ["torch", "scikit-learn"]
-garch = ["arch>=6.3.0"]
-opt = ["cvxpy>=1.4.3"]
-notebooks = ["jupyterlab>=4.2.0", "ipykernel>=6.29.0"]
+ml = ["torch"]                 # scikit-learn ya está en core
+garch = ["arch"]
+opt = ["cvxpy"]
+notebooks = ["jupyterlab", "ipykernel"]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # ENTRY POINTS (opcional)
 # ──────────────────────────────────────────────────────────────────────────────
 [tool.poetry.scripts]
-gammaedge-api = "api.main:run"         # si defines un run() en api/main.py
-gammaedge-app = "app.Home:main"        # si expones un main() en Streamlit (opcional)
+gammaedge-api = "api.main:run"
+gammaedge-app = "app.Home:main"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # LINTER/FORMATTER/TYPECHECKER
@@ -85,7 +94,7 @@ target-version = ["py311"]
 line-length = 100
 target-version = "py311"
 extend-select = ["I", "N", "E", "F", "UP", "SIM", "B", "C90"]
-ignore = ["E203", "E266", "E501"]  # black-compat, etc.
+ignore = ["E203", "E266", "E501"]
 
 [tool.isort]
 profile = "black"
@@ -100,6 +109,13 @@ warn_redundant_casts = true
 warn_unreachable = true
 check_untyped_defs = true
 disallow_untyped_defs = true
+exclude = "(^tests/|^notebooks/)"
+
+# ──────────────────────────────────────────────────────────────────────────────
+# PYTEST CONFIG
+# ──────────────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+addopts = "-q --tb=short"
 
 # ──────────────────────────────────────────────────────────────────────────────
 # BUILD-SYSTEM
