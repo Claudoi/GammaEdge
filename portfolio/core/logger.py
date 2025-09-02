@@ -9,13 +9,13 @@ class JsonRunLogger:
     """
     Logger muy simple en formato JSONL (una línea por evento) para trazabilidad.
     """
-    def __init__(self, log_dir: str = "logs", run_name: str = "run"):
+    def __init__(self, log_dir: str = "logs", run_name: str = "run") -> None:
         os.makedirs(log_dir, exist_ok=True)
         ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
         self.path = os.path.join(log_dir, f"{run_name}-{ts}.jsonl")
         self.t0 = time.time()
 
-    def log(self, event: str, **payload: Dict[str, Any]):
+    def log(self, event: str, **payload: Dict[str, Any]) -> Dict[str, Any]:
         rec = {
             "event": event,
             "utc": datetime.utcnow().isoformat(),
