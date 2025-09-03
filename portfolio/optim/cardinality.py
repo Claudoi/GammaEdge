@@ -1,7 +1,10 @@
 # portfolio/optim/cardinality.py
 from __future__ import annotations
+
 import numpy as np
+
 from .mean_variance import project_to_box_simplex
+
 
 def topk_soft(w: np.ndarray, k: int, w_min: float = 0.0, w_max: float = 1.0) -> np.ndarray:
     """

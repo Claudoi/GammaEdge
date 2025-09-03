@@ -1,7 +1,10 @@
 from __future__ import annotations
+
+from collections.abc import Callable
+
 import numpy as np
 import polars as pl
-from typing import Callable
+
 
 # ─────────────────────────────────────────────────────────
 # Matrices de covarianza: saneado + diagnóstico

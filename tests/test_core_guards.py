@@ -1,6 +1,8 @@
 import numpy as np
 import pytest
+
 from portfolio.core.guards import box_feasible, validate_weights
+
 
 def test_box_feasible():
     assert box_feasible(5, 0.0, 0.6)

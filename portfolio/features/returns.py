@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Optional, Sequence, Tuple
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -27,7 +27,7 @@ def long_to_wide(
     if not required.issubset(df_long.columns):
         missing = required - set(df_long.columns)
         raise ValueError(f"Missing columns in long df: {missing}")
-    return df_long.pivot(values=value_col, index=index, columns=columns).sort(index)
+    return df_long.pivot(values=value_col, index=index, on=columns).sort(index)
 
 
 def wide_to_long(
@@ -93,17 +93,18 @@ def resample_prices_last(df_prices_long: pl.DataFrame, every: str = "1w") -> pl.
 
     # Compatibilidad: usar by=["ticker"] y label="right"
     lf = (
-        df.lazy()
-        .group_by_dynamic(
-            index_column="date",
-            every=every,
-            by=["ticker"],
-            closed="right",
-            label="right",
-        )
-        .agg(pl.col("price").last().alias("price"))
-        .sort(["ticker", "date"])
+    df.lazy()
+    .group_by_dynamic(  # type: ignore[call-arg]
+        index_column="date",
+        every=every,
+        by=["ticker"],
+        closed="right",
+        label="right",
     )
+    .agg(pl.col("price").last().alias("price"))
+    .sort(["ticker", "date"])
+    )
+
     return lf
 
 
@@ -212,7 +213,7 @@ def winsorize_wide(df_ret_wide: pl.DataFrame, q: float = 0.01) -> pl.DataFrame:
 # Conversión de frecuencia de retornos (log vs simple)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def infer_return_kind(df_ret_wide: pl.DataFrame, sample_cols: Optional[int] = 5) -> ReturnKind:
+def infer_return_kind(df_ret_wide: pl.DataFrame, sample_cols: int | None = 5) -> ReturnKind:
     """
     Heurística robusta:
     - si la mayoría de |r| <= 0.3 y no hay valores <-1, asumimos 'simple' si min > -1
@@ -233,7 +234,7 @@ def returns_to_frequency_wide(
     df_ret_wide: pl.DataFrame,
     *,
     freq: str,
-    kind: Optional[ReturnKind] = None,
+    kind: ReturnKind | None = None,
     min_count: int = 1,  # reservado; no se usa en esta implementación
 ) -> pl.DataFrame:
     """

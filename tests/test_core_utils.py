@@ -1,5 +1,7 @@
 import numpy as np
-from portfolio.core.utils import ensure_psd, cond_number, project_to_box_simplex
+
+from portfolio.core.utils import cond_number, ensure_psd, project_to_box_simplex
+
 
 def test_ensure_psd_and_cond():
     S = np.array([[1.0, 2.0],[2.0, 1.0]])  # no PSD

@@ -1,8 +1,9 @@
 # portfolio/optim/cvar.py
 from __future__ import annotations
-from typing import Optional
+
 import numpy as np
 from scipy.optimize import linprog
+
 
 def cvar_minimization(
     R: np.ndarray,                 # (T, N) returns (periodic)
@@ -12,7 +13,7 @@ def cvar_minimization(
     w_max: float = 1.0,
     budget: float = 1.0,
     lam_l1_turnover: float = 0.0,
-    w_ref: Optional[np.ndarray] = None,
+    w_ref: np.ndarray | None = None,
 ) -> np.ndarray:
     """
     Minimize CVaR_α of losses L_t = -R_t·w, long-only caja+simplex, opcional L1 turnover.
@@ -102,7 +103,7 @@ def cvar_minimization(
     A_eq[0, :n_w] = 1.0
     b_eq = np.array([budget], dtype=float)
 
-    res = linprog(c, A_ub=np.array(A), b_ub=np.array(b), A_eq=A_eq, b_eq=b_eq, bounds=list(zip(lb, ub)), method="highs")
+    res = linprog(c, A_ub=np.array(A), b_ub=np.array(b), A_eq=A_eq, b_eq=b_eq, bounds=list(zip(lb, ub, strict=False)), method="highs")
     if not res.success:
         raise RuntimeError(f"CVaR LP failed: {res.message}")
 

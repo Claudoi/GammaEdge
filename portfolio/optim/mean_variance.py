@@ -1,7 +1,8 @@
 # portfolio/optim/mean_variance.py
 from __future__ import annotations
 
-from typing import Optional, Tuple, Sequence, Dict
+from collections.abc import Sequence
+
 import numpy as np
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -65,7 +66,7 @@ def cond_number(S: np.ndarray) -> float:
 
 def markowitz_closed_form(
     mu: np.ndarray, Sigma: np.ndarray, rf: float = 0.0
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Devuelve (w_mvp, w_tan) con presupuesto ∑w=1 y short permitido.
     - w_mvp: Global Minimum Variance (GMV)
@@ -97,7 +98,7 @@ def markowitz_closed_form(
 
 def frontier_closed_form(
     mu: np.ndarray, Sigma: np.ndarray, r_min: float, r_max: float, npts: int
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Frontera eficiente (short permitido) parametrizada por retorno objetivo.
     Devuelve (risks, rets) para `npts` puntos entre `r_min` y `r_max`.
@@ -206,7 +207,7 @@ def sparsify_topk_and_project(w: np.ndarray, k: int, w_min: float, w_max: float)
 def project_with_group_caps(
     w: np.ndarray,
     groups: Sequence[str],
-    group_max: Dict[str, float],
+    group_max: dict[str, float],
     w_min: float,
     w_max: float,
     iters: int = 20,
@@ -246,11 +247,11 @@ def pgd_box_simplex_l2(
     mu: np.ndarray, Sigma: np.ndarray, gamma: float, *,
     w_min: float, w_max: float,
     lam_turnover: float = 0.0,
-    w_ref: Optional[np.ndarray] = None,
-    groups: Optional[Sequence[str]] = None,
-    group_max: Optional[Dict[str, float]] = None,
+    w_ref: np.ndarray | None = None,
+    groups: Sequence[str] | None = None,
+    group_max: dict[str, float] | None = None,
     iters: int = 500,
-    step: Optional[float] = None,
+    step: float | None = None,
 ) -> np.ndarray:
     """
     Min  1/2 w'Σw − γ μ'w + (λ/2)||w − w_ref||^2
@@ -278,11 +279,11 @@ def pgd_box_simplex_l1(
     mu: np.ndarray, Sigma: np.ndarray, gamma: float, *,
     w_min: float, w_max: float,
     lam_l1: float,
-    w_ref: Optional[np.ndarray] = None,
-    groups: Optional[Sequence[str]] = None,
-    group_max: Optional[Dict[str, float]] = None,
+    w_ref: np.ndarray | None = None,
+    groups: Sequence[str] | None = None,
+    group_max: dict[str, float] | None = None,
     iters: int = 600,
-    step: Optional[float] = None,
+    step: float | None = None,
 ) -> np.ndarray:
     """
     Min  1/2 w'Σw − γ μ'w + λ||w − w_ref||_1
@@ -317,10 +318,10 @@ def min_te_pgd(
     w_bench: np.ndarray,
     *,
     w_min: float, w_max: float,
-    groups: Optional[Sequence[str]] = None,
-    group_max: Optional[Dict[str, float]] = None,
+    groups: Sequence[str] | None = None,
+    group_max: dict[str, float] | None = None,
     iters: int = 500,
-    step: Optional[float] = None,
+    step: float | None = None,
 ) -> np.ndarray:
     """
     Minimize TE: min_w  (1/2)(w−wb)' Σ (w−wb)
@@ -350,10 +351,10 @@ def mean_te_tradeoff_pgd(
     gamma: float,
     *,
     w_min: float, w_max: float,
-    groups: Optional[Sequence[str]] = None,
-    group_max: Optional[Dict[str, float]] = None,
+    groups: Sequence[str] | None = None,
+    group_max: dict[str, float] | None = None,
     iters: int = 600,
-    step: Optional[float] = None,
+    step: float | None = None,
 ) -> np.ndarray:
     """
     Trade‑off alfa vs TE:
@@ -388,9 +389,9 @@ def risk_contributions(w: np.ndarray, Sigma: np.ndarray) -> np.ndarray:
 def frontier_box_projected(
     mu: np.ndarray, Sigma: np.ndarray,
     w_min: float, w_max: float,
-    r_min: Optional[float] = None, r_max: Optional[float] = None,
+    r_min: float | None = None, r_max: float | None = None,
     npts: int = 40
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """
     Aproximación para frontera con caja: parte de la solución cerrada para
     un target μ y proyecta a {sum=1, w_min≤w≤w_max}. Devuelve (risks, rets).

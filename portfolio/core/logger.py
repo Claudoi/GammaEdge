@@ -1,9 +1,11 @@
 from __future__ import annotations
+
 import json
 import os
 import time
 from datetime import datetime
-from typing import Any, Dict
+from typing import Any
+
 
 class JsonRunLogger:
     """
@@ -15,7 +17,7 @@ class JsonRunLogger:
         self.path = os.path.join(log_dir, f"{run_name}-{ts}.jsonl")
         self.t0 = time.time()
 
-    def log(self, event: str, **payload: Dict[str, Any]) -> Dict[str, Any]:
+    def log(self, event: str, **payload: dict[str, Any]) -> dict[str, Any]:
         rec = {
             "event": event,
             "utc": datetime.utcnow().isoformat(),

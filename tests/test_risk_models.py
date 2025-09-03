@@ -1,7 +1,9 @@
 # Test for risk models
 import numpy as np
 import pandas as pd
+
 from portfolio.features.risk_models import covariance, expected_returns
+
 
 def test_oas_is_psd():
     rng = np.random.default_rng(0)

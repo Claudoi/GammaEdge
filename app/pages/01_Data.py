@@ -1,31 +1,31 @@
 # app/pages/01_Data.py
 from __future__ import annotations
 
+import hashlib
 import io
 import json
+import os
+import sys
 import time
-from datetime import date, datetime, timezone
-import hashlib
+from datetime import UTC, date, datetime
 
+import plotly.express as px
 import polars as pl
 import streamlit as st
-import plotly.express as px
 
-import sys, os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from portfolio.io.data_loader import get_prices_long
-from portfolio.io.cache import (
-    save_pl, load_pl, cache_path, invalidate, age_seconds, save_json
-)
 from portfolio.features.returns import (
     compute_returns_from_prices_long,
-    winsorize_long,
     long_to_wide,
+    missing_report_wide,
     returns_to_frequency_wide,
     summary_stats,
-    missing_report_wide,
+    winsorize_long,
 )
+from portfolio.io.cache import age_seconds, cache_path, invalidate, load_pl, save_json, save_pl
+from portfolio.io.data_loader import get_prices_long
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers (internos de esta página)
@@ -165,7 +165,7 @@ def _run_data_pipeline(
         empty_df = pl.DataFrame()
         meta_partial = {
             "provider": "Yahoo Finance",
-            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "generated_at_utc": datetime.now(UTC).isoformat(),
             "params": {
                 "tickers": tickers, "start": str(start), "end": str(end),
                 "interval": "1d", "adjust": True,
@@ -301,7 +301,7 @@ def _run_data_pipeline(
     )
     meta = {
         "provider": "Yahoo Finance",
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "generated_at_utc": datetime.now(UTC).isoformat(),
         "params": {
             "tickers": tickers, "start": str(start), "end": str(end),
             "interval": "1d", "adjust": True,

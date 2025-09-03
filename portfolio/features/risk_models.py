@@ -1,12 +1,13 @@
 # portfolio/features/risk_models.py
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Literal, Optional, Tuple, Sequence, Dict
+from typing import Literal
 
 import numpy as np
 import polars as pl
-from sklearn.covariance import LedoitWolf, OAS
+from sklearn.covariance import OAS, LedoitWolf
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Tipos y utilidades generales
@@ -63,7 +64,7 @@ def ewma_default_lambda(periodicity: Periodicity | int) -> float:
 def _wide_to_matrix(
     df_ret_wide: pl.DataFrame,
     fill: Literal["drop", "mean", "none"] = "drop",
-) -> Tuple[np.ndarray, list[str]]:
+) -> tuple[np.ndarray, list[str]]:
     """
     Convierte retornos anchos → matriz NumPy (T,N) float64 C-contiguous + lista de tickers.
     NaN policy:
@@ -154,11 +155,11 @@ def expected_returns(
     df_ret_wide: pl.DataFrame,
     *,
     method: MuMethod = "ema",
-    span: Optional[int] = 60,
-    shrink_to: Optional[np.ndarray] = None,
+    span: int | None = 60,
+    shrink_to: np.ndarray | None = None,
     annualize: bool = True,
     fill: Literal["drop", "mean", "none"] = "drop",
-) -> Tuple[np.ndarray, list[str]]:
+) -> tuple[np.ndarray, list[str]]:
     """
     Calcula μ con varios métodos. Devuelve (mu_vec, tickers) alineados.
 
@@ -210,7 +211,7 @@ def covariance(
     annualize: bool = True,
     fill: Literal["drop", "mean", "none"] = "drop",
     psd: bool = True,
-) -> Tuple[np.ndarray, list[str]]:
+) -> tuple[np.ndarray, list[str]]:
     """
     Estima Σ con varios métodos. Devuelve (Sigma, tickers).
 
@@ -224,7 +225,7 @@ def covariance(
     X, names = _wide_to_matrix(df_ret_wide, fill=fill)
     T, N = X.shape if X.ndim == 2 else (0, 0)
 
-    if T < max(2, min_periods) and method in ("lw", "oas", "ewma"):
+    if max(2, min_periods) > T and method in ("lw", "oas", "ewma"):
         # Fallback seguro cuando no hay suficientes observaciones
         method = "sample"
 
@@ -291,7 +292,7 @@ def black_litterman(
     Q: np.ndarray,               # (K,)   — views
     *,
     tau: float = 0.05,           # incertidumbre del prior
-    Omega: Optional[np.ndarray] = None,  # (K,K) incertidumbre de vistas; si None, diag proporcional
+    Omega: np.ndarray | None = None,  # (K,K) incertidumbre de vistas; si None, diag proporcional
 ) -> np.ndarray:
     """
     Devuelve μ_post (N,) según Black–Litterman en forma canónica.
@@ -315,15 +316,15 @@ def compute_mu_sigma(
     df_ret_wide: pl.DataFrame,
     *,
     mu_method: MuMethod = "ema",
-    mu_span: Optional[int] = 60,
-    mu_shrink_to: Optional[np.ndarray] = None,
+    mu_span: int | None = 60,
+    mu_shrink_to: np.ndarray | None = None,
     cov_method: CovMethod = "oas",
     ewma_lambda: float = 0.94,
     min_periods: int = 60,
     annualize: bool = True,
     fill: Literal["drop", "mean", "none"] = "drop",
     psd: bool = True,
-) -> Tuple[np.ndarray, np.ndarray, list[str]]:
+) -> tuple[np.ndarray, np.ndarray, list[str]]:
     """
     Atajo para obtener (μ, Σ, tickers) con políticas coherentes de NaN/annualización/PSD.
     """
@@ -411,8 +412,8 @@ def capm_mu(
 def black_litterman_mu(
     data_or_names: pl.DataFrame | Sequence[str],
     *,
-    Sigma: Optional[np.ndarray] = None,
-    market_weights: Optional[np.ndarray] = None,
+    Sigma: np.ndarray | None = None,
+    market_weights: np.ndarray | None = None,
     delta: float = 2.5,          # aversión al riesgo típica
     annualize: bool = True,
     fill: Literal["drop", "mean", "none"] = "drop",
@@ -470,11 +471,11 @@ def pca_factor_cov(
     df_ret_wide: pl.DataFrame,
     *,
     mu_method: MuMethod = "ema",
-    mu_span: Optional[int] = 60,
+    mu_span: int | None = 60,
     n_factors: int = 5,
     annualize: bool = False,
     fill: Literal["drop", "mean", "none"] = "drop",
-) -> Tuple[np.ndarray, np.ndarray, list[str], Dict[str, object]]:
+) -> tuple[np.ndarray, np.ndarray, list[str], dict[str, object]]:
     """
     Estima μ (método indicado) y Σ vía modelo de factores PCA:
         S = V Λ V^T  (eigendecomp de la cov muestral)
@@ -525,7 +526,7 @@ def nan_policy_stats(
     df_ret_wide: pl.DataFrame,
     *,
     fill: Literal["drop", "mean", "none"] = "drop",
-) -> Dict[str, object]:
+) -> dict[str, object]:
     """
     Reporta impacto de la política de NaN:
       - drop: nº de filas eliminadas
@@ -537,7 +538,7 @@ def nan_policy_stats(
     X = np.asarray(X, dtype=float)
     X[~np.isfinite(X)] = np.nan
 
-    out: Dict[str, object] = {"policy": fill}
+    out: dict[str, object] = {"policy": fill}
     if fill == "drop":
         before = X.shape[0]
         after = (~np.isnan(X).any(axis=1)).sum()
@@ -588,8 +589,8 @@ def rolling_metrics(
     df_ret_wide: pl.DataFrame,
     *,
     window: int = 26,
-    pair: Optional[Tuple[str, str]] = None,
-) -> Dict[str, pl.DataFrame]:
+    pair: tuple[str, str] | None = None,
+) -> dict[str, pl.DataFrame]:
     """
     Métricas rolling:
       - vol (por activo): std rolling
@@ -605,7 +606,7 @@ def rolling_metrics(
     vol_exprs = [pl.col(t).rolling_std(window, ddof=1).alias(t) for t in tickers]
     vol_df = lf.with_columns(vol_exprs).select(["date"] + tickers).collect()
 
-    out: Dict[str, pl.DataFrame] = {"vol": vol_df}
+    out: dict[str, pl.DataFrame] = {"vol": vol_df}
 
     if pair is not None:
         a, b = pair

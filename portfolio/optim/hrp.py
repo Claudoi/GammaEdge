@@ -1,9 +1,12 @@
 # portfolio/optim/hrp.py
 from __future__ import annotations
+
 import numpy as np
-from scipy.cluster.hierarchy import linkage, leaves_list, optimal_leaf_ordering
+from scipy.cluster.hierarchy import leaves_list, linkage, optimal_leaf_ordering
 from scipy.spatial.distance import squareform
+
 from .mean_variance import ensure_psd, project_to_box_simplex
+
 
 def _corr_from_cov(S: np.ndarray) -> np.ndarray:
     d = np.sqrt(np.clip(np.diag(S), 1e-16, None))

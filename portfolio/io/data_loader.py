@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable, Any
+from typing import Any
 
-import numpy as np
 import pandas as pd
 import polars as pl
 import yfinance as yf
@@ -280,7 +280,7 @@ def get_prices_wide(
     )
 
     df_wide = (
-        df_long.pivot(values="price", index="date", columns="ticker")
+        df_long.pivot(values="price", index="date", on="ticker")
                .sort("date")
     )
 

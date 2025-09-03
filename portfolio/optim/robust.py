@@ -1,6 +1,8 @@
 # portfolio/optim/robust.py
 from __future__ import annotations
+
 import numpy as np
+
 
 def apply_ridge(Sigma: np.ndarray, eps: float) -> np.ndarray:
     if eps <= 0:
