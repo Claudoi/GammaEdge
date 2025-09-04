@@ -26,7 +26,7 @@ SCHEMA_VERSION = "v1"
 
 # Compresión por defecto para Parquet (rápida y con buen ratio)
 ParquetCompression = Literal["lz4","uncompressed","snappy","gzip","lzo","brotli","zstd"]
-PARQUET_COMPRESSION = "zstd"  # requiere pyarrow instalado
+PARQUET_COMPRESSION: ParquetCompression = "zstd"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -152,7 +152,7 @@ def load_df(kind: str, cfg: Mapping[str, Any]) -> pd.DataFrame | None:
 # Polars API (nativa y rápida)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def save_pl(kind: str, cfg: Mapping[str, Any], df: pl.DataFrame) -> Path:
+def save_pl(kind: str, cfg: Mapping[str, Any], df: pl.DataFrame, compression: ParquetCompression = PARQUET_COMPRESSION) -> Path:
     """
     Guarda polars.DataFrame a parquet con compresión Zstd y escritura atómica.
     """
@@ -161,7 +161,7 @@ def save_pl(kind: str, cfg: Mapping[str, Any], df: pl.DataFrame) -> Path:
     with _file_lock(lock):
         tmp = p.with_suffix(p.suffix + ".tmp")
         p.parent.mkdir(parents=True, exist_ok=True)
-        df.write_parquet(tmp, compression=PARQUET_COMPRESSION)
+        df.write_parquet(tmp, compression=compression)
         os.replace(tmp, p)
     return p
 

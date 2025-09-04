@@ -20,9 +20,6 @@ def long_to_wide(
     index: str = "date",
     columns: str = "ticker",
 ) -> pl.DataFrame:
-    """
-    Convierte un DF largo (date|ticker|value_col) a ancho (date + 1 col por ticker).
-    """
     required = {index, columns, value_col}
     if not required.issubset(df_long.columns):
         missing = required - set(df_long.columns)
@@ -345,30 +342,37 @@ def summary_stats(
 
 def missing_report_wide(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Reporte de missing y si la serie termina en missing (útil para detectar fallos de ingestión por ticker).
+    Reporte de missing y si la serie termina en missing (útil para detectar fallos por ticker).
     """
+    if "date" not in df.columns:
+        raise ValueError("'date' column required.")
     tickers = [c for c in df.columns if c != "date"]
-    lf = df.lazy()
+    if not tickers:
+        return pl.DataFrame(
+            {"ticker": [], "missing_rows": [], "missing_pct": [], "ends_missing": []}
+        )
+
+    # Agregaciones a nivel de tabla → usar .select()
     aggs = []
     for t in tickers:
         aggs.extend(
             [
                 pl.col(t).is_null().sum().alias(f"{t}__miss"),
-                pl.last(pl.col(t)).is_null().cast(pl.Int8).alias(f"{t}__ends_missing"),
+                pl.last(t).is_null().cast(pl.Int8).alias(f"{t}__ends_missing"),
             ]
         )
-    tmp = lf.agg(aggs).collect()
-    rows = []
+    tmp = df.select(aggs)
+
     total = df.height
+    rows = []
     for t in tickers:
         miss = tmp.select(f"{t}__miss").item()
         endm = tmp.select(f"{t}__ends_missing").item()
         pct = (miss / total * 100.0) if total else None
         rows.append((t, miss, pct, bool(endm)))
+
     return pl.DataFrame(
-        rows,
-        schema=["ticker", "missing_rows", "missing_pct", "ends_missing"],
-        orient="row",
+        rows, schema=["ticker", "missing_rows", "missing_pct", "ends_missing"], orient="row"
     )
 
 

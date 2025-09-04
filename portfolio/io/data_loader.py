@@ -279,10 +279,7 @@ def get_prices_wide(
         use_cache=use_cache,
     )
 
-    df_wide = (
-        df_long.pivot(values="price", index="date", on="ticker")
-               .sort("date")
-    )
+    df_wide = df_long.pivot(values="price", index="date", on="ticker").sort("date")
 
     if as_pandas:
         return df_wide.to_pandas()

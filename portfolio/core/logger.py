@@ -17,8 +17,8 @@ class JsonRunLogger:
         self.path = os.path.join(log_dir, f"{run_name}-{ts}.jsonl")
         self.t0 = time.time()
 
-    def log(self, event: str, **payload: dict[str, Any]) -> dict[str, Any]:
-        rec = {
+    def log(self, event: str, **payload: Any) -> dict[str, Any]:
+        rec: dict[str, Any] = {
             "event": event,
             "utc": datetime.utcnow().isoformat(),
             "elapsed_sec": round(time.time() - self.t0, 3),
