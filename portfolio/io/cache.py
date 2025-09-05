@@ -153,9 +153,6 @@ def load_df(kind: str, cfg: Mapping[str, Any]) -> pd.DataFrame | None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def save_pl(kind: str, cfg: Mapping[str, Any], df: pl.DataFrame, compression: ParquetCompression = PARQUET_COMPRESSION) -> Path:
-    """
-    Guarda polars.DataFrame a parquet con compresión Zstd y escritura atómica.
-    """
     p = cache_path(kind, cfg, ext="parquet")
     lock = p.with_suffix(p.suffix + ".lock")
     with _file_lock(lock):

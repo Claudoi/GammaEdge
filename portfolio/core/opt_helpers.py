@@ -1,7 +1,7 @@
 # portfolio/core/opt_helpers.py
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Sequence
 
 import numpy as np
 
@@ -23,27 +23,22 @@ def safe_project(w: np.ndarray, w_min: float, w_max: float) -> np.ndarray:
     return (x / s) if s > 1e-12 else np.full(n, 1.0 / n, dtype=float)
 
 
-def stack_Ws(Ws_list: Sequence[np.ndarray], N: int, projector: Callable[[np.ndarray], np.ndarray] | None = None) -> np.ndarray:
+def stack_Ws(Ws_list: list[np.ndarray], N: int) -> np.ndarray:
     """Apila carteras (lista → matriz nGxN) filtrando None, tamaños malos y NaN/Inf."""
     good: list[np.ndarray] = []
     for w in Ws_list:
         if w is None:
             continue
-        w = np.asarray(w, float).reshape(-1)
-        if w.size != N:
+        ww = np.asarray(w, float).reshape(-1)
+        if ww.size != N:
             continue
-        if projector is not None:
-            try:
-                w = projector(w)
-            except Exception:
-                w = np.full(N, 1.0 / N, dtype=float)
-        else:
-            if not np.all(np.isfinite(w)):
-                w = np.nan_to_num(w, nan=0.0, posinf=0.0, neginf=0.0)
-        good.append(w)
+        if not np.all(np.isfinite(ww)):
+            ww = np.nan_to_num(ww, nan=0.0, posinf=0.0, neginf=0.0)
+        good.append(ww)
     if not good:
-        raise ValueError("No valid weight vectors to stack.")
+        raise ValueError("No valid weight vectors to stack (after filtering).")
     return np.vstack(good)
+
 
 
 def solve_cvar_with_fallback(

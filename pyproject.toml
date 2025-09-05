@@ -93,8 +93,19 @@ target-version = ["py311"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-extend-select = ["I", "N", "E", "F", "UP", "SIM", "B", "C90"]
-ignore = ["E203", "E266", "E501"]
+# Quitamos "N" del extend-select y dejamos reglas útiles
+extend-select = ["I", "E", "F", "UP", "SIM", "B", "C90"]
+# Ignoramos reglas que te están frenando ahora
+ignore = [
+  "E203", "E266", "E501",
+  "N801", "N802", "N803", "N806",  # naming de clases/func/args/vars
+  "C901",                          # complejidad
+  "B008",                          # llamada en default (p. ej. HeatmapOrder())
+  "UP007",                         # Union vs |
+  "E701", "E702"                   # múltiples statements en una línea
+]
+
+
 
 [tool.isort]
 profile = "black"

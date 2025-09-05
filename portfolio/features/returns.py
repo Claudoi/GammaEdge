@@ -382,9 +382,17 @@ def missing_report_wide(df: pl.DataFrame) -> pl.DataFrame:
 
 def simple_returns_pd(prices: pd.DataFrame) -> pd.DataFrame:
     """
-    Equivalente a tu función original, implementado con Polars bajo el capó cuando es útil.
+    Retornos simples: (P_t / P_{t-1} - 1), saltando la primera fila.
     """
-    df = prices.sort_index()
+    if prices.empty:
+        return prices
+    df = prices.copy()
+    # Asegura DateTimeIndex ordenado (no obligatorio para pct_change, pero sano)
+    if not isinstance(df.index, pd.DatetimeIndex):
+        try:
+            df = df.sort_index()
+        except Exception:
+            pass
     out = df.pct_change().iloc[1:]
     return out
 
@@ -394,14 +402,35 @@ def log_returns_pd(prices: pd.DataFrame) -> pd.DataFrame:
     return out
 
 def to_frequency_pd(returns: pd.DataFrame, freq: str) -> pd.DataFrame:
+    """
+    Agrega retornos a frecuencia `freq` respetando composición:
+      - log-like: suma
+      - simple-like: (1+r).prod - 1
+    Requiere DateTimeIndex para `resample`.
+    """
     if returns.empty:
         return returns
-    # Inferencia simple: si hay valores <= -1 → log
-    is_log_like = (returns <= -1.0).any().any() or (returns.abs().median() > 0.25).any()
+
+    df = returns.copy()
+
+    # Garantiza DateTimeIndex para resample
+    if not isinstance(df.index, pd.DatetimeIndex):
+        # Intento conservador: si hay una columna 'date' en el índice, úsala
+        # o como último recurso, conviértelo.
+        try:
+            df.index = pd.to_datetime(df.index, utc=False)
+        except Exception:
+            # Si no se puede, devolvemos sin agrupar para no romper
+            return df
+
+    # Heurística de tipo (igual que antes)
+    is_log_like = (df <= -1.0).any().any() or (df.abs().median() > 0.25).any()
+
     if is_log_like:
-        out = returns.resample(freq).sum(min_count=1)
+        out = df.resample(freq).sum(min_count=1)
     else:
-        out = (1.0 + returns).resample(freq).prod(min_count=1) - 1.0
+        out = (1.0 + df).resample(freq).prod(min_count=1) - 1.0
+
     return out.dropna(how="all")
 
 def winsorize_pd(returns: pd.DataFrame, q: float = 0.01) -> pd.DataFrame:

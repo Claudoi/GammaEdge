@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 
@@ -13,17 +13,18 @@ class JsonRunLogger:
     """
     def __init__(self, log_dir: str = "logs", run_name: str = "run") -> None:
         os.makedirs(log_dir, exist_ok=True)
-        ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
+        ts = datetime.now(UTC).strftime("%Y%m%d-%H%M%S")
         self.path = os.path.join(log_dir, f"{run_name}-{ts}.jsonl")
-        self.t0 = time.time()
+        self.t0 = time.perf_counter()
 
     def log(self, event: str, **payload: Any) -> dict[str, Any]:
         rec: dict[str, Any] = {
             "event": event,
-            "utc": datetime.utcnow().isoformat(),
-            "elapsed_sec": round(time.time() - self.t0, 3),
+            "utc": datetime.now(UTC).isoformat(),
+            "elapsed_sec": round(time.perf_counter() - self.t0, 6),
             **payload,
         }
         with open(self.path, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         return rec
+

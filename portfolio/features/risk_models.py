@@ -38,7 +38,9 @@ def _infer_periodicity(df_ret_wide: pl.DataFrame) -> Periodicity:
     )
     if d.is_empty():
         return PERIODICITY_DAY
-    med_days = float(pl.Series(d).median())
+    m = pl.Series(d).median()
+    med_days = float(m if m is not None else 0.0)
+
     if med_days <= 3.0:
         return PERIODICITY_DAY
     if med_days <= 9.0:

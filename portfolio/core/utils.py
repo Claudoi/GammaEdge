@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from typing import Any
 
 import numpy as np
 import polars as pl
@@ -151,7 +152,7 @@ def clean_returns_matrix(returns_wide: pl.DataFrame) -> pl.DataFrame:
 # ─────────────────────────────────────────────────────────
 # Wrappers robustos
 # ─────────────────────────────────────────────────────────
-def hrp_safe(hrp_func: Callable, cov: np.ndarray, **kwargs) -> np.ndarray:
+def hrp_safe(hrp_func: Callable[..., np.ndarray], cov: np.ndarray, **kwargs: Any) -> np.ndarray:
     """
     Envuelve un HRP que pudiera fallar; si algo sale mal, devuelve equal-weight.
     Espera que hrp_func(cov=..., **kwargs) -> np.ndarray (pesos).
@@ -161,7 +162,6 @@ def hrp_safe(hrp_func: Callable, cov: np.ndarray, **kwargs) -> np.ndarray:
         w = np.asarray(w, dtype=float)
         if w.ndim != 1 or not np.all(np.isfinite(w)) or w.size != cov.shape[0]:
             raise ValueError("Invalid weights shape or NaN/Inf in HRP output")
-        # Proyección ligera por seguridad
         w = np.clip(w, 0.0, 1.0)
         s = w.sum()
         return w / s if s > 0 else np.full(w.size, 1.0 / w.size)
