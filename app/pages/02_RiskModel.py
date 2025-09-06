@@ -123,12 +123,12 @@ def _json_default(o):
             return o.isoformat()
         except Exception:
             pass
-    import numpy as np
-    if isinstance(o, (np.integer,)):
+
+    if isinstance(o, np.integer):
         return int(o)
-    if isinstance(o, (np.floating,)):
+    if isinstance(o, np.floating):
         return float(o)
-    if isinstance(o, (np.ndarray,)):
+    if isinstance(o, np.ndarray):
         return o.tolist()
     return str(o)
 

@@ -263,12 +263,13 @@ def get_prices_wide(
         Si `as_pandas=True`, devuelve pandas (ancho) para compatibilidad con librerías legacy.
         Por defecto devuelve Polars (ancho) con columnas: ['date', T1, T2, ...]
     """
-    cfg = {
+    """cfg = {
         "interval": interval,
         "adjust": adjust,
         "force_refresh": force_refresh,
         "use_cache": use_cache,
-    }
+    }"""
+    
     df_long = get_prices_long(
         tickers=tickers,
         start=start,

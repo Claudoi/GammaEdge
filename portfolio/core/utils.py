@@ -114,11 +114,7 @@ def project_to_box_simplex(
     x = np.clip(v - tau, w_min, w_max)
     # Normalización final (numérica) para asegurar suma 1
     s = x.sum()
-    if s <= tol:
-        x = np.full(n, 1.0 / n)
-    else:
-        x = x / s
-    return x
+    return np.full(n, 1.0 / n) if s <= tol else (x / s)
 
 
 # ─────────────────────────────────────────────────────────

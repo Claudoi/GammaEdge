@@ -15,6 +15,7 @@ import streamlit as st
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 # ── Solvers de optimización (bajo nivel) ─────────────────────────────
+from portfolio.backtest.engine import backtest_rebalanced
 from portfolio.core.guards import box_feasible, validate_weights
 from portfolio.core.logger import JsonRunLogger
 from portfolio.core.metrics import cvar_estimate, gini, portfolio_stats
@@ -470,7 +471,6 @@ def allocator(win: pl.DataFrame) -> np.ndarray:
     w = project_to_box_simplex(w, w_min, w_max)
     return w
 
-from portfolio.backtest.engine import backtest_rebalanced
 
 bt = backtest_rebalanced(
     df_ret_wide,

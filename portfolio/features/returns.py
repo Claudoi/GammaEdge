@@ -1,6 +1,7 @@
 # portfolio/features/returns.py
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass
 from typing import Literal
 
@@ -389,10 +390,9 @@ def simple_returns_pd(prices: pd.DataFrame) -> pd.DataFrame:
     df = prices.copy()
     # Asegura DateTimeIndex ordenado (no obligatorio para pct_change, pero sano)
     if not isinstance(df.index, pd.DatetimeIndex):
-        try:
+        with contextlib.suppress(Exception):
             df = df.sort_index()
-        except Exception:
-            pass
+
     out = df.pct_change().iloc[1:]
     return out
 
