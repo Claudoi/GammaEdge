@@ -340,7 +340,6 @@ def summary_stats(
     )
 
 
-
 def missing_report_wide(df: pl.DataFrame) -> pl.DataFrame:
     """
     Reporte de missing y si la serie termina en missing (útil para detectar fallos por ticker).
@@ -396,10 +395,12 @@ def simple_returns_pd(prices: pd.DataFrame) -> pd.DataFrame:
     out = df.pct_change().iloc[1:]
     return out
 
+
 def log_returns_pd(prices: pd.DataFrame) -> pd.DataFrame:
     df = prices.sort_index()
     out = np.log(df).diff().iloc[1:]
     return out
+
 
 def to_frequency_pd(returns: pd.DataFrame, freq: str) -> pd.DataFrame:
     """
@@ -433,10 +434,12 @@ def to_frequency_pd(returns: pd.DataFrame, freq: str) -> pd.DataFrame:
 
     return out.dropna(how="all")
 
+
 def winsorize_pd(returns: pd.DataFrame, q: float = 0.01) -> pd.DataFrame:
     lo = returns.quantile(q)
     hi = returns.quantile(1 - q)
     return returns.clip(lower=lo, upper=hi, axis=1)
+
 
 def missing_report_wide(df: pl.DataFrame) -> pl.DataFrame:
     """

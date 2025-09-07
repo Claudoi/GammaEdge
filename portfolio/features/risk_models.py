@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
+import pandas as pd
 import polars as pl
 from sklearn.covariance import OAS, LedoitWolf
 
@@ -64,47 +65,49 @@ def ewma_default_lambda(periodicity: Periodicity | int) -> float:
 
 
 def _wide_to_matrix(
-    df_ret_wide: pl.DataFrame,
+    df_ret_wide: pl.DataFrame | pd.DataFrame,
     fill: Literal["drop", "mean", "none"] = "drop",
 ) -> tuple[np.ndarray, list[str]]:
     """
-    Convierte retornos anchos → matriz NumPy (T,N) float64 C-contiguous + lista de tickers.
+    Convierte retornos anchos (Polars o Pandas) → (matriz T x N float64, lista de tickers).
     NaN policy:
-      - "drop": elimina filas con cualquier NaN.
-      - "mean": imputa NaN con la media de columna.
-      - "none": no toca NaNs (se espera que ya estén resueltos aguas arriba).
-    También normaliza ±inf → NaN antes de aplicar la política.
+      - "drop": elimina filas con cualquier NaN
+      - "mean": imputa con la media de col
+      - "none": valida que no existan NaNs
     """
-    tickers = [c for c in df_ret_wide.columns if c != "date"]
-    if not tickers:
-        return np.empty((0, 0), dtype=np.float64), tickers
+    # Detecta tipo
+    if isinstance(df_ret_wide, pd.DataFrame):
+        tickers = [c for c in df_ret_wide.columns if c != "date"]
+        if not tickers:
+            return np.empty((0, 0), dtype=np.float64), []
+        X = df_ret_wide[tickers].to_numpy(dtype=np.float64)  # (T, N)
+    else:
+        # Polars
+        tickers = [c for c in df_ret_wide.columns if c != "date"]
+        if not tickers:
+            return np.empty((0, 0), dtype=np.float64), []
+        X = df_ret_wide.select(tickers).to_numpy()
+        X = np.asarray(X, dtype=np.float64)
 
-    X = df_ret_wide.select(tickers).to_numpy()  # (T, N)
-    # Inf → NaN para tratamiento homogéneo
-    X = np.asarray(X, dtype=np.float64)
+    # Normaliza inf → NaN
     X[~np.isfinite(X)] = np.nan
-
     if X.size == 0:
         return X, tickers
 
     if fill == "drop":
-        mask = ~np.isnan(X).any(axis=1)
-        X = X[mask]
+        X = X[~np.isnan(X).any(axis=1)]
     elif fill == "mean":
         col_mean = np.nanmean(X, axis=0)
         inds = np.where(np.isnan(X))
         if inds[0].size:
             X[inds] = np.take(col_mean, inds[1])
     elif fill == "none":
-        # Validación ligera (útil para evitar fallos silenciosos en sklearn)
         if np.isnan(X).any():
             raise ValueError("NaNs present but fill='none'. Pre-clean your data before calling.")
     else:
         raise ValueError("fill must be 'drop', 'mean' or 'none'.")
 
-    # Garantizamos float64 C-order (sklearn evita DataOrientationWarning/eficiencia)
-    X = np.ascontiguousarray(X, dtype=np.float64)
-    return X, tickers
+    return np.ascontiguousarray(X, dtype=np.float64), tickers
 
 
 def _ema_last(x: np.ndarray, span: int) -> float:
@@ -154,7 +157,7 @@ def apply_ridge(Sigma: np.ndarray, eps: float) -> np.ndarray:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def expected_returns(
-    df_ret_wide: pl.DataFrame,
+    df_ret_wide: pl.DataFrame | pd.DataFrame,
     *,
     method: MuMethod = "ema",
     span: int | None = 60,
@@ -162,6 +165,7 @@ def expected_returns(
     annualize: bool = True,
     fill: Literal["drop", "mean", "none"] = "drop",
 ) -> tuple[np.ndarray, list[str]]:
+
     """
     Calcula μ con varios métodos. Devuelve (mu_vec, tickers) alineados.
 
@@ -205,7 +209,7 @@ def expected_returns(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def covariance(
-    df_ret_wide: pl.DataFrame,
+    df_ret_wide: pl.DataFrame | pd.DataFrame,
     *,
     method: CovMethod = "oas",
     ewma_lambda: float = 0.94,
@@ -214,6 +218,7 @@ def covariance(
     fill: Literal["drop", "mean", "none"] = "drop",
     psd: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
+
     """
     Estima Σ con varios métodos. Devuelve (Sigma, tickers).
 
@@ -266,6 +271,7 @@ def covariance(
         Sigma = _ensure_psd(Sigma)
 
     return Sigma * ann, names
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Correlación
