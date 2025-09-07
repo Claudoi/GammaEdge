@@ -474,3 +474,8 @@ def missing_report_wide(df: pl.DataFrame) -> pl.DataFrame:
         rows, schema=["ticker", "missing_rows", "missing_pct", "ends_missing"], orient="row"
     )
 
+def simple_returns(prices: pd.DataFrame) -> pd.DataFrame:
+    return simple_returns_pd(prices)
+
+def to_frequency(returns: pd.DataFrame, freq: str) -> pd.DataFrame:
+    return to_frequency_pd(returns, freq)

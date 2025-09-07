@@ -210,20 +210,22 @@ def _build_PQ_absolute(names: list[str], asset: str, q: float) -> tuple[np.ndarr
     P = np.zeros((1, N), dtype=float)
     try:
         idx = names.index(asset)
-    except ValueError:
-        raise ValueError(f"Asset '{asset}' not found in universe.")
+    except ValueError as e:
+        raise ValueError(f"Asset '{asset}' not found in universe.") from e
     P[0, idx] = 1.0
     Q = np.array([q], dtype=float)
     return P, Q
+
 
 def _build_PQ_relative(names: list[str], long: str, short: str, q: float) -> tuple[np.ndarray, np.ndarray]:
     """Vista relativa: r_i - r_j = q."""
     N = len(names)
     P = np.zeros((1, N), dtype=float)
     try:
-        i = names.index(long); j = names.index(short)
+        i = names.index(long)
+        j = names.index(short)
     except ValueError as e:
-        raise ValueError(f"Relative view asset not in universe: {e}")
+        raise ValueError(f"Relative view asset not in universe: {e}") from e
     P[0, i] = 1.0
     P[0, j] = -1.0
     Q = np.array([q], dtype=float)
