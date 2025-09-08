@@ -441,42 +441,6 @@ def winsorize_pd(returns: pd.DataFrame, q: float = 0.01) -> pd.DataFrame:
     return returns.clip(lower=lo, upper=hi, axis=1)
 
 
-def missing_report_wide(df: pl.DataFrame) -> pl.DataFrame:
-    """
-    Reporte de missing y si la serie termina en missing (útil para detectar fallos por ticker).
-    """
-    if "date" not in df.columns:
-        raise ValueError("'date' column required.")
-    tickers = [c for c in df.columns if c != "date"]
-    if not tickers:
-        return pl.DataFrame(
-            {"ticker": [], "missing_rows": [], "missing_pct": [], "ends_missing": []}
-        )
-
-    # Agregaciones a nivel de toda la tabla → usar .select(), no .agg()
-    aggs = []
-    for t in tickers:
-        aggs.extend(
-            [
-                pl.col(t).is_null().sum().alias(f"{t}__miss"),
-                pl.col(t).last().is_null().cast(pl.Int8).alias(f"{t}__ends_missing"),
-            ]
-        )
-
-    tmp = df.select(aggs)  # <— cambio clave: select en DF (o lf.select si quisieras lazy)
-
-    total = df.height
-    rows = []
-    for t in tickers:
-        miss = tmp.select(f"{t}__miss").item()
-        endm = tmp.select(f"{t}__ends_missing").item()
-        pct = (miss / total * 100.0) if total else None
-        rows.append((t, miss, pct, bool(endm)))
-
-    return pl.DataFrame(
-        rows, schema=["ticker", "missing_rows", "missing_pct", "ends_missing"], orient="row"
-    )
-
 def simple_returns(prices: pd.DataFrame) -> pd.DataFrame:
     return simple_returns_pd(prices)
 
