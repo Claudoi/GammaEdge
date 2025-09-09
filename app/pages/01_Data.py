@@ -7,7 +7,12 @@ import json
 import os
 import sys
 import time
-from datetime import UTC, date, datetime
+from datetime import date, datetime
+try:
+    from datetime import UTC  # Python 3.11+
+except ImportError:
+    from datetime import timezone as _tz  # Python 3.9/3.10
+    UTC = _tz.utc
 
 import numpy as np
 import plotly.express as px
@@ -117,6 +122,10 @@ def _run_data_pipeline(
 ):
     t0 = time.perf_counter()
 
+    # ------- defaults seguros (por si hay early-returns/errores) -------
+    empty_df = pl.DataFrame()
+    coverage_full = empty_df  # se rellenará más abajo
+
     # Invalida caché antigua si procede
     if invalidate_old:
         age = age_seconds("prices_long", price_cfg)
@@ -124,7 +133,10 @@ def _run_data_pipeline(
             invalidate("prices_long", price_cfg)
 
     # 1) Fetch precios (con caché)
-    df_prices = None if force_refresh else load_pl("prices_long", price_cfg)
+    df_prices = None if not force_refresh else None   # (igual que tenías)
+    if df_prices is None:
+        cached = load_pl("prices_long", price_cfg)
+        df_prices = cached if (cached is not None and not force_refresh) else None
     if df_prices is None:
         df_prices = get_prices_long(
             tickers=tickers, start=str(start), end=str(end),
@@ -140,9 +152,7 @@ def _run_data_pipeline(
         pl.col("price").cast(pl.Float64),
     ]).sort(["ticker","date"])
 
-    # —— Guard de universo: exige cobertura mínima por ticker en el periodo ——
-    # Regla: al menos 2 observaciones válidas (para poder formar un retorno)
-    
+    # —— cobertura mínima por ticker ——
     price_coverage = (
         df_prices.group_by("ticker")
         .agg([
@@ -164,10 +174,8 @@ def _run_data_pipeline(
 
     dropped_tickers_prices = dropped_prices_df["ticker"].to_list() if dropped_prices_df.height else []
 
-    # BONUS: versión UI-friendly si no queda ningún ticker con datos
+    # Si no queda ningún ticker, construye payload mínimo y sal
     if df_prices.select(pl.col("ticker").n_unique()).item() == 0:
-        # Construye un meta y cobertura mínimos para poder renderizar un aviso
-        empty_df = pl.DataFrame()
         meta_partial = {
             "provider": "Yahoo Finance",
             "generated_at_utc": datetime.now(UTC).isoformat(),
@@ -179,7 +187,7 @@ def _run_data_pipeline(
             },
             "data_quality": {
                 "requested_period": {"start": str(start), "end": str(end)},
-                "dropped_tickers": tickers,  # todos cayeron
+                "dropped_tickers": tickers,
             },
             "cache": {
                 "file": str(cache_path("prices_long", price_cfg)),
@@ -196,24 +204,21 @@ def _run_data_pipeline(
             "stats": empty_df,
             "eff": empty_df,
             "meta": meta_partial,
-            "coverage": meta_partial.get("coverage", empty_df) if isinstance(meta_partial, dict) else empty_df,
+            "coverage": empty_df,  # 👈 aquí no existía coverage_full aún
             "dropped_tickers": tickers,
             "t_elapsed": time.perf_counter() - t0,
         }
 
-
-    # 2) Cálculo de retornos (raw) + winsor + wide + frecuencia final
+    # 2) Retornos, winsor, wide, frecuencia final
     df_ret_raw_long = compute_returns_from_prices_long(
         df_prices, freq=freq_prices, kind=ret_kind, drop_first=True
     ).collect()
     df_ret_w   = winsorize_long(df_ret_raw_long, ret_col="ret", q=float(winsor_p))
     df_ret_wide = long_to_wide(df_ret_w, value_col="ret_w")
     if freq_returns != freq_prices:
-        df_ret_wide = returns_to_frequency_wide(
-            df_ret_wide, freq=freq_returns, kind=ret_kind
-        )
+        df_ret_wide = returns_to_frequency_wide(df_ret_wide, freq=freq_returns, kind=ret_kind)
 
-    # 2.b) Cobertura por ticker + exclusión de tickers sin datos suficientes
+    # Cobertura por ticker en retornos
     value_cols = [c for c in df_ret_wide.columns if c != "date"]
     total_dates = int(df_ret_wide.height)
 
@@ -270,7 +275,7 @@ def _run_data_pipeline(
         keep = ["date"] + [c for c in value_cols if c not in dropped_tickers_returns]
         df_ret_wide = df_ret_wide.select(keep)
 
-    # Cobertura completa para UI/meta (retornos + fechas efectivas de precios)
+    # Cobertura completa para UI/meta
     coverage_full = (
         ret_coverage.join(
             price_coverage.select(["ticker", "start_eff", "end_eff"]),
@@ -279,10 +284,8 @@ def _run_data_pipeline(
         )
     )
 
-    # Excluidos finales = por precios ∪ por retornos
+    # Excluidos finales
     dropped_tickers = sorted(set(dropped_tickers_prices) | set(dropped_tickers_returns))
-
-
 
     # 3) Salud/diagnóstico
     mr   = missing_report_wide(df_ret_wide)
@@ -306,7 +309,7 @@ def _run_data_pipeline(
     )
     meta = {
         "provider": "Yahoo Finance",
-        "generated_at_utc": datetime.now(UTC).isoformat(),
+        "generated_at_utc": datetime.now(UTC).isoformat(),  # 👈 sin `UTC` de 3.11
         "params": {
             "tickers": tickers, "start": str(start), "end": str(end),
             "interval": "1d", "adjust": True,
@@ -328,7 +331,6 @@ def _run_data_pipeline(
             pl.col("start_eff").dt.to_string(),
             pl.col("end_eff").dt.to_string(),
         ]).to_dicts(),
-
         "cache": {
             "file": str(cache_path("prices_long", price_cfg)),
             "age_seconds": float(age_seconds("prices_long", price_cfg) or 0.0),
@@ -343,8 +345,9 @@ def _run_data_pipeline(
         "df_ret_wide": df_ret_wide,
         "mr": mr, "gaps": gaps, "out_top": out_top,
         "stats": stats, "eff": eff, "meta": meta,
-        "coverage": meta_partial.get("coverage", empty_df) if isinstance(meta_partial, dict) else empty_df,
-        "dropped_tickers": dropped_tickers,     # ← union precios/retornos
+        # 👇 ANTES referenciabas meta_partial/empty_df (no existen aquí)
+        "coverage": coverage_full,
+        "dropped_tickers": dropped_tickers,
         "t_elapsed": time.perf_counter() - t0,
     }
 

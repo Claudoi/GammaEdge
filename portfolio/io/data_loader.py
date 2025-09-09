@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 import time
 from collections.abc import Iterable
-from dataclasses import dataclass
 from typing import Any
 
 import pandas as pd
@@ -12,19 +11,29 @@ import polars as pl
 import yfinance as yf
 
 from .cache import load_df, save_df
+from portfolio.core.compat import dataclass_compat as dataclass  # ✅
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True)  # ✅
 class PriceLoadConfig:
     tickers: tuple[str, ...]
     start: str
     end: str
     interval: str
     adjust: bool
-    schema_version: str = "prices_v1"   # bump si cambias el esquema
+    schema_version: str = "prices_v1"
+
+    def cache_key(self) -> dict[str, Any]:
+        return {
+            "tickers": ",".join(self.tickers),
+            "start": self.start,
+            "end": self.end,
+            "interval": self.interval,
+            "adjust": self.adjust,
+            "schema": self.schema_version,
+        }
 
     def cache_key(self) -> dict[str, Any]:
         # clave determinista para cache
@@ -36,7 +45,6 @@ class PriceLoadConfig:
             "adjust": self.adjust,
             "schema": self.schema_version,
         }
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers internos

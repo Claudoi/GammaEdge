@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
 import pandas as pd
 import polars as pl
 from sklearn.covariance import OAS, LedoitWolf
+
+from portfolio.core.compat import dataclass_compat as dataclass  # 👈 Importa compat limpio
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Tipos y utilidades generales
@@ -17,9 +18,11 @@ from sklearn.covariance import OAS, LedoitWolf
 MuMethod = Literal["historical", "ema", "shrunk"]
 CovMethod = Literal["sample", "lw", "oas", "ewma"]
 
-@dataclass(frozen=True, slots=True)
+
+@dataclass(frozen=True, slots=True)  # 👈 Ahora consistente con compat.py
 class Periodicity:
     per_year: int  # 252, 52, 12 ...
+
 
 PERIODICITY_DAY   = Periodicity(252)
 PERIODICITY_WEEK  = Periodicity(52)

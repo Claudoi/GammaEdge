@@ -2,14 +2,21 @@
 from __future__ import annotations
 
 import contextlib
-from dataclasses import dataclass
 from typing import Literal
 
 import numpy as np
 import pandas as pd
 import polars as pl
 
+from portfolio.core.compat import dataclass_compat as dataclass  # 👈 Importa compat
+
 ReturnKind = Literal["log", "simple"]
+
+
+@dataclass(frozen=True, slots=True)  # 👈 Usas el decorador compat
+class Periodicity:
+    """Escalas típicas."""
+    per_year: int  # 252, 52, 12 ...
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers: long ↔ wide
@@ -267,10 +274,7 @@ def returns_to_frequency_wide(
 # Estadísticos, annualización y reportes
 # ──────────────────────────────────────────────────────────────────────────────
 
-@dataclass(frozen=True, slots=True)
-class Periodicity:
-    """Escalas típicas."""
-    per_year: int  # 252, 52, 12 ...
+
 
 
 def annualize_mean(mu_periodic: np.ndarray | pl.Series, period: Periodicity) -> np.ndarray:

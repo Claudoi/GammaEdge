@@ -33,6 +33,8 @@ PARQUET_COMPRESSION: ParquetCompression = "zstd"
 # Helpers: hashing, paths, atomic writes, file locks
 # ──────────────────────────────────────────────────────────────────────────────
 
+# portfolio/io/cache.py
+
 def _normalize_for_hash(obj: Any) -> Any:
     """
     Convierte objetos no serializables en representaciones estables.
@@ -40,15 +42,16 @@ def _normalize_for_hash(obj: Any) -> Any:
     - Objetos se pasan a str()
     """
     if isinstance(obj, Mapping):
-        return {str(k): _normalize_for_hash(v) for k, v in sorted(obj.items(), key=lambda x: str(x[0]))}
-    
-    if isinstance(obj, list | tuple | set):
+        return {
+            str(k): _normalize_for_hash(v)
+            for k, v in sorted(obj.items(), key=lambda x: str(x[0]))
+        }
+    # 👇 En Py3.9 usa la tupla de tipos, no `list | tuple | set`
+    if isinstance(obj, (list, tuple, set)):
         return [_normalize_for_hash(v) for v in obj]
-    
-    if isinstance(obj, (str | int | float | bool)) or obj is None:
+    if isinstance(obj, (str, int, float, bool)) or obj is None:
         return obj
-    
-    # fechas, paths, enums, etc.
+    # fechas, paths, enums, numpy scalars, etc.
     return str(obj)
 
 

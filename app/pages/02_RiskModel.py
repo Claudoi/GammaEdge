@@ -6,7 +6,7 @@ import io
 import json
 import os
 import sys
-from datetime import UTC, datetime
+
 
 import numpy as np
 import polars as pl
@@ -38,6 +38,8 @@ from portfolio.viz.plot_utils import (
     risk_contributions_bar,
     scree_plot,
 )
+from datetime import datetime
+from portfolio.core.compat import UTC
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Config & guards
@@ -82,7 +84,7 @@ def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
     # 4) Elimina columnas completamente vacías
     null_counts = df.select([pl.col(c).is_null().sum().alias(c) for c in value_cols]).row(0)
     n_rows = df.height
-    drop_cols = [c for c, nnull in zip(value_cols, null_counts, strict=False) if (nnull == n_rows)]
+    drop_cols = [c for c, nnull in zip(value_cols, null_counts) if (nnull == n_rows)]
     if drop_cols:
         st.warning(f"Dropping empty return columns: {', '.join(drop_cols)}")
         df = df.drop(drop_cols)
@@ -91,7 +93,10 @@ def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
     # 5) Detecta columnas constantes (σ≈0) que rompen Σ
     if value_cols:
         stds = df.select([pl.col(c).std(ddof=1).alias(c) for c in value_cols]).row(0)
-        const_cols = [c for c, s in zip(value_cols, stds, strict=False) if (s is None) or (not np.isfinite(s)) or (s <= 1e-14)]
+        const_cols = [
+            c for c, s in zip(value_cols, stds)
+            if (s is None) or (not np.isfinite(s)) or (s <= 1e-14)
+        ]
         if const_cols:
             st.warning(f"Dropping near-constant columns (σ≈0): {', '.join(const_cols)}")
             df = df.drop(const_cols)

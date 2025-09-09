@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass
+from portfolio.core.compat import dataclass_compat as dataclass
 from typing import Literal, Union
 
 import numpy as np
