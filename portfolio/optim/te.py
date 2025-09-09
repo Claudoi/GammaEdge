@@ -1,6 +1,8 @@
 # portfolio/optim/te.py
 from __future__ import annotations
-from typing import Optional, Sequence, Tuple, Dict
+
+from collections.abc import Sequence
+
 import numpy as np
 
 from .mean_variance import ensure_psd, project_to_box_simplex
@@ -21,11 +23,11 @@ def te_loss_and_grad(
     gamma: float,
     lam_l2: float,
     w_ref: np.ndarray,
-    X: Optional[np.ndarray],
-    lb: Optional[np.ndarray],
-    ub: Optional[np.ndarray],
+    X: np.ndarray | None,
+    lb: np.ndarray | None,
+    ub: np.ndarray | None,
     rho_expo: float,
-) -> Tuple[float, np.ndarray, Dict[str, float]]:
+) -> tuple[float, np.ndarray, dict[str, float]]:
     """
     Devuelve (loss, grad, diag) para el objetivo TE-penalizado.
     """
@@ -68,15 +70,15 @@ def te_active_pgd(
     w_min: float = 0.0,
     w_max: float = 0.1,
     lam_l2: float = 0.0,
-    w_ref: Optional[np.ndarray] = None,
-    X: Optional[np.ndarray] = None,       # F x N
-    lb: Optional[np.ndarray] = None,      # (F,) cotas lower sobre X(w-wb)
-    ub: Optional[np.ndarray] = None,      # (F,) cotas upper sobre X(w-wb)
+    w_ref: np.ndarray | None = None,
+    X: np.ndarray | None = None,       # F x N
+    lb: np.ndarray | None = None,      # (F,) cotas lower sobre X(w-wb)
+    ub: np.ndarray | None = None,      # (F,) cotas upper sobre X(w-wb)
     rho_expo: float = 0.0,                # peso de penalización de exposición
     iters: int = 800,
-    step: Optional[float] = None,
-    warm_start: Optional[np.ndarray] = None,
-) -> Tuple[np.ndarray, Dict[str, float]]:
+    step: float | None = None,
+    warm_start: np.ndarray | None = None,
+) -> tuple[np.ndarray, dict[str, float]]:
     """
     Optimiza cartera activa con PGD bajo caja+simplex y penalización de exposiciones activas.
     Devuelve (w, diag).
@@ -125,10 +127,10 @@ def te_active_pgd(
 def te_frontier_sweep(
     mu: np.ndarray, Sigma: np.ndarray, w_bench: np.ndarray, gammas: Sequence[float], *,
     w_min: float = 0.0, w_max: float = 0.1,
-    lam_l2: float = 0.0, w_ref: Optional[np.ndarray] = None,
-    X: Optional[np.ndarray] = None, lb: Optional[np.ndarray] = None, ub: Optional[np.ndarray] = None, rho_expo: float = 0.0,
-    iters: int = 600, step: Optional[float] = None
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    lam_l2: float = 0.0, w_ref: np.ndarray | None = None,
+    X: np.ndarray | None = None, lb: np.ndarray | None = None, ub: np.ndarray | None = None, rho_expo: float = 0.0,
+    iters: int = 600, step: float | None = None
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Barre γ y devuelve:
       Ws (n_gamma x N), TE (n_gamma,), AR (n_gamma,), Loss (n_gamma,)

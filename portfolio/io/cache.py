@@ -6,8 +6,9 @@ import hashlib
 import json
 import os
 import time
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any, Dict, Iterable, Mapping, MutableMapping, Optional, Tuple, Union
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -24,7 +25,8 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 SCHEMA_VERSION = "v1"
 
 # Compresión por defecto para Parquet (rápida y con buen ratio)
-PARQUET_COMPRESSION = "zstd"  # requiere pyarrow instalado
+ParquetCompression = Literal["lz4","uncompressed","snappy","gzip","lzo","brotli","zstd"]
+PARQUET_COMPRESSION: ParquetCompression = "zstd"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -39,10 +41,13 @@ def _normalize_for_hash(obj: Any) -> Any:
     """
     if isinstance(obj, Mapping):
         return {str(k): _normalize_for_hash(v) for k, v in sorted(obj.items(), key=lambda x: str(x[0]))}
-    if isinstance(obj, (list, tuple, set)):
+    
+    if isinstance(obj, list | tuple | set):
         return [_normalize_for_hash(v) for v in obj]
-    if isinstance(obj, (str, int, float, bool)) or obj is None:
+    
+    if isinstance(obj, (str | int | float | bool)) or obj is None:
         return obj
+    
     # fechas, paths, enums, etc.
     return str(obj)
 
@@ -102,7 +107,7 @@ def exists(kind: str, cfg: Mapping[str, Any], ext: str = "parquet") -> bool:
     return cache_path(kind, cfg, ext).exists()
 
 
-def age_seconds(kind: str, cfg: Mapping[str, Any], ext: str = "parquet") -> Optional[float]:
+def age_seconds(kind: str, cfg: Mapping[str, Any], ext: str = "parquet") -> float | None:
     p = cache_path(kind, cfg, ext)
     if not p.exists():
         return None
@@ -136,7 +141,7 @@ def save_df(kind: str, cfg: Mapping[str, Any], df: pd.DataFrame) -> Path:
     return p
 
 
-def load_df(kind: str, cfg: Mapping[str, Any]) -> Optional[pd.DataFrame]:
+def load_df(kind: str, cfg: Mapping[str, Any]) -> pd.DataFrame | None:
     """
     Carga pandas.DataFrame desde parquet si existe, None si no.
     """
@@ -150,21 +155,18 @@ def load_df(kind: str, cfg: Mapping[str, Any]) -> Optional[pd.DataFrame]:
 # Polars API (nativa y rápida)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def save_pl(kind: str, cfg: Mapping[str, Any], df: pl.DataFrame) -> Path:
-    """
-    Guarda polars.DataFrame a parquet con compresión Zstd y escritura atómica.
-    """
+def save_pl(kind: str, cfg: Mapping[str, Any], df: pl.DataFrame, compression: ParquetCompression = PARQUET_COMPRESSION) -> Path:
     p = cache_path(kind, cfg, ext="parquet")
     lock = p.with_suffix(p.suffix + ".lock")
     with _file_lock(lock):
         tmp = p.with_suffix(p.suffix + ".tmp")
         p.parent.mkdir(parents=True, exist_ok=True)
-        df.write_parquet(tmp, compression=PARQUET_COMPRESSION)
+        df.write_parquet(tmp, compression=compression)
         os.replace(tmp, p)
     return p
 
 
-def load_pl(kind: str, cfg: Mapping[str, Any]) -> Optional[pl.DataFrame]:
+def load_pl(kind: str, cfg: Mapping[str, Any]) -> pl.DataFrame | None:
     p = cache_path(kind, cfg, ext="parquet")
     if not p.exists():
         return None
@@ -190,7 +192,7 @@ def save_np(kind: str, cfg: Mapping[str, Any], arr: np.ndarray, compressed: bool
     return p
 
 
-def load_np(kind: str, cfg: Mapping[str, Any]) -> Optional[np.ndarray]:
+def load_np(kind: str, cfg: Mapping[str, Any]) -> np.ndarray | None:
     p_npz = cache_path(kind, cfg, ext="npz")
     p_npy = cache_path(kind, cfg, ext="npy")
     if p_npz.exists():
@@ -214,7 +216,7 @@ def save_json(kind: str, cfg: Mapping[str, Any], obj: Mapping[str, Any]) -> Path
     return p
 
 
-def load_json(kind: str, cfg: Mapping[str, Any]) -> Optional[dict[str, Any]]:
+def load_json(kind: str, cfg: Mapping[str, Any]) -> dict[str, Any] | None:
     p = cache_path(kind, cfg, ext="json")
     if not p.exists():
         return None

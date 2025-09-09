@@ -3,10 +3,10 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Iterable
 from dataclasses import dataclass
-from typing import Iterable, Any
+from typing import Any
 
-import numpy as np
 import pandas as pd
 import polars as pl
 import yfinance as yf
@@ -263,12 +263,13 @@ def get_prices_wide(
         Si `as_pandas=True`, devuelve pandas (ancho) para compatibilidad con librerías legacy.
         Por defecto devuelve Polars (ancho) con columnas: ['date', T1, T2, ...]
     """
-    cfg = {
+    """cfg = {
         "interval": interval,
         "adjust": adjust,
         "force_refresh": force_refresh,
         "use_cache": use_cache,
-    }
+    }"""
+    
     df_long = get_prices_long(
         tickers=tickers,
         start=start,
@@ -279,10 +280,7 @@ def get_prices_wide(
         use_cache=use_cache,
     )
 
-    df_wide = (
-        df_long.pivot(values="price", index="date", columns="ticker")
-               .sort("date")
-    )
+    df_wide = df_long.pivot(values="price", index="date", on="ticker").sort("date")
 
     if as_pandas:
         return df_wide.to_pandas()
