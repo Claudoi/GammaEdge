@@ -1,7 +1,10 @@
 # portfolio/optim/risk_parity.py
 from __future__ import annotations
+
 import numpy as np
+
 from .mean_variance import ensure_psd, project_to_box_simplex
+
 
 def risk_parity(
     Sigma: np.ndarray,

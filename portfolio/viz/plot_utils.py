@@ -1,15 +1,15 @@
 # portfolio/viz/plot_utils.py
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Iterable, Optional, Sequence, Tuple, Union, Literal, Dict
+from typing import Literal, Union
 
 import numpy as np
-import polars as pl
 import plotly.graph_objects as go
-from scipy.cluster.hierarchy import linkage, leaves_list, dendrogram, optimal_leaf_ordering
+import polars as pl
+from scipy.cluster.hierarchy import dendrogram, leaves_list, linkage, optimal_leaf_ordering
 from scipy.spatial.distance import squareform
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers numéricos
@@ -24,7 +24,7 @@ class HeatmapOrder:
     optimal: bool = True  # optimal leaf ordering (reduce disonancias)
 
 
-def _to_numpy_matrix(x: Union[np.ndarray, pl.DataFrame]) -> np.ndarray:
+def _to_numpy_matrix(x: np.ndarray | pl.DataFrame) -> np.ndarray:
     if isinstance(x, np.ndarray):
         return x
     if isinstance(x, pl.DataFrame):
@@ -61,12 +61,12 @@ def _apply_order(mat: np.ndarray, order: np.ndarray) -> np.ndarray:
 # ──────────────────────────────────────────────────────────────────────────────
 
 def corr_heatmap(
-    Sigma_or_Corr: Union[np.ndarray, pl.DataFrame],
-    labels: Optional[Sequence[str]] = None,
+    Sigma_or_Corr: np.ndarray | pl.DataFrame,
+    labels: Sequence[str] | None = None,
     *,
     is_cov: bool = True,
     order: HeatmapOrder = HeatmapOrder(),
-    zlim: Tuple[float, float] = (-1.0, 1.0),
+    zlim: tuple[float, float] = (-1.0, 1.0),
     title: str = "Correlation Heatmap (clustered)",
 ) -> go.Figure:
     """
@@ -113,8 +113,8 @@ def corr_heatmap(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def corr_dendrogram(
-    Sigma_or_Corr: Union[np.ndarray, pl.DataFrame],
-    labels: Optional[Sequence[str]] = None,
+    Sigma_or_Corr: np.ndarray | pl.DataFrame,
+    labels: Sequence[str] | None = None,
     *,
     is_cov: bool = True,
     method: Literal["single", "complete", "average", "ward"] = "average",
@@ -138,7 +138,7 @@ def corr_dendrogram(
     xlbls = dendro["ivl"]
 
     data = []
-    for xs, ys in zip(icoord, dcoord):
+    for xs, ys in zip(icoord, dcoord, strict=False):
         data.append(go.Scatter(x=xs, y=ys, mode="lines", line=dict(width=1)))
 
     fig = go.Figure(data=data)
@@ -157,7 +157,7 @@ def corr_dendrogram(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def covariance_spectrum(
-    Sigma: Union[np.ndarray, pl.DataFrame],
+    Sigma: np.ndarray | pl.DataFrame,
     *,
     title: str = "Covariance Spectrum (eigenvalues)",
 ) -> go.Figure:
@@ -196,16 +196,16 @@ def covariance_spectrum(
 
 def efficient_frontier(
     *args,
-    mu: Optional[np.ndarray] = None,
-    Sigma: Optional[np.ndarray] = None,
+    mu: np.ndarray | None = None,
+    Sigma: np.ndarray | None = None,
     rf: float = 0.0,
-    risks_closed: Optional[Iterable[float]] = None,
-    rets_closed: Optional[Iterable[float]] = None,
-    risks_box: Optional[Iterable[float]] = None,
-    rets_box: Optional[Iterable[float]] = None,
-    msr_point: Optional[Tuple[float, float]] = None,
-    minvar_point: Optional[Tuple[float, float]] = None,
-    custom_points: Optional[Dict[str, Tuple[float, float]]] = None,
+    risks_closed: Iterable[float] | None = None,
+    rets_closed: Iterable[float] | None = None,
+    risks_box: Iterable[float] | None = None,
+    rets_box: Iterable[float] | None = None,
+    msr_point: tuple[float, float] | None = None,
+    minvar_point: tuple[float, float] | None = None,
+    custom_points: dict[str, tuple[float, float]] | None = None,
     title: str = "Efficient Frontier",
     **kwargs,
 ) -> go.Figure:
@@ -381,7 +381,7 @@ def weights_bar(
     labels: Sequence[str],
     *,
     sort: bool = True,
-    topn: Optional[int] = None,
+    topn: int | None = None,
     horizontal: bool = True,
     title: str = "Portfolio Weights",
 ) -> go.Figure:
@@ -419,7 +419,7 @@ def weights_bar(
 def weights_heatmap(
     W: np.ndarray,                      # shape (S, N) escenarios x activos
     asset_labels: Sequence[str],
-    scenario_labels: Optional[Sequence[str]] = None,
+    scenario_labels: Sequence[str] | None = None,
     *,
     title: str = "Weights by Scenario",
 ) -> go.Figure:
@@ -564,8 +564,8 @@ def scree_plot(
 # Correlation Network Graph
 # ──────────────────────────────────────────────────────────────────────────────
 def network_corr_graph(
-    Sigma_or_Corr: Union[np.ndarray, pl.DataFrame],
-    labels: Optional[Sequence[str]] = None,
+    Sigma_or_Corr: np.ndarray | pl.DataFrame,
+    labels: Sequence[str] | None = None,
     *,
     is_cov: bool = True,
     threshold: float = 0.3,        # dibuja aristas con |ρ|>=threshold
@@ -654,7 +654,7 @@ def risk_contributions_bar(
     labels: Sequence[str],
     *,
     sort: bool = True,
-    topn: Optional[int] = None,
+    topn: int | None = None,
     title: str = "Risk Contributions",
 ) -> go.Figure:
     """
@@ -686,7 +686,7 @@ def risk_contributions_bar(
 # ──────────────────────────────────────────────────────────────────────────────
 def rolling_lines(
     dates: Sequence,
-    series_dict: Dict[str, ArrayLike],
+    series_dict: dict[str, ArrayLike],
     *,
     title: str = "Rolling Metrics",
 ) -> go.Figure:
@@ -713,12 +713,12 @@ def rolling_lines(
 # Heatmap WebGL (para N grandes)
 # ──────────────────────────────────────────────────────────────────────────────
 def corr_heatmap_gl(
-    Sigma_or_Corr: Union[np.ndarray, pl.DataFrame],
-    labels: Optional[Sequence[str]] = None,
+    Sigma_or_Corr: np.ndarray | pl.DataFrame,
+    labels: Sequence[str] | None = None,
     *,
     is_cov: bool = True,
     order: HeatmapOrder = HeatmapOrder(),
-    zlim: Tuple[float, float] = (-1.0, 1.0),
+    zlim: tuple[float, float] = (-1.0, 1.0),
     title: str = "Correlation Heatmap (WebGL)",
 ) -> go.Figure:
     """

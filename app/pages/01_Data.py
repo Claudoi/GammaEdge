@@ -1,31 +1,32 @@
 # app/pages/01_Data.py
 from __future__ import annotations
 
+import hashlib
 import io
 import json
+import os
+import sys
 import time
-from datetime import date, datetime, timezone
-import hashlib
+from datetime import UTC, date, datetime
 
+import numpy as np
+import plotly.express as px
 import polars as pl
 import streamlit as st
-import plotly.express as px
 
-import sys, os
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-from portfolio.io.data_loader import get_prices_long
-from portfolio.io.cache import (
-    save_pl, load_pl, cache_path, invalidate, age_seconds, save_json
-)
 from portfolio.features.returns import (
     compute_returns_from_prices_long,
-    winsorize_long,
     long_to_wide,
+    missing_report_wide,
     returns_to_frequency_wide,
     summary_stats,
-    missing_report_wide,
+    winsorize_long,
 )
+from portfolio.io.cache import age_seconds, cache_path, invalidate, load_pl, save_json, save_pl
+from portfolio.io.data_loader import get_prices_long
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers (internos de esta página)
@@ -40,6 +41,7 @@ def _fmt_age(sec: float | None) -> str:
     if h: return f"{h}h {m}m"
     if m: return f"{m}m"
     return f"{s}s"
+
 
 def gaps_report(df_long: pl.DataFrame, threshold_days: int = 3) -> pl.DataFrame:
     """Reporte de gaps por ticker en días (umbral configurable)."""
@@ -58,6 +60,7 @@ def gaps_report(df_long: pl.DataFrame, threshold_days: int = 3) -> pl.DataFrame:
     )
     return out
 
+
 def top_abs_moves(df_ret_long: pl.DataFrame, k: int = 5) -> pl.DataFrame:
     """Top-k movimientos absolutos por ticker (pre-winsor)."""
     df = df_ret_long.with_columns(pl.col("ret").abs().alias("abs_ret"))
@@ -69,6 +72,7 @@ def top_abs_moves(df_ret_long: pl.DataFrame, k: int = 5) -> pl.DataFrame:
     )
     return out
 
+
 def _json_default(o):
     # datetime.date/datetime → ISO
     if hasattr(o, "isoformat"):
@@ -76,16 +80,16 @@ def _json_default(o):
             return o.isoformat()
         except Exception:
             pass
-    # NumPy → Python
-    import numpy as np
-    if isinstance(o, (np.integer,)):
+
+    if isinstance(o, np.integer):
         return int(o)
-    if isinstance(o, (np.floating,)):
+    if isinstance(o, np.floating):
         return float(o)
-    if isinstance(o, (np.ndarray,)):
+    if isinstance(o, np.ndarray):
         return o.tolist()
-    # Polars datatypes caen en str por defecto si llegan aquí
+
     return str(o)
+
 
 def _fingerprint(obj: dict) -> str:
     blob = json.dumps(
@@ -95,6 +99,7 @@ def _fingerprint(obj: dict) -> str:
         default=_json_default,   # serializador seguro
     ).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:16]
+
 
 def _run_data_pipeline(
     tickers,
@@ -165,7 +170,7 @@ def _run_data_pipeline(
         empty_df = pl.DataFrame()
         meta_partial = {
             "provider": "Yahoo Finance",
-            "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+            "generated_at_utc": datetime.now(UTC).isoformat(),
             "params": {
                 "tickers": tickers, "start": str(start), "end": str(end),
                 "interval": "1d", "adjust": True,
@@ -191,7 +196,7 @@ def _run_data_pipeline(
             "stats": empty_df,
             "eff": empty_df,
             "meta": meta_partial,
-            "coverage": coverage_full,
+            "coverage": meta_partial.get("coverage", empty_df) if isinstance(meta_partial, dict) else empty_df,
             "dropped_tickers": tickers,
             "t_elapsed": time.perf_counter() - t0,
         }
@@ -301,7 +306,7 @@ def _run_data_pipeline(
     )
     meta = {
         "provider": "Yahoo Finance",
-        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
+        "generated_at_utc": datetime.now(UTC).isoformat(),
         "params": {
             "tickers": tickers, "start": str(start), "end": str(end),
             "interval": "1d", "adjust": True,
@@ -338,7 +343,7 @@ def _run_data_pipeline(
         "df_ret_wide": df_ret_wide,
         "mr": mr, "gaps": gaps, "out_top": out_top,
         "stats": stats, "eff": eff, "meta": meta,
-        "coverage": coverage_full,              # ← cobertura completa
+        "coverage": meta_partial.get("coverage", empty_df) if isinstance(meta_partial, dict) else empty_df,
         "dropped_tickers": dropped_tickers,     # ← union precios/retornos
         "t_elapsed": time.perf_counter() - t0,
     }

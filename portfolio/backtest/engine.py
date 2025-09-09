@@ -1,8 +1,11 @@
 # portfolio/backtest/engine.py  (añadir)
 from __future__ import annotations
-from typing import Callable, Dict, Optional, Tuple
+
+from collections.abc import Callable
+
 import numpy as np
 import polars as pl
+
 
 def _rebalance_dates_from_freq(dates: pl.Series, freq: str = "1mo") -> pl.Series:
     """
@@ -25,8 +28,8 @@ def backtest_rebalanced(
     rebalance_freq: str = "1mo",
     cost_bps: float = 0.0,
     allocator: Callable[[pl.DataFrame], np.ndarray],  # recibe ventana (lookback) y devuelve w (N,)
-    bench_weights: Optional[np.ndarray] = None,
-) -> Dict[str, object]:
+    bench_weights: np.ndarray | None = None,
+) -> dict[str, object]:
     """
     Backtest sencillo con rebalance periódico y costes lineales en turnover.
     - allocator recibe returns wide de la ventana (últimos 'lookback' puntos) y devuelve pesos para el próximo periodo.
