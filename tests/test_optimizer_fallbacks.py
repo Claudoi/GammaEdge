@@ -1,7 +1,5 @@
 import numpy as np
-
 from portfolio.core.utils import hrp_safe
-
 
 def dummy_hrp_fail(cov: np.ndarray, **kwargs):
     raise RuntimeError("clustering failed")

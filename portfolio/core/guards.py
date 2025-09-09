@@ -1,7 +1,5 @@
 from __future__ import annotations
-
 import numpy as np
-
 
 def box_feasible(n: int, w_min: float, w_max: float) -> bool:
     """

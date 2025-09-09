@@ -1,20 +1,16 @@
+# portfolio/optim/hrp.py
 from __future__ import annotations
-
-from typing import Literal
-
 import numpy as np
-from scipy.cluster.hierarchy import leaves_list, linkage, optimal_leaf_ordering
+from scipy.cluster.hierarchy import linkage, leaves_list, optimal_leaf_ordering
 from scipy.spatial.distance import squareform
-
 from .mean_variance import ensure_psd, project_to_box_simplex
-
 
 def _corr_from_cov(S: np.ndarray) -> np.ndarray:
     d = np.sqrt(np.clip(np.diag(S), 1e-16, None))
     R = (S / d[:, None]) / d[None, :]
     return np.clip(0.5 * (R + R.T), -1.0, 1.0)
 
-def _seriation_order(Sigma: np.ndarray, method: Literal["single","complete","average","ward"] = "ward", optimal: bool = True) -> np.ndarray:
+def _seriation_order(Sigma: np.ndarray, method: str = "ward", optimal: bool = True) -> np.ndarray:
     Corr = _corr_from_cov(Sigma)
     dist = np.sqrt(np.maximum(0.0, 0.5 * (1.0 - Corr)))
     Z = linkage(squareform(dist, checks=False), method=method)
@@ -25,7 +21,7 @@ def _seriation_order(Sigma: np.ndarray, method: Literal["single","complete","ave
 def hrp_weights(
     Sigma: np.ndarray,
     *,
-    method: Literal["single","complete","average","ward"] = "ward",
+    method: str = "ward",
     optimal: bool = True,
     w_min: float = 0.0,
     w_max: float = 1.0,
@@ -37,12 +33,12 @@ def hrp_weights(
     order = _seriation_order(S, method=method, optimal=optimal)
     S = S[np.ix_(order, order)]
 
-    def _cluster_var(Ss: np.ndarray) -> float:
+    def _cluster_var(Ss):
         invdiag = 1.0 / np.clip(np.diag(Ss), 1e-16, None)
         w = invdiag / invdiag.sum()
         return float(w @ Ss @ w)
 
-    def _split_allocation(Ss: np.ndarray, idx: np.ndarray) -> np.ndarray:
+    def _split_allocation(Ss, idx):
         if len(idx) == 1:
             return np.array([1.0])
         k = len(idx) // 2
@@ -58,7 +54,9 @@ def hrp_weights(
         return w
 
     base = _split_allocation(S, np.arange(S.shape[0]))
+    # desordenar al universo original
     w = np.zeros_like(base)
     w[order] = base
+    # caja + simplex
     w = project_to_box_simplex(w, w_min, w_max)
     return w

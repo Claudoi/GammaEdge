@@ -1,18 +1,15 @@
 # portfolio/optim/exposures.py
 from __future__ import annotations
-
-from collections.abc import Sequence
-
+from typing import Sequence, List, Tuple, Optional, Dict
 import numpy as np
 import polars as pl
-
 
 def build_onehot_exposure(
     names: Sequence[str],
     meta: pl.DataFrame,
     *,
     cols: Sequence[str] = ("sector", "country"),
-) -> tuple[np.ndarray, list[str]]:
+) -> Tuple[np.ndarray, List[str]]:
     """
     Convierte columnas categóricas (sector, country, ...) en una matriz one-hot F x N
     alineada con 'names'. meta debe tener columnas: ['ticker'] + cols.
@@ -27,7 +24,7 @@ def build_onehot_exposure(
             df = df.with_columns(pl.col(c).cast(pl.Utf8).str.to_uppercase())
     # pivot wide por cada columna y acumula
     mats = []
-    labels: list[str] = []
+    labels: List[str] = []
     N = len(names)
     names_upper = [s.upper() for s in names]
 

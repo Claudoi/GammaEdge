@@ -4,7 +4,7 @@ from __future__ import annotations
 import io
 import os
 import sys
-
+import json
 import numpy as np
 import polars as pl
 import streamlit as st
@@ -15,42 +15,42 @@ import streamlit as st
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 # ── Solvers de optimización (bajo nivel) ─────────────────────────────
-from portfolio.backtest.engine import backtest_rebalanced
-from portfolio.core.guards import box_feasible, validate_weights
-from portfolio.core.logger import JsonRunLogger
-from portfolio.core.metrics import cvar_estimate, gini, portfolio_stats
-from portfolio.core.opt_helpers import solve_cvar_with_fallback, stack_Ws
+from portfolio.optim.mean_variance import (
+    markowitz_closed_form,
+    frontier_closed_form,
+    frontier_box_projected,
+    pgd_box_simplex_l2,
+    pgd_box_simplex_l1,
+    risk_contributions,
+)
+from portfolio.optim.hrp import hrp_weights
+from portfolio.optim.risk_parity import risk_parity
+from portfolio.optim.cvar import cvar_minimization  # usado internamente por opt_helpers
+from portfolio.optim.te import te_active_pgd, te_frontier_sweep
+from portfolio.optim.exposures import build_onehot_exposure
 
 # ── Core común (defensas, métricas, logger, helpers de alto nivel) ───
 from portfolio.core.utils import (
-    clean_returns_matrix,
-    cond_number,
     ensure_psd,
-    hrp_safe,
+    cond_number,
     project_to_box_simplex,
+    clean_returns_matrix,
+    hrp_safe,
 )
-from portfolio.optim.exposures import build_onehot_exposure
-from portfolio.optim.hrp import hrp_weights
-from portfolio.optim.mean_variance import (
-    frontier_box_projected,
-    frontier_closed_form,
-    markowitz_closed_form,
-    pgd_box_simplex_l1,
-    pgd_box_simplex_l2,
-    risk_contributions,
-)
-from portfolio.optim.risk_parity import risk_parity
-from portfolio.optim.te import te_active_pgd, te_frontier_sweep
+from portfolio.core.guards import box_feasible, validate_weights
+from portfolio.core.logger import JsonRunLogger
+from portfolio.core.metrics import portfolio_stats, gini, cvar_estimate
+from portfolio.core.opt_helpers import solve_cvar_with_fallback, stack_Ws
 
 # ── Visualización ────────────────────────────────────────────────────
 from portfolio.viz.plot_utils import (
-    efficient_frontier,
-    equity_and_drawdown,
-    risk_contributions_bar,
-    te_frontier,
-    turnover_vs_gamma,
     weights_bar,
+    risk_contributions_bar,
+    efficient_frontier,
     weights_path_gammas,
+    turnover_vs_gamma,
+    te_frontier,
+    equity_and_drawdown,
 )
 
 # ─────────────────────────────────────────────────────────────────────
@@ -471,6 +471,7 @@ def allocator(win: pl.DataFrame) -> np.ndarray:
     w = project_to_box_simplex(w, w_min, w_max)
     return w
 
+from portfolio.backtest.engine import backtest_rebalanced
 
 bt = backtest_rebalanced(
     df_ret_wide,

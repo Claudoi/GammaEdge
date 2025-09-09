@@ -1,43 +1,43 @@
 # app/pages/02_RiskModel.py
 from __future__ import annotations
 
-import hashlib
 import io
 import json
-import os
-import sys
-from datetime import UTC, datetime
-
+import hashlib
 import numpy as np
 import polars as pl
 import streamlit as st
+from datetime import datetime, timezone
+import sys, os
+from typing import List, Tuple
 
 # Para importar módulos del proyecto
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 # Core risk
 from portfolio.features.risk_models import (
-    black_litterman_mu,
-    capm_mu,
     compute_mu_sigma,
     correlation_from_cov,
+    black_litterman_mu,
+    capm_mu,
     pca_factor_cov,
+)
+
+# Viz
+from portfolio.viz.plot_utils import (
+    HeatmapOrder,
+    corr_heatmap,
+    corr_heatmap_gl,
+    corr_dendrogram,
+    covariance_spectrum,
+    scree_plot,
+    network_corr_graph,
+    risk_contributions_bar,
 )
 
 # Cache persistente de artefactos (para risk_model.json)
 from portfolio.io.cache import save_json
 
-# Viz
-from portfolio.viz.plot_utils import (
-    HeatmapOrder,
-    corr_dendrogram,
-    corr_heatmap,
-    corr_heatmap_gl,
-    covariance_spectrum,
-    network_corr_graph,
-    risk_contributions_bar,
-    scree_plot,
-)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Config & guards
@@ -82,7 +82,7 @@ def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
     # 4) Elimina columnas completamente vacías
     null_counts = df.select([pl.col(c).is_null().sum().alias(c) for c in value_cols]).row(0)
     n_rows = df.height
-    drop_cols = [c for c, nnull in zip(value_cols, null_counts, strict=False) if (nnull == n_rows)]
+    drop_cols = [c for c, nnull in zip(value_cols, null_counts) if (nnull == n_rows)]
     if drop_cols:
         st.warning(f"Dropping empty return columns: {', '.join(drop_cols)}")
         df = df.drop(drop_cols)
@@ -91,7 +91,7 @@ def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
     # 5) Detecta columnas constantes (σ≈0) que rompen Σ
     if value_cols:
         stds = df.select([pl.col(c).std(ddof=1).alias(c) for c in value_cols]).row(0)
-        const_cols = [c for c, s in zip(value_cols, stds, strict=False) if (s is None) or (not np.isfinite(s)) or (s <= 1e-14)]
+        const_cols = [c for c, s in zip(value_cols, stds) if (s is None) or (not np.isfinite(s)) or (s <= 1e-14)]
         if const_cols:
             st.warning(f"Dropping near-constant columns (σ≈0): {', '.join(const_cols)}")
             df = df.drop(const_cols)
@@ -123,12 +123,12 @@ def _json_default(o):
             return o.isoformat()
         except Exception:
             pass
-
-    if isinstance(o, np.integer):
+    import numpy as np
+    if isinstance(o, (np.integer,)):
         return int(o)
-    if isinstance(o, np.floating):
+    if isinstance(o, (np.floating,)):
         return float(o)
-    if isinstance(o, np.ndarray):
+    if isinstance(o, (np.ndarray,)):
         return o.tolist()
     return str(o)
 
@@ -204,34 +204,32 @@ def _ewma_default(per_year: int) -> float:
 # ──────────────────────────────────────────────────────────────────────────────
 # Black–Litterman helpers (simple views builder)
 # ──────────────────────────────────────────────────────────────────────────────
-def _build_PQ_absolute(names: list[str], asset: str, q: float) -> tuple[np.ndarray, np.ndarray]:
+def _build_PQ_absolute(names: List[str], asset: str, q: float) -> Tuple[np.ndarray, np.ndarray]:
     """Vista absoluta: r_i = q."""
     N = len(names)
     P = np.zeros((1, N), dtype=float)
     try:
         idx = names.index(asset)
-    except ValueError as e:
-        raise ValueError(f"Asset '{asset}' not found in universe.") from e
+    except ValueError:
+        raise ValueError(f"Asset '{asset}' not found in universe.")
     P[0, idx] = 1.0
     Q = np.array([q], dtype=float)
     return P, Q
 
-
-def _build_PQ_relative(names: list[str], long: str, short: str, q: float) -> tuple[np.ndarray, np.ndarray]:
+def _build_PQ_relative(names: List[str], long: str, short: str, q: float) -> Tuple[np.ndarray, np.ndarray]:
     """Vista relativa: r_i - r_j = q."""
     N = len(names)
     P = np.zeros((1, N), dtype=float)
     try:
-        i = names.index(long)
-        j = names.index(short)
+        i = names.index(long); j = names.index(short)
     except ValueError as e:
-        raise ValueError(f"Relative view asset not in universe: {e}") from e
+        raise ValueError(f"Relative view asset not in universe: {e}")
     P[0, i] = 1.0
     P[0, j] = -1.0
     Q = np.array([q], dtype=float)
     return P, Q
 
-def _omega_from_confidence(P: np.ndarray, Sigma: np.ndarray, tau: float, confidence: float | list[float]) -> np.ndarray:
+def _omega_from_confidence(P: np.ndarray, Sigma: np.ndarray, tau: float, confidence: float | List[float]) -> np.ndarray:
     """
     Ω diagonal a partir de P, Σ y tau. Mayor confidence → menor varianza (Ω escala por 1/conf).
     """
@@ -350,7 +348,7 @@ def _risk_pipeline(
         "heatmap_method": heatmap_method, "heatmap_optimal": bool(heatmap_optimal),
     }
     meta = {
-        "generated_at_utc": datetime.now(UTC).isoformat(),
+        "generated_at_utc": datetime.now(timezone.utc).isoformat(),
         "params": params,
         "diagnostics": {
             "lambda_min": lam_min, "lambda_max": lam_max,
@@ -643,7 +641,7 @@ if st.session_state.get("risk_ready"):
 
     st.session_state["risk_meta"] = meta
     st.session_state["risk_config"] = risk_cfg
-    st.session_state["risk_timestamp"] = datetime.now(UTC).isoformat()
+    st.session_state["risk_timestamp"] = datetime.now(timezone.utc).isoformat()
 
     st.subheader("📤 Export artifacts")
     colx, coly, colz, colw, colm = st.columns(5)
@@ -671,7 +669,7 @@ if st.session_state.get("risk_ready"):
 
     with colm:
         meta_blob = json.dumps(
-            {**meta, "exported_at_utc": datetime.now(UTC).isoformat()},
+            {**meta, "exported_at_utc": datetime.now(timezone.utc).isoformat()},
             ensure_ascii=False, indent=2, sort_keys=True, default=_json_default
         )
         st.download_button(

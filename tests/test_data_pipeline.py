@@ -1,7 +1,6 @@
+import numpy as np
 import pandas as pd
-
 from portfolio.features.returns import simple_returns, to_frequency
-
 
 def test_resample_simple_returns():
     # Serie sintética: 1% diario → mensual ~ (1.01)^k - 1
