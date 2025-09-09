@@ -1,7 +1,5 @@
 from __future__ import annotations
-
 import numpy as np
-
 
 def portfolio_stats(
     w: np.ndarray,
@@ -40,7 +38,7 @@ def gini(x: np.ndarray) -> float:
     n = x.size
     cumx = np.cumsum(x)
     # fórmula estándar discreta
-    g = (n + 1 - 2 * float(np.sum(cumx) / cumx[-1])) / n
+    g = (n + 1 - 2 * np.sum(cumx) / cumx[-1]) / n
     return float(g)
 
 

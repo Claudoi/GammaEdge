@@ -1,11 +1,7 @@
 from __future__ import annotations
-
-from collections.abc import Callable
-from typing import Any
-
 import numpy as np
 import polars as pl
-
+from typing import Callable
 
 # ─────────────────────────────────────────────────────────
 # Matrices de covarianza: saneado + diagnóstico
@@ -114,7 +110,11 @@ def project_to_box_simplex(
     x = np.clip(v - tau, w_min, w_max)
     # Normalización final (numérica) para asegurar suma 1
     s = x.sum()
-    return np.full(n, 1.0 / n) if s <= tol else (x / s)
+    if s <= tol:
+        x = np.full(n, 1.0 / n)
+    else:
+        x = x / s
+    return x
 
 
 # ─────────────────────────────────────────────────────────
@@ -148,7 +148,7 @@ def clean_returns_matrix(returns_wide: pl.DataFrame) -> pl.DataFrame:
 # ─────────────────────────────────────────────────────────
 # Wrappers robustos
 # ─────────────────────────────────────────────────────────
-def hrp_safe(hrp_func: Callable[..., np.ndarray], cov: np.ndarray, **kwargs: Any) -> np.ndarray:
+def hrp_safe(hrp_func: Callable, cov: np.ndarray, **kwargs) -> np.ndarray:
     """
     Envuelve un HRP que pudiera fallar; si algo sale mal, devuelve equal-weight.
     Espera que hrp_func(cov=..., **kwargs) -> np.ndarray (pesos).
@@ -158,6 +158,7 @@ def hrp_safe(hrp_func: Callable[..., np.ndarray], cov: np.ndarray, **kwargs: Any
         w = np.asarray(w, dtype=float)
         if w.ndim != 1 or not np.all(np.isfinite(w)) or w.size != cov.shape[0]:
             raise ValueError("Invalid weights shape or NaN/Inf in HRP output")
+        # Proyección ligera por seguridad
         w = np.clip(w, 0.0, 1.0)
         s = w.sum()
         return w / s if s > 0 else np.full(w.size, 1.0 / w.size)

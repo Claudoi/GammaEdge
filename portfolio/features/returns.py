@@ -1,9 +1,8 @@
 # portfolio/features/returns.py
 from __future__ import annotations
 
-import contextlib
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional, Sequence, Tuple
 
 import numpy as np
 import pandas as pd
@@ -21,11 +20,14 @@ def long_to_wide(
     index: str = "date",
     columns: str = "ticker",
 ) -> pl.DataFrame:
+    """
+    Convierte un DF largo (date|ticker|value_col) a ancho (date + 1 col por ticker).
+    """
     required = {index, columns, value_col}
     if not required.issubset(df_long.columns):
         missing = required - set(df_long.columns)
         raise ValueError(f"Missing columns in long df: {missing}")
-    return df_long.pivot(values=value_col, index=index, on=columns).sort(index)
+    return df_long.pivot(values=value_col, index=index, columns=columns).sort(index)
 
 
 def wide_to_long(
@@ -91,18 +93,17 @@ def resample_prices_last(df_prices_long: pl.DataFrame, every: str = "1w") -> pl.
 
     # Compatibilidad: usar by=["ticker"] y label="right"
     lf = (
-    df.lazy()
-    .group_by_dynamic(  # type: ignore[call-arg]
-        index_column="date",
-        every=every,
-        by=["ticker"],
-        closed="right",
-        label="right",
+        df.lazy()
+        .group_by_dynamic(
+            index_column="date",
+            every=every,
+            by=["ticker"],
+            closed="right",
+            label="right",
+        )
+        .agg(pl.col("price").last().alias("price"))
+        .sort(["ticker", "date"])
     )
-    .agg(pl.col("price").last().alias("price"))
-    .sort(["ticker", "date"])
-    )
-
     return lf
 
 
@@ -211,7 +212,7 @@ def winsorize_wide(df_ret_wide: pl.DataFrame, q: float = 0.01) -> pl.DataFrame:
 # Conversión de frecuencia de retornos (log vs simple)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def infer_return_kind(df_ret_wide: pl.DataFrame, sample_cols: int | None = 5) -> ReturnKind:
+def infer_return_kind(df_ret_wide: pl.DataFrame, sample_cols: Optional[int] = 5) -> ReturnKind:
     """
     Heurística robusta:
     - si la mayoría de |r| <= 0.3 y no hay valores <-1, asumimos 'simple' si min > -1
@@ -232,7 +233,7 @@ def returns_to_frequency_wide(
     df_ret_wide: pl.DataFrame,
     *,
     freq: str,
-    kind: ReturnKind | None = None,
+    kind: Optional[ReturnKind] = None,
     min_count: int = 1,  # reservado; no se usa en esta implementación
 ) -> pl.DataFrame:
     """
@@ -340,6 +341,69 @@ def summary_stats(
     )
 
 
+
+def missing_report_wide(df: pl.DataFrame) -> pl.DataFrame:
+    """
+    Reporte de missing y si la serie termina en missing (útil para detectar fallos de ingestión por ticker).
+    """
+    tickers = [c for c in df.columns if c != "date"]
+    lf = df.lazy()
+    aggs = []
+    for t in tickers:
+        aggs.extend(
+            [
+                pl.col(t).is_null().sum().alias(f"{t}__miss"),
+                pl.last(pl.col(t)).is_null().cast(pl.Int8).alias(f"{t}__ends_missing"),
+            ]
+        )
+    tmp = lf.agg(aggs).collect()
+    rows = []
+    total = df.height
+    for t in tickers:
+        miss = tmp.select(f"{t}__miss").item()
+        endm = tmp.select(f"{t}__ends_missing").item()
+        pct = (miss / total * 100.0) if total else None
+        rows.append((t, miss, pct, bool(endm)))
+    return pl.DataFrame(
+        rows,
+        schema=["ticker", "missing_rows", "missing_pct", "ends_missing"],
+        orient="row",
+    )
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Compatibilidad pandas (por si tienes celdas/notebooks antiguos)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def simple_returns_pd(prices: pd.DataFrame) -> pd.DataFrame:
+    """
+    Equivalente a tu función original, implementado con Polars bajo el capó cuando es útil.
+    """
+    df = prices.sort_index()
+    out = df.pct_change().iloc[1:]
+    return out
+
+def log_returns_pd(prices: pd.DataFrame) -> pd.DataFrame:
+    df = prices.sort_index()
+    out = np.log(df).diff().iloc[1:]
+    return out
+
+def to_frequency_pd(returns: pd.DataFrame, freq: str) -> pd.DataFrame:
+    if returns.empty:
+        return returns
+    # Inferencia simple: si hay valores <= -1 → log
+    is_log_like = (returns <= -1.0).any().any() or (returns.abs().median() > 0.25).any()
+    if is_log_like:
+        out = returns.resample(freq).sum(min_count=1)
+    else:
+        out = (1.0 + returns).resample(freq).prod(min_count=1) - 1.0
+    return out.dropna(how="all")
+
+def winsorize_pd(returns: pd.DataFrame, q: float = 0.01) -> pd.DataFrame:
+    lo = returns.quantile(q)
+    hi = returns.quantile(1 - q)
+    return returns.clip(lower=lo, upper=hi, axis=1)
+
 def missing_report_wide(df: pl.DataFrame) -> pl.DataFrame:
     """
     Reporte de missing y si la serie termina en missing (útil para detectar fallos por ticker).
@@ -352,16 +416,17 @@ def missing_report_wide(df: pl.DataFrame) -> pl.DataFrame:
             {"ticker": [], "missing_rows": [], "missing_pct": [], "ends_missing": []}
         )
 
-    # Agregaciones a nivel de tabla → usar .select()
+    # Agregaciones a nivel de toda la tabla → usar .select(), no .agg()
     aggs = []
     for t in tickers:
         aggs.extend(
             [
                 pl.col(t).is_null().sum().alias(f"{t}__miss"),
-                pl.last(t).is_null().cast(pl.Int8).alias(f"{t}__ends_missing"),
+                pl.col(t).last().is_null().cast(pl.Int8).alias(f"{t}__ends_missing"),
             ]
         )
-    tmp = df.select(aggs)
+
+    tmp = df.select(aggs)  # <— cambio clave: select en DF (o lf.select si quisieras lazy)
 
     total = df.height
     rows = []
@@ -375,74 +440,3 @@ def missing_report_wide(df: pl.DataFrame) -> pl.DataFrame:
         rows, schema=["ticker", "missing_rows", "missing_pct", "ends_missing"], orient="row"
     )
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Compatibilidad pandas (por si tienes celdas/notebooks antiguos)
-# ──────────────────────────────────────────────────────────────────────────────
-
-def simple_returns_pd(prices: pd.DataFrame) -> pd.DataFrame:
-    """
-    Retornos simples: (P_t / P_{t-1} - 1), saltando la primera fila.
-    """
-    if prices.empty:
-        return prices
-    df = prices.copy()
-    # Asegura DateTimeIndex ordenado (no obligatorio para pct_change, pero sano)
-    if not isinstance(df.index, pd.DatetimeIndex):
-        with contextlib.suppress(Exception):
-            df = df.sort_index()
-
-    out = df.pct_change().iloc[1:]
-    return out
-
-
-def log_returns_pd(prices: pd.DataFrame) -> pd.DataFrame:
-    df = prices.sort_index()
-    out = np.log(df).diff().iloc[1:]
-    return out
-
-
-def to_frequency_pd(returns: pd.DataFrame, freq: str) -> pd.DataFrame:
-    """
-    Agrega retornos a frecuencia `freq` respetando composición:
-      - log-like: suma
-      - simple-like: (1+r).prod - 1
-    Requiere DateTimeIndex para `resample`.
-    """
-    if returns.empty:
-        return returns
-
-    df = returns.copy()
-
-    # Garantiza DateTimeIndex para resample
-    if not isinstance(df.index, pd.DatetimeIndex):
-        # Intento conservador: si hay una columna 'date' en el índice, úsala
-        # o como último recurso, conviértelo.
-        try:
-            df.index = pd.to_datetime(df.index, utc=False)
-        except Exception:
-            # Si no se puede, devolvemos sin agrupar para no romper
-            return df
-
-    # Heurística de tipo (igual que antes)
-    is_log_like = (df <= -1.0).any().any() or (df.abs().median() > 0.25).any()
-
-    if is_log_like:
-        out = df.resample(freq).sum(min_count=1)
-    else:
-        out = (1.0 + df).resample(freq).prod(min_count=1) - 1.0
-
-    return out.dropna(how="all")
-
-
-def winsorize_pd(returns: pd.DataFrame, q: float = 0.01) -> pd.DataFrame:
-    lo = returns.quantile(q)
-    hi = returns.quantile(1 - q)
-    return returns.clip(lower=lo, upper=hi, axis=1)
-
-
-def simple_returns(prices: pd.DataFrame) -> pd.DataFrame:
-    return simple_returns_pd(prices)
-
-def to_frequency(returns: pd.DataFrame, freq: str) -> pd.DataFrame:
-    return to_frequency_pd(returns, freq)
