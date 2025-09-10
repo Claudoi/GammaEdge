@@ -10,13 +10,14 @@ import pandas as pd
 import polars as pl
 import yfinance as yf
 
+from portfolio.core.compat import dataclass_compat as dataclass
 from .cache import load_df, save_df
-from portfolio.core.compat import dataclass_compat as dataclass  # ✅
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
 
-@dataclass(frozen=True, slots=True)  # ✅
+
+@dataclass(frozen=True, slots=True)
 class PriceLoadConfig:
     tickers: tuple[str, ...]
     start: str

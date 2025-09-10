@@ -84,7 +84,7 @@ def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
     # 4) Elimina columnas completamente vacías
     null_counts = df.select([pl.col(c).is_null().sum().alias(c) for c in value_cols]).row(0)
     n_rows = df.height
-    drop_cols = [c for c, nnull in zip(value_cols, null_counts) if (nnull == n_rows)]
+    drop_cols = [c for c, nnull in zip(value_cols, null_counts) if (nnull == n_rows)]  # noqa: B905
     if drop_cols:
         st.warning(f"Dropping empty return columns: {', '.join(drop_cols)}")
         df = df.drop(drop_cols)
@@ -94,7 +94,7 @@ def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
     if value_cols:
         stds = df.select([pl.col(c).std(ddof=1).alias(c) for c in value_cols]).row(0)
         const_cols = [
-            c for c, s in zip(value_cols, stds)
+            c for c, s in zip(value_cols, stds)  # noqa: B905
             if (s is None) or (not np.isfinite(s)) or (s <= 1e-14)
         ]
         if const_cols:

@@ -47,9 +47,9 @@ def _normalize_for_hash(obj: Any) -> Any:
             for k, v in sorted(obj.items(), key=lambda x: str(x[0]))
         }
     # 👇 En Py3.9 usa la tupla de tipos, no `list | tuple | set`
-    if isinstance(obj, (list, tuple, set)):
+    if isinstance(obj, (list, tuple, set)):  # noqa: UP038
         return [_normalize_for_hash(v) for v in obj]
-    if isinstance(obj, (str, int, float, bool)) or obj is None:
+    if isinstance(obj, (str, int, float, bool)) or obj is None:  # noqa: UP038
         return obj
     # fechas, paths, enums, numpy scalars, etc.
     return str(obj)

@@ -8,11 +8,7 @@ import os
 import sys
 import time
 from datetime import date, datetime
-try:
-    from datetime import UTC  # Python 3.11+
-except ImportError:
-    from datetime import timezone as _tz  # Python 3.9/3.10
-    UTC = _tz.utc
+
 
 import numpy as np
 import plotly.express as px
@@ -31,7 +27,7 @@ from portfolio.features.returns import (
 )
 from portfolio.io.cache import age_seconds, cache_path, invalidate, load_pl, save_json, save_pl
 from portfolio.io.data_loader import get_prices_long
-
+from portfolio.core.compat import UTC
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers (internos de esta página)

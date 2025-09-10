@@ -114,3 +114,5 @@ exclude = "(^tests/|^notebooks/)"
 
 
 # ── BUILD ──────────────────────────────────────────────────────────────────────
+[tool.poetry.dynamic]
+version = "attr: portfolio.__version__"
