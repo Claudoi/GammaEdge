@@ -5,9 +5,11 @@ from collections.abc import Iterable, Sequence
 from portfolio.core.compat import dataclass_compat as dataclass
 from typing import Literal, Union
 
+
 import numpy as np
 import plotly.graph_objects as go
 import polars as pl
+import plotly.express as px
 from scipy.cluster.hierarchy import dendrogram, leaves_list, linkage, optimal_leaf_ordering
 from scipy.spatial.distance import squareform
 
@@ -806,4 +808,137 @@ def te_frontier(
     te = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", dW, Sigma, dW), 0.0))
     fig = go.Figure(go.Scatter(x=te, y=mu_p, mode="markers+lines"))
     fig.update_layout(title=title, xaxis_title="Tracking Error", yaxis_title="Expected Return")
+    return fig
+
+
+
+### 04 Backtest & Attribution Plots
+# ──────────────────────────────────────────────────────────────────────────────
+# Equity & Drawdown
+# ──────────────────────────────────────────────────────────────────────────────
+
+def plot_equity(dates: list, equity: np.ndarray, title: str = "Equity Curve") -> go.Figure:
+    fig = go.Figure(go.Scatter(x=dates, y=equity, mode="lines", name="Equity"))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="NAV",
+        template="plotly_white",
+    )
+    return fig
+
+
+def plot_drawdown(dates: list, equity: np.ndarray, title: str = "Drawdown") -> go.Figure:
+    cummax = np.maximum.accumulate(equity)
+    dd = (equity / np.maximum(cummax, 1e-12)) - 1.0
+    fig = go.Figure(go.Scatter(x=dates, y=dd, mode="lines", name="Drawdown"))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Drawdown",
+        template="plotly_white",
+    )
+    return fig
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Weights, Turnover & TE
+# ──────────────────────────────────────────────────────────────────────────────
+
+def plot_weights_heatmap(dates: list, tickers: list[str], W: np.ndarray, title="Weights") -> go.Figure:
+    avg_w = W.mean(axis=0)
+    order = np.argsort(-avg_w)
+    tickers_ord = [tickers[i] for i in order]
+    W_ord = W[:, order]
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=W_ord.T,
+            x=dates,
+            y=tickers_ord,
+            coloraxis="coloraxis",
+            hovertemplate="Ticker: %{y}<br>Date: %{x}<br>Weight: %{z:.2%}<extra></extra>",
+        )
+    )
+    fig.update_layout(title=title, coloraxis_colorscale="Blues", template="plotly_white")
+    return fig
+
+
+def plot_turnover(dates: list, turnover: np.ndarray, title="Turnover") -> go.Figure:
+    fig = go.Figure(go.Bar(x=dates[: len(turnover)], y=turnover))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Turnover",
+        template="plotly_white",
+    )
+    return fig
+
+
+def plot_tracking_error(dates: list, te: np.ndarray, title="Tracking Error (daily proxy)") -> go.Figure:
+    fig = go.Figure(go.Scatter(x=dates[: len(te)], y=te, mode="lines", name="TE"))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="TE",
+        template="plotly_white",
+    )
+    return fig
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Contributors
+# ──────────────────────────────────────────────────────────────────────────────
+
+def plot_top_contributors(df_top: pl.DataFrame, title="Top Contributors") -> go.Figure:
+    tickers = df_top.get_column("ticker").to_list()
+    contrib = df_top.get_column("contrib_total").to_list()
+    fig = go.Figure(go.Bar(x=tickers, y=contrib))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Ticker",
+        yaxis_title="Total Contribution",
+        template="plotly_white",
+    )
+    return fig
+
+
+def plot_group_contrib(df_group_total: pl.DataFrame, title="Group Contributions") -> go.Figure:
+    groups = df_group_total.get_column("group").to_list()
+    contrib = df_group_total.get_column("contrib_total").to_list()
+    fig = go.Figure(go.Bar(x=groups, y=contrib))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Group",
+        yaxis_title="Total Contribution",
+        template="plotly_white",
+    )
+    return fig
+
+
+def plot_group_contrib_area(df_group_daily: pl.DataFrame, title="Group Contributions Over Time") -> go.Figure:
+    """
+    df_group_daily: ['date','group','contrib']
+    """
+    pdf = df_group_daily.to_pandas()
+    fig = px.area(pdf, x="date", y="contrib", color="group", title=title)
+    fig.update_layout(template="plotly_white")
+    return fig
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Brinson-Fachler
+# ──────────────────────────────────────────────────────────────────────────────
+
+def plot_brinson_cumulative(df_brinson: pl.DataFrame, title="Brinson-Fachler Attribution") -> go.Figure:
+    pdf = df_brinson.to_pandas()
+    fig = go.Figure()
+    for col in ["alloc", "select", "interact", "total"]:
+        fig.add_trace(go.Scatter(x=pdf["date"], y=pdf[col], mode="lines", name=col.capitalize()))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Attribution",
+        template="plotly_white",
+    )
     return fig
