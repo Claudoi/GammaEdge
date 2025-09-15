@@ -173,7 +173,7 @@ st.success("✅ Backtest ejecutado.")
 # ─────────────────────────────────────────────────────────────────────
 st.subheader("📈 Métricas")
 dfm = bt_metrics.compute_backtest_metrics(bt)  # asegúrate que devuelva pl.DataFrame o pd.DataFrame
-st.dataframe(dfm, width="stretch")
+st.dataframe(dfm.to_pandas(), width="stretch")
 
 # ─────────────────────────────────────────────────────────────────────
 # Plots principales

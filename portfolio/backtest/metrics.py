@@ -1,53 +1,137 @@
-# Backtest metrics
+# portfolio/backtest/metrics.py
 from __future__ import annotations
 
+from typing import Any, Iterable
+import numpy as np
+import pandas as pd
+import polars as pl
+
+# Usa el wrapper para soportar Python 3.9 (ignora slots)
 from portfolio.core.compat import dataclass_compat as dataclass
 
-import numpy as np
-import polars as pl
+
+def _to_numpy_1d(x: Any) -> np.ndarray:
+    if isinstance(x, np.ndarray):
+        return x.astype(float)
+    if isinstance(x, pl.Series):
+        return x.to_numpy().astype(float)
+    if isinstance(x, pd.Series):
+        return x.to_numpy(dtype=float)
+    if isinstance(x, list) or isinstance(x, tuple):
+        return np.asarray(x, dtype=float)
+    raise TypeError(f"Unsupported type for array conversion: {type(x)}")
+
+
+def _annualization_from_dates(dates: Iterable[pd.Timestamp]) -> float:
+    """Inferencia muy simple de factor anual: D≈252, W≈52, M≈12."""
+    idx = pd.DatetimeIndex(dates)
+    if len(idx) < 3:
+        return 252.0
+    # diferencia mediana en días
+    dt = np.median(np.diff(idx.values).astype("timedelta64[D]").astype(int))
+    if dt <= 2:
+        return 252.0
+    if dt <= 8:
+        return 52.0
+    return 12.0
+
+
+def _equity_to_returns(equity: np.ndarray) -> np.ndarray:
+    if equity.size <= 1:
+        return np.array([], dtype=float)
+    r = equity[1:] / equity[:-1] - 1.0
+    return r.astype(float)
+
+
+def _max_drawdown(curve: np.ndarray) -> float:
+    if curve.size == 0:
+        return np.nan
+    peak = np.maximum.accumulate(curve)
+    dd = curve / np.maximum(peak, 1e-12) - 1.0
+    return float(np.min(dd))
+
+
+def _cagr(curve: np.ndarray, ann: float) -> float:
+    n = curve.size
+    if n <= 1 or curve[0] <= 0:
+        return np.nan
+    years = max((n - 1) / ann, 1e-12)
+    return float((curve[-1] / curve[0]) ** (1.0 / years) - 1.0)
+
+
+def _sortino(ret: np.ndarray, ann: float, rf_per_period: float = 0.0) -> float:
+    if ret.size == 0:
+        return np.nan
+    ex = ret - rf_per_period
+    downside = ex[ex < 0.0]
+    denom = np.std(downside, ddof=1) if downside.size > 1 else np.nan
+    mu_ann = np.nanmean(ret) * ann
+    den_ann = (denom * np.sqrt(ann)) if np.isfinite(denom) and denom > 0 else np.nan
+    return float(mu_ann / den_ann) if np.isfinite(den_ann) else np.nan
 
 
 @dataclass(frozen=True, slots=True)
-class PerfStats:
-    cagr: float
-    sharpe: float
-    sortino: float
-    maxdd: float
-    vol: float
-    calmar: float
+class MetricRow:
+    metric: str
+    value: float
 
 
-def timeseries_stats_from_equity(
-    equity: pl.DataFrame,
-    *,
-    periods_per_year: int = 252,
-    rf: float = 0.0,
-) -> PerfStats:
+def compute_backtest_metrics(bt: Any) -> pl.DataFrame:
     """
-    Recibe DF con columnas ["date","equity","ret"] y devuelve estadísticas estándar.
+    Acepta:
+      - dict estilo engine simple: {"dates": list[pd.Timestamp], "equity": np.ndarray, "turnover": np.ndarray?, "te_daily_proxy": np.ndarray?}
+      - BacktestResult: con .equity (pl.DataFrame con ["date","equity","ret"])
+    Devuelve: pl.DataFrame con columnas ["metric","value"] (una fila por métrica).
     """
-    if equity.is_empty() or "ret" not in equity.columns:
-        return PerfStats(np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
+    # --- unifica equity y fechas ---
+    turnover = None
+    te_daily = None
 
-    r = equity["ret"].to_numpy()
-    if r.size < 2:
-        return PerfStats(np.nan, np.nan, np.nan, np.nan, np.nan, np.nan)
+    if hasattr(bt, "equity") and isinstance(bt.equity, pl.DataFrame):
+        eq_df: pl.DataFrame = bt.equity
+        if "equity" not in eq_df.columns or "date" not in eq_df.columns:
+            raise ValueError("BacktestResult.equity debe tener columnas ['date','equity', ...].")
+        dates_pd = pd.DatetimeIndex(eq_df["date"].to_pandas())
+        equity = _to_numpy_1d(eq_df["equity"])
+        # turnover / te opcionales si vienen en otros campos
+        if hasattr(bt, "trades") and isinstance(bt.trades, pl.DataFrame) and bt.trades.height > 0:
+            # podemos estimar turnover por fecha si quieres, pero aquí lo dejamos opcional
+            pass
+    elif isinstance(bt, dict):
+        if "equity" not in bt or "dates" not in bt:
+            raise ValueError("dict de backtest debe contener 'equity' y 'dates'.")
+        equity = _to_numpy_1d(bt["equity"])
+        dates_pd = pd.DatetimeIndex(bt["dates"])
+        turnover = _to_numpy_1d(bt["turnover"]) if "turnover" in bt and bt["turnover"] is not None else None
+        te_daily = _to_numpy_1d(bt["te_daily_proxy"]) if "te_daily_proxy" in bt and bt["te_daily_proxy"] is not None else None
+    else:
+        raise TypeError("Tipo de backtest no soportado para métricas.")
 
-    mu = float(np.nanmean(r)) * periods_per_year
-    vol = float(np.nanstd(r, ddof=1)) * (periods_per_year ** 0.5)
-    neg = r[r < 0]
-    dvol = float(np.nanstd(neg, ddof=1)) * (periods_per_year ** 0.5) if neg.size else np.nan
+    # --- retornos & anualización ---
+    ret = _equity_to_returns(equity)
+    ann = _annualization_from_dates(dates_pd)
 
-    sharpe = (mu - rf) / vol if vol > 0 else np.nan
-    sortino = (mu - rf) / dvol if (dvol and dvol > 0) else np.nan
+    mu = float(np.nanmean(ret) * ann) if ret.size else np.nan
+    vol = float(np.nanstd(ret, ddof=1) * np.sqrt(ann)) if ret.size > 1 else np.nan
+    sharpe = float(mu / vol) if (np.isfinite(mu) and np.isfinite(vol) and vol > 0) else np.nan
+    maxdd = _max_drawdown(equity)
+    cagr = _cagr(equity, ann)
+    sortino = _sortino(ret, ann)
 
-    curve = equity["equity"].to_numpy()
-    peak = np.maximum.accumulate(curve)
-    dd = curve / peak - 1.0
-    maxdd = float(np.min(dd)) if dd.size else np.nan
+    # Turnover medio por rebalance (si viene)
+    to_mean = float(np.nanmean(turnover)) if isinstance(turnover, np.ndarray) and turnover.size else np.nan
 
-    years = max(1.0, equity.height / periods_per_year)
-    cagr = float((curve[-1] / curve[0]) ** (1 / years) - 1.0)
-    calmar = cagr / abs(maxdd) if (maxdd and maxdd < 0) else np.nan
+    # TE anualizado (proxy) si viene (std diario * sqrt(ann))
+    te_ann = float(np.nanstd(te_daily, ddof=1) * np.sqrt(ann)) if isinstance(te_daily, np.ndarray) and te_daily.size > 1 else np.nan
 
-    return PerfStats(cagr, sharpe, sortino, maxdd, vol, calmar)
+    rows = [
+        MetricRow("CAGR", cagr),
+        MetricRow("Sharpe", sharpe),
+        MetricRow("Volatility_ann", vol),
+        MetricRow("MaxDrawdown", maxdd),
+        MetricRow("Sortino", sortino),
+        MetricRow("Turnover_mean", to_mean),
+        MetricRow("TrackingError_ann_proxy", te_ann),
+        MetricRow("AnnFactor_used", ann),
+    ]
+    return pl.DataFrame([r.__dict__ for r in rows])
