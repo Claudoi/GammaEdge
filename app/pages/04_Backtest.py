@@ -166,7 +166,7 @@ bt = backtest_rebalanced(
     bench_weights=np.full(N, 1.0 / max(N, 1)),  # benchmark estático EW (para TE proxy)
 )
 
-st.success("✅ Backtest ejecutado.")
+st.success("✅ Backtest executed.")
 
 # ─────────────────────────────────────────────────────────────────────
 # Métricas
@@ -209,7 +209,7 @@ try:
     df_top = bt_attr.top_contributors(bt, df_ret_wide, top_n=10)
     st.plotly_chart(plot_top_contributors(df_top), width="stretch")
 except Exception as e:
-    st.info(f"Attribution básica no disponible: {e}")
+    st.info(f"Basic attribution not available: {e}")
 
 
 #  Mapping de grupos/sectors (ticker -> group):
