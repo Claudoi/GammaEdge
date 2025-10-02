@@ -452,29 +452,54 @@ def weights_heatmap(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def equity_and_drawdown(
-    dates: Sequence, equity: ArrayLike, *, title: str = "Equity & Drawdown"
+    dates: Sequence,
+    equity,
+    *,
+    title: str = "Equity & Drawdown"
 ) -> go.Figure:
     """
-    Muestra curva de equity y drawdown (%) en eje secundario.
+    Curva de equity (nivel) y drawdown (ratio, formateado como % en el eje derecho).
     """
-    eq = np.asarray(equity).astype(float)
+    eq = np.asarray(equity, dtype=float)
+    if len(dates) != len(eq):
+        raise ValueError("dates y equity deben tener la misma longitud")
+
+    # Sanitizar valores
     eq = np.where(np.isfinite(eq), eq, np.nan)
-    dd = np.zeros_like(eq)
+
+    # Drawdown como v/peak - 1 (negativo en caídas)
+    dd = np.full_like(eq, np.nan, dtype=float)
     peak = -np.inf
     for i, v in enumerate(eq):
-        peak = v if v > peak else peak
-        dd[i] = 0.0 if peak <= 0 or not np.isfinite(peak) or not np.isfinite(v) else (v / peak - 1.0)
+        if np.isfinite(v):
+            if v > peak:
+                peak = v
+            if np.isfinite(peak) and peak > 0:
+                dd[i] = (v / peak) - 1.0  # negativo en drawdown
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=dates, y=eq, mode="lines", name="Equity", hovertemplate="%{x}<br>%{y:.2f}<extra></extra>"))
-    fig.add_trace(go.Scatter(x=dates, y=dd, mode="lines", name="Drawdown", yaxis="y2",
-                             hovertemplate="%{x}<br>%{y:.2%}<extra></extra>"))
+
+    fig.add_trace(go.Scatter(
+        x=dates, y=eq, mode="lines", name="Equity",
+        hovertemplate="%{x}<br>%{y:.4f}<extra></extra>"
+    ))
+
+    fig.add_trace(go.Scatter(
+        x=dates, y=dd, mode="lines", name="Drawdown",
+        yaxis="y2", fill="tozeroy",
+        hovertemplate="%{x}<br>%{y:.2%}<extra></extra>"
+    ))
 
     fig.update_layout(
         title=title,
         xaxis=dict(title="Date"),
         yaxis=dict(title="Equity"),
-        yaxis2=dict(title="Drawdown", overlaying="y", side="right", tickformat=".0%"),
+        yaxis2=dict(
+            title="Drawdown (%)",
+            overlaying="y",
+            side="right",
+            tickformat=".0%"
+        ),
         margin=dict(l=60, r=60, t=60, b=60),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
@@ -797,17 +822,44 @@ def turnover_vs_gamma(
 
 def te_frontier(
     mu: np.ndarray, Sigma: np.ndarray, w_bench: np.ndarray, Ws: np.ndarray, *,
-    title: str = "Tracking-Error Frontier"
+    title: str = "Tracking-Error Frontier", annualize: bool = False, periods_per_year: int = 252
 ) -> go.Figure:
-    """
-    Dibuja μ_p vs TE_p para una familia de carteras (Ws).
-    TE(w) = sqrt( (w-w_b)' Σ (w-w_b) )
-    """
+    mu = np.asarray(mu, dtype=float).reshape(-1)
+    Sigma = np.asarray(Sigma, dtype=float)
+    w_bench = np.asarray(w_bench, dtype=float).reshape(-1)
+    Ws = np.asarray(Ws, dtype=float)
+
+    # Checks rápidos
+    n = mu.shape[0]
+    if Sigma.shape != (n, n):
+        raise ValueError("Sigma debe ser (n, n)")
+    if w_bench.shape[0] != n or Ws.shape[1] != n:
+        raise ValueError("Dimensiones de pesos incompatibles con mu/Sigma")
+
+    # (Opcional) avisar si no están normalizados
+    if not (np.isclose(w_bench.sum(), 1.0, atol=1e-6) and np.allclose(Ws.sum(axis=1), 1.0, atol=1e-6)):
+        # No normalizamos automáticamente para no sorprender; solo avisamos.
+        pass
+
     dW = Ws - w_bench[None, :]
-    mu_p = Ws @ mu
-    te = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", dW, Sigma, dW), 0.0))
-    fig = go.Figure(go.Scatter(x=te, y=mu_p, mode="markers+lines"))
-    fig.update_layout(title=title, xaxis_title="Tracking Error", yaxis_title="Expected Return")
+    mu_p = Ws @ mu                          # retorno por periodo
+    te = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", dW, Sigma, dW), 0.0))  # TE por periodo
+
+    if annualize:
+        mu_p = (1 + mu_p) ** periods_per_year - 1.0
+        te = te * np.sqrt(periods_per_year)
+
+    fig = go.Figure(go.Scatter(
+        x=te, y=mu_p, mode="markers+lines", name="Portfolios",
+        hovertemplate="TE: %{x:.2%}<br>μ: %{y:.2%}<extra></extra>"
+    ))
+    fig.update_layout(
+        title=title,
+        xaxis_title=("Tracking Error (annualized)" if annualize else "Tracking Error (per period)"),
+        yaxis_title=("Expected Return (annualized)" if annualize else "Expected Return (per period)"),
+    )
+    fig.update_xaxes(tickformat=".2%")
+    fig.update_yaxes(tickformat=".2%")
     return fig
 
 
@@ -864,13 +916,24 @@ def plot_weights_heatmap(dates: list, tickers: list[str], W: np.ndarray, title="
     return fig
 
 
-def plot_turnover(dates: list, turnover: np.ndarray, title="Turnover") -> go.Figure:
-    fig = go.Figure(go.Bar(x=dates[: len(turnover)], y=turnover))
+def plot_turnover(dates, turnover, title: str = "Turnover") -> go.Figure:
+    to = np.asarray(turnover, dtype=float)
+    if len(dates) != len(to):
+        raise ValueError("dates y turnover deben tener la misma longitud")
+    to = np.where(np.isfinite(to), to, np.nan)
+    to = np.clip(to, 0.0, None)  # turnover no negativo
+
+    fig = go.Figure(go.Scatter(
+        x=dates, y=to, mode="lines", name="Turnover",
+        hovertemplate="%{x}<br>%{y:.1%}<extra></extra>"
+    ))
     fig.update_layout(
         title=title,
         xaxis_title="Date",
-        yaxis_title="Turnover",
-        template="plotly_white",
+        yaxis_title="Turnover (%)",
+        yaxis=dict(tickformat=".0%"),
+        margin=dict(l=60, r=40, t=60, b=60),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
     return fig
 
