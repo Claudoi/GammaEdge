@@ -960,38 +960,44 @@ def plot_tracking_error(dates: list, te: np.ndarray, title="Tracking Error (dail
 # ──────────────────────────────────────────────────────────────────────────────
 
 def plot_top_contributors(df_top: pl.DataFrame, title="Top Contributors") -> go.Figure:
-    tickers = df_top.get_column("ticker").to_list()
-    contrib = df_top.get_column("contrib_total").to_list()
-    fig = go.Figure(go.Bar(x=tickers, y=contrib))
+    pdf = df_top.select(["ticker", "contrib_total"]).to_pandas()
+    pdf = pdf.replace([np.inf, -np.inf], np.nan).dropna()
+    pdf = pdf.sort_values("contrib_total", ascending=False)
+
+    fig = go.Figure(go.Bar(x=pdf["ticker"], y=pdf["contrib_total"]))
     fig.update_layout(
-        title=title,
-        xaxis_title="Ticker",
-        yaxis_title="Total Contribution",
-        template="plotly_white",
+        title=title, xaxis_title="Ticker", yaxis_title="Total Contribution",
+        template="plotly_white"
     )
     return fig
 
 
 def plot_group_contrib(df_group_total: pl.DataFrame, title="Group Contributions") -> go.Figure:
-    groups = df_group_total.get_column("group").to_list()
-    contrib = df_group_total.get_column("contrib_total").to_list()
-    fig = go.Figure(go.Bar(x=groups, y=contrib))
+    pdf = df_group_total.select(["group", "contrib_total"]).to_pandas()
+    pdf = pdf.replace([np.inf, -np.inf], np.nan).dropna()
+    pdf = pdf.sort_values("contrib_total", ascending=False)
+
+    fig = go.Figure(go.Bar(x=pdf["group"], y=pdf["contrib_total"]))
     fig.update_layout(
-        title=title,
-        xaxis_title="Group",
-        yaxis_title="Total Contribution",
-        template="plotly_white",
+        title=title, xaxis_title="Group", yaxis_title="Total Contribution",
+        template="plotly_white"
     )
     return fig
 
 
-def plot_group_contrib_area(df_group_daily: pl.DataFrame, title="Group Contributions Over Time") -> go.Figure:
-    """
-    df_group_daily: ['date','group','contrib']
-    """
-    pdf = df_group_daily.to_pandas()
-    fig = px.area(pdf, x="date", y="contrib", color="group", title=title)
-    fig.update_layout(template="plotly_white")
+def plot_group_contrib_area(df: pl.DataFrame, title="Group Contributions Over Time") -> go.Figure:
+    req = {"date", "group", "contrib"}
+    if not req.issubset(df.columns):
+        raise ValueError(f"Faltan columnas: {req}")
+    pdf = (df.to_pandas()
+             .replace([np.inf, -np.inf], np.nan)
+             .dropna(subset=["date", "group", "contrib"])
+             .sort_values("date"))
+    fig = px.area(pdf, x="date", y="contrib", color="group", title=title,
+                  labels={"contrib": "Contribution"})
+    fig.update_layout(template="plotly_white", xaxis_title="Date",
+                      yaxis_title="Contribution", yaxis_tickformat=".2%",
+                      legend_title="Group", margin=dict(l=60, r=40, t=60, b=60))
     return fig
 
 
@@ -1000,14 +1006,19 @@ def plot_group_contrib_area(df_group_daily: pl.DataFrame, title="Group Contribut
 # ──────────────────────────────────────────────────────────────────────────────
 
 def plot_brinson_cumulative(df_brinson: pl.DataFrame, title="Brinson-Fachler Attribution") -> go.Figure:
-    pdf = df_brinson.to_pandas()
+    cols = {"date", "alloc", "select", "interact", "total"}
+    if not cols.issubset(set(df_brinson.columns)):
+        raise ValueError(f"Faltan columnas en df_brinson. Esperadas: {cols}")
+
+    pdf = df_brinson.to_pandas().replace([np.inf, -np.inf], np.nan).dropna()
     fig = go.Figure()
     for col in ["alloc", "select", "interact", "total"]:
-        fig.add_trace(go.Scatter(x=pdf["date"], y=pdf[col], mode="lines", name=col.capitalize()))
+        fig.add_trace(go.Scatter(
+            x=pdf["date"], y=pdf[col], mode="lines", name=col.capitalize(),
+            hovertemplate="%{x}<br>%{y:.2%}<extra></extra>"
+        ))
     fig.update_layout(
-        title=title,
-        xaxis_title="Date",
-        yaxis_title="Attribution",
-        template="plotly_white",
+        title=title, xaxis_title="Date", yaxis_title="Attribution (%)",
+        yaxis=dict(tickformat=".0%"), template="plotly_white"
     )
     return fig
