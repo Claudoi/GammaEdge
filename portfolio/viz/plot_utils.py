@@ -939,12 +939,18 @@ def plot_turnover(dates, turnover, title: str = "Turnover") -> go.Figure:
 
 
 def plot_tracking_error(dates: list, te: np.ndarray, title="Tracking Error (daily proxy)") -> go.Figure:
-    fig = go.Figure(go.Scatter(x=dates[: len(te)], y=te, mode="lines", name="TE"))
+    te = np.asarray(te, dtype=float)
+    if len(dates) != len(te):
+        raise ValueError("dates y te deben tener la misma longitud")
+    te = np.where(np.isfinite(te), te, np.nan)
+
+    fig = go.Figure(go.Scatter(
+        x=dates, y=te, mode="lines", name="TE",
+        hovertemplate="%{x}<br>TE: %{y:.2%}<extra></extra>"
+    ))
     fig.update_layout(
-        title=title,
-        xaxis_title="Date",
-        yaxis_title="TE",
-        template="plotly_white",
+        title=title, xaxis_title="Date", yaxis_title="TE (%)",
+        yaxis=dict(tickformat=".2%"), template="plotly_white"
     )
     return fig
 
