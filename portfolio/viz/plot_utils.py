@@ -916,24 +916,38 @@ def plot_weights_heatmap(dates: list, tickers: list[str], W: np.ndarray, title="
     return fig
 
 
-def plot_turnover(dates, turnover, title: str = "Turnover") -> go.Figure:
-    to = np.asarray(turnover, dtype=float)
-    if len(dates) != len(to):
-        raise ValueError("dates y turnover deben tener la misma longitud")
-    to = np.where(np.isfinite(to), to, np.nan)
-    to = np.clip(to, 0.0, None)  # turnover no negativo
+def plot_turnover(dates_or_df, turnover=None, title: str = "Turnover") -> go.Figure:
+
+    if turnover is None:
+        df = dates_or_df
+        # Polars
+        if hasattr(df, "to_pandas") and {"date","turnover"}.issubset(df.columns):
+            x = df["date"].to_list()
+            y = np.asarray(df["turnover"], dtype=float)
+        # Pandas
+        elif hasattr(df, "reset_index") and {"date","turnover"}.issubset(df.columns):
+            x = df["date"].values
+            y = np.asarray(df["turnover"], dtype=float)
+        else:
+            raise ValueError("Si pasas un DataFrame debe tener columnas ['date','turnover']")
+    else:
+        x = list(dates_or_df)
+        y = np.asarray(turnover, dtype=float)
+        if len(x) != len(y):
+            raise ValueError("dates y turnover deben tener la misma longitud")
+
+    y = np.where(np.isfinite(y), y, np.nan)
+    y = np.clip(y, 0.0, None)
 
     fig = go.Figure(go.Scatter(
-        x=dates, y=to, mode="lines", name="Turnover",
+        x=x, y=y, mode="lines", name="Turnover",
         hovertemplate="%{x}<br>%{y:.1%}<extra></extra>"
     ))
     fig.update_layout(
-        title=title,
-        xaxis_title="Date",
-        yaxis_title="Turnover (%)",
-        yaxis=dict(tickformat=".0%"),
-        margin=dict(l=60, r=40, t=60, b=60),
+        title=title, xaxis_title="Date", yaxis_title="Turnover (%)",
+        yaxis=dict(tickformat=".0%"), margin=dict(l=60, r=40, t=60, b=60),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+        template="plotly_white",
     )
     return fig
 

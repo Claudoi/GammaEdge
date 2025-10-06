@@ -3,14 +3,14 @@
 from __future__ import annotations
 
 from portfolio.core.compat import dataclass_compat as dataclass
-from typing import Callable, Iterable
+from typing import Iterable, Tuple
 
 import numpy as np
 import polars as pl
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Tipos
+# Types
 # ──────────────────────────────────────────────────────────────────────────────
 
 @dataclass(frozen=True, slots=True)
@@ -22,18 +22,19 @@ class DailyAlignment:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Alineación y expansión de pesos
+# Alignment helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
 def align_returns_and_weights(
-    df_ret_wide: pl.DataFrame,                  # ['date', T1, T2, ...] ordenado
-    daily_weights: np.ndarray,                  # (T, N) ya en frecuencia diaria
+    df_ret_wide: pl.DataFrame,                  # ['date', T1, T2, ...] sorted
+    daily_weights: np.ndarray,                  # (T, N) daily weights
 ) -> DailyAlignment:
     """
-    Alinea retornos y pesos ya diarios. Valida shapes y devuelve np arrays.
+    Align wide daily returns with already-expanded daily weights.
+    Validates shapes and returns numpy arrays.
     """
     if "date" not in df_ret_wide.columns:
-        raise ValueError("df_ret_wide debe contener columna 'date'")
+        raise ValueError("df_ret_wide must contain 'date' column")
 
     df = df_ret_wide.sort("date")
     tickers = [c for c in df.columns if c != "date"]
@@ -41,11 +42,11 @@ def align_returns_and_weights(
     N = len(tickers)
 
     if daily_weights.shape != (T, N):
-        raise ValueError(f"dims incompatibles: weights {daily_weights.shape} vs returns {(T, N)}")
+        raise ValueError(f"incompatible dims: weights {daily_weights.shape} vs returns {(T, N)}")
 
     R = np.column_stack([df.get_column(t).to_numpy() for t in tickers])
-    # NaN-safe → tratamos NaN como 0 en retorno para no contaminar contribuciones
-    R = np.nan_to_num(R, copy=False, nan=0.0)
+    # NaN-safe: treat NaN returns as 0 to avoid contaminating contributions
+    R = np.nan_to_num(R, copy=False, nan=0.0, posinf=0.0, neginf=0.0)
 
     return DailyAlignment(
         dates=df.get_column("date").to_list(),
@@ -56,21 +57,21 @@ def align_returns_and_weights(
 
 
 def expand_rebalance_weights(
-    dates: Iterable,                 # fechas diarias completas
-    rb_dates: Iterable,              # fechas en las que hay rebalanceo
-    W_reb: np.ndarray,               # (n_reb, N) pesos en cada rebalance
+    dates: Iterable,                 # full daily dates
+    rb_dates: Iterable,              # rebalance dates
+    W_reb: np.ndarray,               # (n_reb, N) weights at each rebalance
 ) -> np.ndarray:
     """
-    Expande pesos de rebalance (stepwise hold) a diario (forward-fill hasta próximo rebalance).
-    - `dates` y `rb_dates` deben ser comparables (mismo tipo y timezone).
+    Expand stepwise rebalance weights to daily frequency (forward-fill until next rebalance).
+    Assumes 'dates' and 'rb_dates' are directly comparable types.
     """
     dates = list(dates)
     rb_dates = list(rb_dates)
     n_reb, N = W_reb.shape
     if len(rb_dates) != n_reb:
-        raise ValueError("len(rb_dates) debe coincidir con W_reb.shape[0]")
+        raise ValueError("len(rb_dates) must match W_reb.shape[0]")
 
-    # mapa fecha_reb → índice de rebalance
+    # map rebalance date → rebalance index
     rb_ix = {d: i for i, d in enumerate(rb_dates)}
     out = np.zeros((len(dates), N), dtype=float)
 
@@ -81,20 +82,20 @@ def expand_rebalance_weights(
             s = last_w.sum()
             last_w = last_w / (s if abs(s) > 1e-12 else 1.0)
         if last_w is None:
-            # Antes del primer rebalance: igual ponderación
+            # Before first rebalance: equal-weight
             last_w = np.full(N, 1.0 / N, dtype=float)
         out[i, :] = last_w
     return out
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Atribución por activo y por grupo
+# Contributions by asset and by group
 # ──────────────────────────────────────────────────────────────────────────────
 
 def contributions_by_asset(aln: DailyAlignment) -> pl.DataFrame:
     """
-    Contribución diaria por activo: c_ti = w_ti * r_ti
-    Devuelve un DataFrame Polars largo: ['date','ticker','contrib','ret','weight'].
+    Daily contribution per asset: c_{t,i} = w_{t,i} * r_{t,i}.
+    Returns a long Polars DataFrame: ['date','ticker','contrib','ret','weight'].
     """
     w = aln.weights
     r = aln.returns
@@ -124,13 +125,14 @@ def contributions_by_group(
     other_label: str = "OTHER",
 ) -> pl.DataFrame:
     """
-    Atribución agrupada (suma de contribuciones por grupo).
-    group_map: ticker -> grupo (sector/país/lo_que_sea). Si falta alguno, va a OTHER.
-    Devuelve DF largo: ['date','group','contrib','weight'] (weight = suma de pesos del grupo).
+    Grouped attribution (sum of contributions by group).
+    If a ticker is not present in 'group_map', it falls back to 'other_label'.
+    Returns a long DF: ['date','group','contrib','weight'] (weight = group weight sum).
     """
     df_asset = contributions_by_asset(aln)
+    # Fast mapping using replace with default (Polars ≥0.19)
     df_asset = df_asset.with_columns(
-        pl.col("ticker").map_elements(lambda t: group_map.get(t, other_label)).alias("group")
+        pl.col("ticker").replace(group_map, default=other_label).alias("group")
     )
     df_grp = (
         df_asset.group_by(["date", "group"])
@@ -146,20 +148,20 @@ def contributions_by_group(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Brinson-Fachler (sencillo)
+# Brinson–Fachler (basic)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def brinson_fachler_period(
-    w_p: np.ndarray, r_p: np.ndarray,     # cartera
+    w_p: np.ndarray, r_p: np.ndarray,     # portfolio
     w_b: np.ndarray, r_b: np.ndarray,     # benchmark
-    groups: list[int],                     # asignación por activo a grupos [0..G-1]
-) -> tuple[float, float, float]:
+    groups: list[int],                    # asset→group indices [0..G-1]
+) -> Tuple[float, float, float]:
     """
-    Brinson-Fachler en una ventana (un periodo):
-    - Asignación: sum_g (w_p_g - w_b_g) * r_b_g
-    - Selección:  sum_g w_b_g * (r_p_g - r_b_g)
-    - Interacción: sum_g (w_p_g - w_b_g) * (r_p_g - r_b_g)
-    Retorna (A, S, I).
+    Single-period Brinson–Fachler:
+    - Allocation:  Σ_g (w_p_g - w_b_g) * r_b_g
+    - Selection:   Σ_g w_b_g * (r_p_g - r_b_g)
+    - Interaction: Σ_g (w_p_g - w_b_g) * (r_p_g - r_b_g)
+    Returns (A, S, I).
     """
     groups = np.asarray(groups, dtype=int)
     G = int(groups.max()) + 1 if len(groups) else 0
@@ -168,30 +170,32 @@ def brinson_fachler_period(
         idx = (groups == g)
         wp_g = float(np.sum(w_p[idx]))
         wb_g = float(np.sum(w_b[idx]))
-        # medias ponderadas de retorno en el grupo
-        rb_g = float(np.sum(w_b[idx] * r_b[idx]) / (wb_g if wb_g > 1e-16 else 1.0))
-        rp_g = float(np.sum(w_p[idx] * r_p[idx]) / (wp_g if wp_g > 1e-16 else 1.0))
+        # weighted average returns inside the group (guard against zero weight)
+        rb_g = float(np.sum(w_b[idx] * r_b[idx])) / wb_g if wb_g > 1e-16 else 0.0
+        rp_g = float(np.sum(w_p[idx] * r_p[idx])) / wp_g if wp_g > 1e-16 else 0.0
 
-        A += (wp_g - wb_g) * rb_g
-        S += wb_g * (rp_g - rb_g)
-        I += (wp_g - wb_g) * (rp_g - rb_g)
+        diff_w = (wp_g - wb_g)
+        diff_r = (rp_g - rb_g)
+        A += diff_w * rb_g
+        S += wb_g * diff_r
+        I += diff_w * diff_r
     return A, S, I
 
 
 def brinson_fachler_cumulative(
     aln: DailyAlignment,
-    bench_weights_daily: np.ndarray,   # (T, N) benchmark estático o time-varying
-    groups_idx: list[int],             # mapping de tickers a índices de grupo [0..G-1]
+    bench_weights_daily: np.ndarray,   # (T, N)
+    groups_idx: list[int],             # asset→group indices [0..G-1]
 ) -> pl.DataFrame:
     """
-    Agrega Brinson-Fachler por día (periodo) y devuelve acumulado (suma aritmética).
-    Columns: ['date','alloc','select','interact','total']
+    Sum single-period Brinson–Fachler components over time (arithmetic sum).
+    Output columns: ['date','alloc','select','interact','total'].
     """
     R = aln.returns
     Wp = aln.weights
     Wb = bench_weights_daily
     if Wb.shape != Wp.shape:
-        raise ValueError("bench_weights_daily debe tener misma shape que portfolio weights")
+        raise ValueError("bench_weights_daily must have the same shape as portfolio weights")
 
     rows = []
     for t in range(R.shape[0]):
@@ -201,34 +205,92 @@ def brinson_fachler_cumulative(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Utilidades de resumen
+# Summaries & high-level API (used by the UI)
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _daily_alignment_from_bt(bt: dict, df_ret_wide: pl.DataFrame) -> DailyAlignment:
+    """
+    Build DailyAlignment from the backtest dict:
+    - expands rebalance weights to the daily grid
+    - aligns wide returns to the same grid and ticker order
+    """
+    dates = bt["dates"]
+    tickers = bt["tickers"]
+    W_reb = np.asarray(bt["weights"], dtype=float)            # (n_reb, N)
+    rb_dates = bt.get("rebalance_dates", [])
+    if W_reb.size == 0 or len(rb_dates) != W_reb.shape[0]:
+        raise ValueError("Invalid 'weights'/'rebalance_dates' in bt.")
+
+    # Ensure returns are filtered and ordered to match 'dates' and 'tickers'
+    df = (
+        df_ret_wide
+        .filter(pl.col("date").is_in(dates))
+        .sort("date")
+        .select(["date", *tickers])
+    )
+
+    W_daily = expand_rebalance_weights(dates, rb_dates, W_reb)  # (T, N)
+    return align_returns_and_weights(df, W_daily)
+
+
 def top_contributors(
-    df_asset_contrib: pl.DataFrame,
+    bt: dict,
+    df_ret_wide: pl.DataFrame,
     *,
-    k: int = 10,
+    top_n: int = 10,
     sign: str = "both",  # "pos" | "neg" | "both"
 ) -> pl.DataFrame:
     """
-    Toma DF largo de contributions_by_asset y devuelve top-k contribuyentes acumulados.
+    High-level: compute top contributors (cumulative) directly from bt + returns.
+    Returns Polars DF with ['ticker','contrib_total'].
     """
+    aln = _daily_alignment_from_bt(bt, df_ret_wide)
+    df_asset = contributions_by_asset(aln)
+
     agg = (
-        df_asset_contrib.group_by("ticker")
+        df_asset.group_by("ticker")
         .agg(pl.col("contrib").sum().alias("contrib_total"))
         .sort("contrib_total", descending=True)
     )
     if sign == "pos":
         agg = agg.filter(pl.col("contrib_total") > 0)
-    elif sign == "neg":
+        return agg.head(top_n)
+    if sign == "neg":
         agg = agg.filter(pl.col("contrib_total") < 0).sort("contrib_total", descending=False)
+        return agg.head(top_n)
 
-    if sign == "both":
-        pos = agg.filter(pl.col("contrib_total") > 0).head(k)
-        neg = (
-            agg.filter(pl.col("contrib_total") < 0)
-            .sort("contrib_total", descending=False)
-            .head(k)
-        )
-        return pl.concat([pos, neg])
-    return agg.head(k)
+    # both: top positive and top negative
+    pos = agg.filter(pl.col("contrib_total") > 0).head(top_n)
+    neg = (
+        agg.filter(pl.col("contrib_total") < 0)
+        .sort("contrib_total", descending=False)
+        .head(top_n)
+    )
+    return pl.concat([pos, neg])
+
+
+def group_contrib(
+    bt: dict,
+    df_ret_wide: pl.DataFrame,
+    *,
+    groups_map: dict[str, str],
+    other_label: str = "OTHER",
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """
+    High-level: grouped contributions from bt + returns.
+    Returns:
+      - df_group_total: ['group','contrib_total','weight_avg'] (cumulative)
+      - df_group_daily: ['date','group','contrib','weight']   (daily series)
+    """
+    aln = _daily_alignment_from_bt(bt, df_ret_wide)
+    df_daily = contributions_by_group(aln, groups_map, other_label=other_label)
+
+    df_total = (
+        df_daily.group_by("group")
+        .agg([
+            pl.col("contrib").sum().alias("contrib_total"),
+            pl.col("weight").mean().alias("weight_avg"),
+        ])
+        .sort("contrib_total", descending=True)
+    )
+    return df_total, df_daily

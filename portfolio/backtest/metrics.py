@@ -10,15 +10,75 @@ import polars as pl
 from portfolio.core.compat import dataclass_compat as dataclass
 
 
-def _to_numpy_1d(x: Any) -> np.ndarray:
-    if isinstance(x, np.ndarray):
-        return x.astype(float)
-    if isinstance(x, pl.Series):
-        return x.to_numpy().astype(float)
-    if isinstance(x, pd.Series):
-        return x.to_numpy(dtype=float)
-    if isinstance(x, list) or isinstance(x, tuple):
-        return np.asarray(x, dtype=float)
+def _to_numpy_1d(x, prefer_col: str | None = None) -> np.ndarray:
+    """
+    Convert various 1D-like inputs to a float numpy array.
+    Supports: np.ndarray, list/tuple, Polars Series/DataFrame, Pandas Series/DataFrame.
+    If a DataFrame is passed, it will try:
+      - prefer_col (if provided and exists),
+      - a column named 'turnover' or 'te',
+      - the first column.
+    """
+    import numpy as _np
+
+    # Already ndarray
+    if isinstance(x, _np.ndarray):
+        arr = x.ravel().astype(float, copy=False)
+        return _np.nan_to_num(arr, nan=_np.nan, posinf=_np.nan, neginf=_np.nan)
+
+    # Python list/tuple
+    if isinstance(x, (list, tuple)):
+        arr = _np.asarray(x, dtype=float).ravel()
+        return _np.nan_to_num(arr, nan=_np.nan, posinf=_np.nan, neginf=_np.nan)
+
+    # Polars
+    try:
+        import polars as pl  # type: ignore
+        if isinstance(x, pl.Series):
+            arr = x.to_numpy().astype(float, copy=False).ravel()
+            return _np.nan_to_num(arr, nan=_np.nan, posinf=_np.nan, neginf=_np.nan)
+        if isinstance(x, pl.DataFrame):
+            cols = list(x.columns)
+            col = None
+            if prefer_col and prefer_col in cols:
+                col = prefer_col
+            elif "turnover" in cols:
+                col = "turnover"
+            elif "te" in cols:
+                col = "te"
+            else:
+                col = cols[0] if cols else None
+            if col is None:
+                return _np.array([], dtype=float)
+            arr = x[col].to_numpy().astype(float, copy=False).ravel()
+            return _np.nan_to_num(arr, nan=_np.nan, posinf=_np.nan, neginf=_np.nan)
+    except Exception:
+        pass
+
+    # Pandas
+    try:
+        import pandas as pd  # type: ignore
+        if isinstance(x, pd.Series):
+            arr = x.to_numpy(dtype=float).ravel()
+            return _np.nan_to_num(arr, nan=_np.nan, posinf=_np.nan, neginf=_np.nan)
+        if isinstance(x, pd.DataFrame):
+            cols = list(x.columns)
+            col = None
+            if prefer_col and prefer_col in cols:
+                col = prefer_col
+            elif "turnover" in cols:
+                col = "turnover"
+            elif "te" in cols:
+                col = "te"
+            else:
+                col = cols[0] if cols else None
+            if col is None:
+                return _np.array([], dtype=float)
+            arr = x[col].to_numpy(dtype=float).ravel()
+            return _np.nan_to_num(arr, nan=_np.nan, posinf=_np.nan, neginf=_np.nan)
+    except Exception:
+        pass
+
     raise TypeError(f"Unsupported type for array conversion: {type(x)}")
 
 
@@ -102,7 +162,7 @@ def compute_backtest_metrics(bt: Any) -> pl.DataFrame:
             raise ValueError("dict de backtest debe contener 'equity' y 'dates'.")
         equity = _to_numpy_1d(bt["equity"])
         dates_pd = pd.DatetimeIndex(bt["dates"])
-        turnover = _to_numpy_1d(bt["turnover"]) if "turnover" in bt and bt["turnover"] is not None else None
+        turnover = _to_numpy_1d(bt["turnover"], prefer_col="turnover") if "turnover" in bt and bt["turnover"] is not None else None
         te_daily = _to_numpy_1d(bt["te_daily_proxy"]) if "te_daily_proxy" in bt and bt["te_daily_proxy"] is not None else None
     else:
         raise TypeError("Tipo de backtest no soportado para métricas.")
