@@ -640,19 +640,21 @@ except NameError:
 # If still missing, derive generic tickers from Sigma
 if not names:
     try:
-        n_guess = int(np.shape(Sigma)[0])
+        n_guess = int(np.shape(Sigma)[0])  # noqa: F821
     except Exception:
         n_guess = 0
     names = [f"A{i}" for i in range(n_guess)]
 
-# Ensure we have df_ret_wide for fallback μ estimate
+# Ensure we have df_ret_wide for fallback μ/cov estimates
 try:
     df_ret_wide  # noqa: F821
 except NameError:
     df_ret_wide = st.session_state.get("returns_wide", None)
 
+
+# ---------- Fallback helpers ----------
 def _fallback_mu_from_returns(df_ret_wide_obj, names_list):
-    """Fallback: mean return per asset (NaN-safe). Returns np.ndarray."""
+    """Mean return per asset (NaN-safe). Returns np.ndarray."""
     import numpy as _np
     if df_ret_wide_obj is None or not names_list:
         return _np.full(len(names_list), _np.nan, float)
@@ -661,67 +663,14 @@ def _fallback_mu_from_returns(df_ret_wide_obj, names_list):
         if isinstance(df_ret_wide_obj, pl.DataFrame):
             R = df_ret_wide_obj.select(names_list).to_numpy()
         else:
-            R = df_ret_wide_obj[names_list].to_numpy()  # best-effort for pandas-like
+            R = df_ret_wide_obj[names_list].to_numpy()  # pandas-like
     except Exception:
         return _np.full(len(names_list), _np.nan, float)
     return _np.nanmean(_np.asarray(R, dtype=float), axis=0)
 
-# Prefer session value; else try local 'mu'; else fallback from returns
-try:
-    mu_vec_candidate = st.session_state.get("mu_vec", None)
-    if mu_vec_candidate is None:
-        mu_vec_candidate = np.asarray(mu, dtype=float).ravel()  # 'mu' may not exist
-    else:
-        mu_vec_candidate = np.asarray(mu_vec_candidate, dtype=float).ravel()
-except Exception:
-    mu_vec_candidate = _fallback_mu_from_returns(df_ret_wide, names)
 
-# ---------- Helper function for μ alignment ----------
-def _align_mu_by_names(names_list, mu_obj):
-    """
-    Aligns expected returns (μ) to 'names_list'.
-    - Labeled Polars/Pandas → match by ticker.
-    - Raw array/list → pad/truncate to len(names_list).
-    """
-    import numpy as np
-    try:
-        import polars as pl  # type: ignore
-        if isinstance(mu_obj, pl.DataFrame):
-            cols = set(mu_obj.columns)
-            tk_col = "ticker" if "ticker" in cols else list(cols)[0]
-            mu_col = "mu" if "mu" in cols else [c for c in mu_obj.columns if c != tk_col][0]
-            mapping = {str(t): float(v) for t, v in zip(mu_obj[tk_col].to_list(), mu_obj[mu_col].to_list())}
-            return np.array([mapping.get(t, np.nan) for t in names_list], float)
-        if isinstance(mu_obj, pl.Series):
-            pass  # treat below as raw
-    except Exception:
-        pass
-    try:
-        import pandas as pd  # type: ignore
-        if isinstance(mu_obj, pd.DataFrame):
-            tk_col = "ticker" if "ticker" in mu_obj.columns else mu_obj.columns[0]
-            mu_col = "mu" if "mu" in mu_obj.columns else [c for c in mu_obj.columns if c != tk_col][0]
-            mapping = dict(zip(mu_obj[tk_col].astype(str), mu_obj[mu_col].astype(float)))
-            return np.array([mapping.get(t, np.nan) for t in names_list], float)
-        if isinstance(mu_obj, pd.Series):
-            s = mu_obj.astype(float)
-            return np.array([s.get(t, np.nan) for t in names_list], float)
-    except Exception:
-        pass
-    arr = np.asarray(mu_obj, float).ravel()
-    out = np.full(len(names_list), np.nan, float)
-    n = min(len(names_list), arr.size)
-    if n > 0:
-        out[:n] = arr[:n]
-    return out
-
-
-# ---------- Ensure Sigma (covariance) is defined ----------
 def _fallback_cov_from_returns(df_ret_wide_obj, names_list):
-    """
-    Build a NaN-safe covariance matrix from returns (columns=assets).
-    Returns an (N,N) float array or an empty array if not possible.
-    """
+    """NaN-safe sample covariance from returns. Returns (N,N) array (or tiny I if needed)."""
     import numpy as _np
     if df_ret_wide_obj is None or not names_list:
         return _np.array([[]], dtype=float)[:0, :0]
@@ -730,8 +679,7 @@ def _fallback_cov_from_returns(df_ret_wide_obj, names_list):
         if isinstance(df_ret_wide_obj, pl.DataFrame):
             R = df_ret_wide_obj.select(names_list).to_numpy()
         else:
-            # pandas-like best effort
-            R = df_ret_wide_obj[names_list].to_numpy()
+            R = df_ret_wide_obj[names_list].to_numpy()  # pandas-like
     except Exception:
         return _np.array([[]], dtype=float)[:0, :0]
     R = _np.asarray(R, dtype=float)
@@ -740,11 +688,9 @@ def _fallback_cov_from_returns(df_ret_wide_obj, names_list):
         return _np.eye(len(names_list), dtype=float) * 1e-6
     C = _np.cov(R, rowvar=False)
     C = _np.nan_to_num(C, nan=0.0, posinf=0.0, neginf=0.0)
-    # Symmetrize and add tiny ridge for safety
-    C = 0.5 * (C + C.T)
-    import numpy.linalg as _la
+    C = 0.5 * (C + C.T)  # symmetrize
     try:
-        # tiny ridge only if needed
+        import numpy.linalg as _la
         eigmin = _np.min(_la.eigvalsh(C))
         if eigmin < 1e-12:
             C = C + _np.eye(C.shape[0]) * (1e-12 - eigmin + 1e-12)
@@ -752,7 +698,19 @@ def _fallback_cov_from_returns(df_ret_wide_obj, names_list):
         pass
     return C
 
-# 1) Try local 'Sigma', else session_state, else fallback
+
+# ---------- Build a robust candidate for μ ----------
+try:
+    mu_vec_candidate = st.session_state.get("mu_vec", None)
+    if mu_vec_candidate is None:
+        mu_vec_candidate = np.asarray(mu, dtype=float).ravel()  # 'mu' may or may not exist
+    else:
+        mu_vec_candidate = np.asarray(mu_vec_candidate, dtype=float).ravel()
+except Exception:
+    mu_vec_candidate = _fallback_mu_from_returns(df_ret_wide, names)
+
+
+# ---------- Ensure Sigma (covariance) is defined ----------
 try:
     Sigma  # noqa: F821
 except NameError:
@@ -762,44 +720,85 @@ if Sigma is None:
     Sigma = st.session_state.get("cov_mat", None)
 
 if Sigma is None:
-    # need df_ret_wide & names to estimate
+    # estimate from returns if needed
     df_ret_wide_local = st.session_state.get("returns_wide", None)
-    names_local = st.session_state.get("asset_names", None) or []
-    if not names_local:
+    names_local = st.session_state.get("asset_names", None) or names
+    if not names_local and df_ret_wide_local is not None:
         try:
             names_local = [c for c in df_ret_wide_local.columns if c != "date"]
         except Exception:
             names_local = []
     Sigma = _fallback_cov_from_returns(df_ret_wide_local, names_local)
 
-# Enforce numeric/symmetric/PSD-ish and align shape to 'names'
-import numpy as np
+# Clean/symmetrize/shape-align Sigma to len(names)
 Sigma = np.asarray(Sigma, dtype=float)
 Sigma = np.nan_to_num(Sigma, nan=0.0, posinf=0.0, neginf=0.0)
 Sigma = 0.5 * (Sigma + Sigma.T)
 
 N_names = len(names) if isinstance(names, (list, tuple)) else int(Sigma.shape[0])
 if not isinstance(names, (list, tuple)) or len(names) == 0:
-    # fallback generic names if still missing
     names = [f"A{i}" for i in range(int(Sigma.shape[0]))]
 
-# If Sigma has wrong shape, trim or pad to (N_names, N_names)
 if Sigma.shape != (N_names, N_names):
     m = min(N_names, Sigma.shape[0], Sigma.shape[1])
-    # Trim to common square, then pad if we need larger N
     Sigma_trim = Sigma[:m, :m]
     if m < N_names:
         Sigma_pad = np.zeros((N_names, N_names), dtype=float)
         Sigma_pad[:m, :m] = Sigma_trim
-        # tiny ridge on newly padded diagonal
         for i in range(m, N_names):
-            Sigma_pad[i, i] = 1e-6
+            Sigma_pad[i, i] = 1e-6  # tiny ridge on padded diag
         Sigma = Sigma_pad
     else:
         Sigma = Sigma_trim
 
-# Final tiny ridge for numerical safety
 np.fill_diagonal(Sigma, np.maximum(np.diag(Sigma), 1e-12))
+
+
+# ---------- Helper: align μ to tickers ----------
+def _align_mu_by_names(names_list, mu_obj):
+    """
+    Align expected returns (μ) to 'names_list'.
+    - Labeled Polars/Pandas → match by ticker.
+    - Raw array/list → pad/truncate to len(names_list).
+    """
+    import numpy as _np
+    try:
+        import polars as pl  # type: ignore
+        if isinstance(mu_obj, pl.DataFrame):
+            cols = set(mu_obj.columns)
+            tk_col = "ticker" if "ticker" in cols else list(mu_obj.columns)[0]
+            mu_col = "mu" if "mu" in cols else [c for c in mu_obj.columns if c != tk_col][0]
+            mapping = {str(t): float(v) for t, v in zip(mu_obj[tk_col].to_list(), mu_obj[mu_col].to_list())}
+            return _np.array([mapping.get(t, _np.nan) for t in names_list], float)
+        if isinstance(mu_obj, pl.Series):
+            pass
+    except Exception:
+        pass
+    try:
+        import pandas as pd  # type: ignore
+        if isinstance(mu_obj, pd.DataFrame):
+            tk_col = "ticker" if "ticker" in mu_obj.columns else mu_obj.columns[0]
+            mu_col = "mu" if "mu" in mu_obj.columns else [c for c in mu_obj.columns if c != tk_col][0]
+            mapping = dict(zip(mu_obj[tk_col].astype(str), mu_obj[mu_col].astype(float)))
+            return _np.array([mapping.get(t, _np.nan) for t in names_list], float)
+        if isinstance(mu_obj, pd.Series):
+            s = mu_obj.astype(float)
+            return _np.array([s.get(t, _np.nan) for t in names_list], float)
+    except Exception:
+        pass
+    arr = _np.asarray(mu_obj, float).ravel()
+    out = _np.full(len(names_list), _np.nan, float)
+    n = min(len(names_list), arr.size)
+    if n > 0:
+        out[:n] = arr[:n]
+    return out
+
+
+# Align μ to tickers and persist artifacts to session_state
+mu_aligned = _align_mu_by_names(names, mu_vec_candidate)
+st.session_state["mu_vec"] = mu_aligned
+st.session_state["cov_mat"] = Sigma
+st.session_state["asset_names"] = names
 
 
 # ---------- Ensure 'meta' exists (pull from session or build a minimal one) ----------
@@ -815,16 +814,11 @@ def _safe_bool(x, default):
     except Exception:
         return bool(default)
 
-# Try session-stored meta first
 meta = st.session_state.get("risk_meta", None)
-
-# Build a minimal meta if missing
 if meta is None or not isinstance(meta, dict) or "params" not in meta:
-    per_year_guess = 252
-    # Try to infer methods used earlier in your pipeline; otherwise fall back to strings
     meta = {
         "params": {
-            "per_year": per_year_guess,
+            "per_year": 252,
             "mu_method": "mean",
             "cov_method": "sample_cov",
             "ewma_lambda": 0.94,
@@ -868,35 +862,22 @@ st.session_state["risk_config"] = risk_cfg
 st.session_state["risk_timestamp"] = datetime.now(UTC).isoformat()
 
 
-# Align μ to tickers and persist artifacts to session_state
-mu_aligned = _align_mu_by_names(names, mu_vec_candidate)
-st.session_state["mu_vec"] = mu_aligned
-st.session_state["cov_mat"] = Sigma
-st.session_state["asset_names"] = names
-
-# Compact configuration for caching and reproducibility
-risk_cfg = {
-    "tickers": ",".join(names),
-    "per_year": int(meta["params"]["per_year"]),
-    "mu_method": meta["params"]["mu_method"],
-    "cov_method": meta["params"]["cov_method"],
-    "ewma_lambda": float(meta["params"]["ewma_lambda"]),
-    "ridge_eps": float(meta["params"]["ridge_eps"]),
-    "psd": bool(meta["params"]["enforce_psd"]),
-    "fingerprint": meta["fingerprint"],
-}
-
-# Persist risk_model.json metadata into local cache
+# ---------- Diagnostics: condition number & eigenvalues (safe) ----------
+import numpy.linalg as _la
 try:
-    save_json("risk_model", risk_cfg, meta)
-    st.caption(f"Saved risk model metadata to cache (fingerprint: **{meta['fingerprint']}**).")
-except Exception as e:
-    st.warning(f"Could not persist risk_model.json to cache: {e}")
+    if Sigma is None or getattr(Sigma, "size", 0) == 0:
+        eigvals = np.array([], dtype=float)
+        cond_post = np.inf
+    else:
+        Sigma_np = np.asarray(Sigma, dtype=float)
+        Sigma_np = 0.5 * (Sigma_np + Sigma_np.T)
+        eigvals = _la.eigvalsh(Sigma_np)
+        svals = _la.svd(Sigma_np, compute_uv=False)
+        cond_post = float(svals[0] / svals[-1]) if svals.size and svals[-1] > 0 else np.inf
+except Exception:
+    eigvals = np.array([], dtype=float)
+    cond_post = np.inf
 
-# Store meta info in session_state for later access (Optimizer, Backtest)
-st.session_state["risk_meta"] = meta
-st.session_state["risk_config"] = risk_cfg
-st.session_state["risk_timestamp"] = datetime.now(UTC).isoformat()
 
 # ---------- File export section ----------
 st.subheader("📤 Export artifacts")
@@ -950,7 +931,7 @@ with colm:
     )
 
 # Diagnostic warnings for matrix conditioning
-if cond_post > 1e6:
+if np.isfinite(cond_post) and cond_post > 1e6:
     st.warning("High post-conditioning number κ; consider increasing Ridge ε or using OAS/PCA.")
-if eigvals.size and eigvals.min() < 0:
+if eigvals.size and float(np.min(eigvals)) < 0:
     st.warning("Σ has negative eigenvalues; PSD clipping or larger Ridge ε recommended.")
