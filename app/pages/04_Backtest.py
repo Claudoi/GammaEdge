@@ -389,8 +389,19 @@ if not do_grid:
         plot_weights_heatmap(bt["dates"], bt["tickers"], bt["weights"], title="Weights (rebalance steps)"),
         use_container_width=True,
     )
-    fig = plot_turnover(bt["dates"], bt["turnover"], title="Turnover at Rebalance", align="auto")
-    st.plotly_chart(fig, use_container_width=True)
+    # Turnover plot (per rebalance step)
+    dates_w = bt.get("rebalance_dates", None)
+    if dates_w is None:
+        k = int(np.size(bt.get("turnover", [])))
+        dates_w = bt["dates"][-k:] if k > 0 else []
+
+    to_vals = np.asarray(bt.get("turnover", []), dtype=float)
+
+    if len(dates_w) == to_vals.size and to_vals.size > 0:
+        fig = plot_turnover(dates_w, to_vals, title="Turnover at Rebalance")
+        st.plotly_chart(fig, width="stretch")
+    else:
+        st.info("Turnover plot unavailable (length mismatch or empty series).")
 
     if bt.get("te_daily_proxy") is not None:
         st.plotly_chart(
