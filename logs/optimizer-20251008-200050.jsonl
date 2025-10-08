@@ -1,0 +1,19 @@
+{"event": "start", "utc": "2025-10-08T20:00:50.138100", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 9, "box": {"w_min": 0.09999999999999999, "w_max": 0.21000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T20:00:50.138587", "elapsed_sec": 0.0, "cond": 123.45187938985123}
+{"event": "returns_cleaned", "utc": "2025-10-08T20:00:50.139900", "elapsed_sec": 0.002, "n_rows": 406, "n_cols": 10}
+{"event": "solution_ok", "utc": "2025-10-08T20:00:50.290710", "elapsed_sec": 0.153, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}
+{"event": "start", "utc": "2025-10-08T20:00:50.366645", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 9, "box": {"w_min": 0.09999999999999999, "w_max": 0.21000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T20:00:50.367070", "elapsed_sec": 0.0, "cond": 123.45187938985123}
+{"event": "returns_cleaned", "utc": "2025-10-08T20:00:50.368468", "elapsed_sec": 0.002, "n_rows": 406, "n_cols": 10}
+{"event": "solution_ok", "utc": "2025-10-08T20:00:50.520185", "elapsed_sec": 0.154, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}
+{"event": "start", "utc": "2025-10-08T20:00:50.591594", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 9, "box": {"w_min": 0.09999999999999999, "w_max": 0.21000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T20:00:50.592016", "elapsed_sec": 0.0, "cond": 123.45187938985123}
+{"event": "returns_cleaned", "utc": "2025-10-08T20:00:50.593260", "elapsed_sec": 0.002, "n_rows": 406, "n_cols": 10}
+{"event": "solution_ok", "utc": "2025-10-08T20:00:50.739797", "elapsed_sec": 0.148, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}
+{"event": "start", "utc": "2025-10-08T20:00:50.814005", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 9, "box": {"w_min": 0.09999999999999999, "w_max": 0.21000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T20:00:50.815452", "elapsed_sec": 0.001, "cond": 123.45187938985123}
+{"event": "start", "utc": "2025-10-08T20:00:50.822320", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 9, "box": {"w_min": 0.09999999999999999, "w_max": 0.21000000000000008}}
+{"event": "returns_cleaned", "utc": "2025-10-08T20:00:50.822584", "elapsed_sec": 0.009, "n_rows": 406, "n_cols": 10}
+{"event": "sigma_psd", "utc": "2025-10-08T20:00:50.822878", "elapsed_sec": 0.001, "cond": 123.45187938985123}
+{"event": "returns_cleaned", "utc": "2025-10-08T20:00:50.893574", "elapsed_sec": 0.071, "n_rows": 406, "n_cols": 10}
+{"event": "solution_ok", "utc": "2025-10-08T20:00:51.037499", "elapsed_sec": 0.215, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}

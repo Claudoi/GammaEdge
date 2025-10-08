@@ -1,0 +1,15 @@
+{"event": "start", "utc": "2025-10-08T20:00:49.070048", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 9, "box": {"w_min": 0.09999999999999999, "w_max": 0.21000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T20:00:49.070891", "elapsed_sec": 0.001, "cond": 123.45187938985123}
+{"event": "start", "utc": "2025-10-08T20:00:49.076427", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 9, "box": {"w_min": 0.09999999999999999, "w_max": 0.21000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T20:00:49.076799", "elapsed_sec": 0.0, "cond": 123.45187938985123}
+{"event": "returns_cleaned", "utc": "2025-10-08T20:00:49.077231", "elapsed_sec": 0.007, "n_rows": 406, "n_cols": 10}
+{"event": "returns_cleaned", "utc": "2025-10-08T20:00:49.143219", "elapsed_sec": 0.067, "n_rows": 406, "n_cols": 10}
+{"event": "solution_ok", "utc": "2025-10-08T20:00:49.290872", "elapsed_sec": 0.214, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}
+{"event": "start", "utc": "2025-10-08T20:00:49.434448", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 9, "box": {"w_min": 0.09999999999999999, "w_max": 0.21000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T20:00:49.434875", "elapsed_sec": 0.0, "cond": 123.45187938985123}
+{"event": "returns_cleaned", "utc": "2025-10-08T20:00:49.436389", "elapsed_sec": 0.002, "n_rows": 406, "n_cols": 10}
+{"event": "solution_ok", "utc": "2025-10-08T20:00:49.651978", "elapsed_sec": 0.218, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}
+{"event": "start", "utc": "2025-10-08T20:00:49.829393", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 9, "box": {"w_min": 0.09999999999999999, "w_max": 0.21000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T20:00:49.830062", "elapsed_sec": 0.001, "cond": 123.45187938985123}
+{"event": "returns_cleaned", "utc": "2025-10-08T20:00:49.831688", "elapsed_sec": 0.002, "n_rows": 406, "n_cols": 10}
+{"event": "solution_ok", "utc": "2025-10-08T20:00:50.002825", "elapsed_sec": 0.173, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}

@@ -446,7 +446,13 @@ try:
     df_contrib_asset = bt_attr.contributions_by_asset(aln)
 
     # Extract top contributors (10 assets with the highest cumulative contribution)
-    df_top = bt_attr.top_contributors(df_contrib_asset, k=10)
+    df_top = bt_attr.top_contributors(
+        bt=bt,
+        df_ret_wide=df_ret_bt,   
+        top_n=10,
+        sign="both"              
+    )
+    
 
     # Plot top contributors as a horizontal bar chart
     st.plotly_chart(plot_top_contributors(df_top), width="stretch")

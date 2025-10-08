@@ -1,0 +1,16 @@
+{"event": "start", "utc": "2025-10-08T20:00:52.015485", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 9, "box": {"w_min": 0.09999999999999999, "w_max": 0.21000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T20:00:52.016513", "elapsed_sec": 0.001, "cond": 123.45187938985123}
+{"event": "returns_cleaned", "utc": "2025-10-08T20:00:52.018286", "elapsed_sec": 0.003, "n_rows": 406, "n_cols": 10}
+{"event": "solution_ok", "utc": "2025-10-08T20:00:52.162925", "elapsed_sec": 0.147, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}
+{"event": "start", "utc": "2025-10-08T20:00:52.239327", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 9, "box": {"w_min": 0.09999999999999999, "w_max": 0.21000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T20:00:52.240069", "elapsed_sec": 0.001, "cond": 123.45187938985123}
+{"event": "returns_cleaned", "utc": "2025-10-08T20:00:52.241278", "elapsed_sec": 0.002, "n_rows": 406, "n_cols": 10}
+{"event": "solution_ok", "utc": "2025-10-08T20:00:52.407408", "elapsed_sec": 0.168, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}
+{"event": "start", "utc": "2025-10-08T20:00:52.559566", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 9, "box": {"w_min": 0.09999999999999999, "w_max": 0.21000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T20:00:52.560005", "elapsed_sec": 0.0, "cond": 123.45187938985123}
+{"event": "returns_cleaned", "utc": "2025-10-08T20:00:52.561348", "elapsed_sec": 0.002, "n_rows": 406, "n_cols": 10}
+{"event": "solution_ok", "utc": "2025-10-08T20:00:52.772683", "elapsed_sec": 0.213, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}
+{"event": "start", "utc": "2025-10-08T20:00:52.864571", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 9, "box": {"w_min": 0.09999999999999999, "w_max": 0.21000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T20:00:52.865077", "elapsed_sec": 0.001, "cond": 123.45187938985123}
+{"event": "returns_cleaned", "utc": "2025-10-08T20:00:52.866708", "elapsed_sec": 0.002, "n_rows": 406, "n_cols": 10}
+{"event": "solution_ok", "utc": "2025-10-08T20:00:53.149989", "elapsed_sec": 0.285, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}

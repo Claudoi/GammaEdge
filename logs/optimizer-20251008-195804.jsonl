@@ -1,0 +1,15 @@
+{"event": "start", "utc": "2025-10-08T19:58:04.034421", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 6, "box": {"w_min": 0.09999999999999999, "w_max": 0.22000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T19:58:04.091819", "elapsed_sec": 0.057, "cond": 29.872433660050053}
+{"event": "returns_cleaned", "utc": "2025-10-08T19:58:04.094302", "elapsed_sec": 0.06, "n_rows": 406, "n_cols": 7}
+{"event": "solution_ok", "utc": "2025-10-08T19:58:04.241980", "elapsed_sec": 0.208, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}
+{"event": "start", "utc": "2025-10-08T19:58:04.311182", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 6, "box": {"w_min": 0.09999999999999999, "w_max": 0.22000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T19:58:04.312872", "elapsed_sec": 0.002, "cond": 29.872433660050053}
+{"event": "returns_cleaned", "utc": "2025-10-08T19:58:04.319029", "elapsed_sec": 0.008, "n_rows": 406, "n_cols": 7}
+{"event": "start", "utc": "2025-10-08T19:58:04.318511", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 6, "box": {"w_min": 0.09999999999999999, "w_max": 0.22000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T19:58:04.319416", "elapsed_sec": 0.001, "cond": 29.872433660050053}
+{"event": "returns_cleaned", "utc": "2025-10-08T19:58:04.381509", "elapsed_sec": 0.063, "n_rows": 406, "n_cols": 7}
+{"event": "solution_ok", "utc": "2025-10-08T19:58:04.527191", "elapsed_sec": 0.209, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}
+{"event": "start", "utc": "2025-10-08T19:58:04.595694", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 6, "box": {"w_min": 0.09999999999999999, "w_max": 0.22000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-08T19:58:04.596176", "elapsed_sec": 0.0, "cond": 29.872433660050053}
+{"event": "returns_cleaned", "utc": "2025-10-08T19:58:04.597723", "elapsed_sec": 0.002, "n_rows": 406, "n_cols": 7}
+{"event": "solution_ok", "utc": "2025-10-08T19:58:04.741569", "elapsed_sec": 0.146, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}
