@@ -1,0 +1,4 @@
+{"event": "start", "utc": "2025-10-09T16:48:24.413883", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 11, "box": {"w_min": 0.0, "w_max": 0.1}}
+{"event": "sigma_psd", "utc": "2025-10-09T16:48:24.414792", "elapsed_sec": 0.001, "cond": 219.40012528429241}
+{"event": "returns_cleaned", "utc": "2025-10-09T16:48:24.417031", "elapsed_sec": 0.003, "n_rows": 406, "n_cols": 12}
+{"event": "solution_ok", "utc": "2025-10-09T16:48:24.569210", "elapsed_sec": 0.155, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}

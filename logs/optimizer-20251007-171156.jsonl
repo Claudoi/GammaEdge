@@ -1,3 +1,0 @@
-{"event": "start", "utc": "2025-10-07T17:11:56.757177", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 12, "box": {"w_min": 0.01, "w_max": 0.1}}
-{"event": "sigma_psd", "utc": "2025-10-07T17:11:56.782823", "elapsed_sec": 0.026, "cond": 193.77663139693695}
-{"event": "returns_cleaned", "utc": "2025-10-07T17:11:56.885367", "elapsed_sec": 0.128, "n_rows": 405, "n_cols": 13}

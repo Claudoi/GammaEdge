@@ -211,16 +211,6 @@ def efficient_frontier(
     title: str = "Efficient Frontier",
     **kwargs,
 ) -> go.Figure:
-    """
-    Frontera eficiente con:
-      - curva cerrada (short permitido):   risks_closed / rets_closed
-      - curva con caja (proyectada):       risks_box / rets_box
-      - sombreado entre ambas (constraint gap)
-      - puntos clave: MinVar, Max Sharpe (msr) y custom
-      - CAL si se pasa msr_point y rf
-
-    Retro‑compatible con efficient_frontier(risks, rets) posicional.
-    """
 
     # Compat: efficient_frontier(risks, rets)
     if len(args) == 2 and risks_closed is None and rets_closed is None:

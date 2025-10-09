@@ -69,6 +69,8 @@ if not all(k in st.session_state for k in required_keys):
 
 Sigma = np.asarray(st.session_state["cov_mat"], dtype=float)
 mu = np.asarray(st.session_state["mu_vec"], dtype=float)
+# ---- SANIDAD CRÍTICA DE μ ----
+mu = np.nan_to_num(mu, nan=0.0, posinf=0.0, neginf=0.0)
 names = list(st.session_state["asset_names"])
 df_ret_wide: pl.DataFrame = st.session_state["returns_wide"]
 meta_df: pl.DataFrame | None = st.session_state.get("asset_meta", None)
@@ -318,18 +320,18 @@ st.markdown("---")
 st.subheader("Efficient Frontier")
 
 try:
-    # 1) Robust return range
-    r_lo = float(np.nanpercentile(mu, 10))
-    r_hi = float(np.nanpercentile(mu, 90))
+    # 1) Robust return range (sobre μ ya saneado, pero volvemos a blindar)
+    mu_valid = np.nan_to_num(mu, nan=0.0, posinf=0.0, neginf=0.0)
+    r_lo = float(np.nanpercentile(mu_valid, 10))
+    r_hi = float(np.nanpercentile(mu_valid, 90))
     if not (np.isfinite(r_lo) and np.isfinite(r_hi)) or r_lo >= r_hi:
-        r_lo, r_hi = float(np.nanmin(mu)), float(np.nanmax(mu))
-    if not (np.isfinite(r_lo) and np.isfinite(r_hi)) or r_lo >= r_hi:
+        # fallback por si todos los μ son iguales o cero
         r_lo, r_hi = -0.1, 0.1
 
     # 2) Closed-form frontier (short allowed)
-    risks_closed, rets_closed = frontier_closed_form(mu, Sigma, r_min=r_lo, r_max=r_hi, npts=100)
+    risks_closed, rets_closed = frontier_closed_form(mu_valid, Sigma, r_min=r_lo, r_max=r_hi, npts=100)
 
-    # 3) Box-feasible frontier
+    # 3) Box frontier (sin cambios, pero usando mu_valid)
     if not box_feasible(N, w_min, w_max):
         st.warning(
             f"Box infeasible: N*w_min={N*w_min:.3f}, N*w_max={N*w_max:.3f}. "
@@ -338,17 +340,17 @@ try:
         risks_box = rets_box = None
     else:
         risks_box, rets_box = frontier_box_projected(
-            mu, Sigma, w_min=w_min, w_max=w_max, r_min=r_lo, r_max=r_hi, npts=100
+            mu_valid, Sigma, w_min=w_min, w_max=w_max, r_min=r_lo, r_max=r_hi, npts=100
         )
         if np.size(risks_box) <= 1:
             st.info("Degenerate box-frontier (single point). Relax box or widen μ range.")
             risks_box = rets_box = None
 
-    # 5) GMV & Tangency
-    w_mvp, w_tan = markowitz_closed_form(mu, Sigma, rf=rf)
-    r_mvp = float(w_mvp @ mu)
+    # 5) GMV & Tangency (con defensas suaves)
+    w_mvp, w_tan = markowitz_closed_form(mu_valid, Sigma, rf=rf)
+    r_mvp = float(w_mvp @ mu_valid)
     s_mvp = float(np.sqrt(max(w_mvp @ Sigma @ w_mvp, 0.0)))
-    r_tan = float(w_tan @ mu)
+    r_tan = float(w_tan @ mu_valid)
     s_tan = float(np.sqrt(max(w_tan @ Sigma @ w_tan, 0.0)))
 
     st.caption(

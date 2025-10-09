@@ -1,5 +1,0 @@
-{"event": "start", "utc": "2025-10-08T20:00:55.335143", "elapsed_sec": 0.0, "mode": "Active (TE penalized)", "n_assets": 9, "box": {"w_min": 0.09999999999999999, "w_max": 0.21000000000000008}}
-{"event": "sigma_psd", "utc": "2025-10-08T20:00:55.366694", "elapsed_sec": 0.032, "cond": 123.45187938985123}
-{"event": "returns_cleaned", "utc": "2025-10-08T20:00:55.487666", "elapsed_sec": 0.153, "n_rows": 406, "n_cols": 10}
-{"event": "solution_ok", "utc": "2025-10-08T20:00:56.061366", "elapsed_sec": 0.726, "algo": "ActiveTE", "gamma": 10.0, "lam2": 0.0, "iters": 800, "use_expos": false}
-{"event": "gamma_sweep_done", "utc": "2025-10-08T20:01:01.454495", "elapsed_sec": 6.119, "n_gammas": 25}
