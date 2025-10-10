@@ -1,0 +1,16 @@
+{"event": "start", "utc": "2025-10-10T08:08:53.146052", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 10, "box": {"w_min": 0.1, "w_max": 0.14}}
+{"event": "sigma_psd", "utc": "2025-10-10T08:08:53.146480", "elapsed_sec": 0.0, "cond": 155.70163802815262}
+{"event": "returns_cleaned", "utc": "2025-10-10T08:08:53.147786", "elapsed_sec": 0.002, "n_rows": 406, "n_cols": 11}
+{"event": "solution_ok", "utc": "2025-10-10T08:08:53.295539", "elapsed_sec": 0.149, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}
+{"event": "start", "utc": "2025-10-10T08:08:53.348684", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 10, "box": {"w_min": 0.1, "w_max": 0.15000000000000002}}
+{"event": "sigma_psd", "utc": "2025-10-10T08:08:53.349302", "elapsed_sec": 0.001, "cond": 155.70163802815262}
+{"event": "returns_cleaned", "utc": "2025-10-10T08:08:53.350573", "elapsed_sec": 0.002, "n_rows": 406, "n_cols": 11}
+{"event": "solution_ok", "utc": "2025-10-10T08:08:53.496355", "elapsed_sec": 0.148, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}
+{"event": "start", "utc": "2025-10-10T08:08:53.546622", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 10, "box": {"w_min": 0.1, "w_max": 0.16000000000000003}}
+{"event": "sigma_psd", "utc": "2025-10-10T08:08:53.547289", "elapsed_sec": 0.001, "cond": 155.70163802815262}
+{"event": "returns_cleaned", "utc": "2025-10-10T08:08:53.548577", "elapsed_sec": 0.002, "n_rows": 406, "n_cols": 11}
+{"event": "solution_ok", "utc": "2025-10-10T08:08:53.695800", "elapsed_sec": 0.149, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}
+{"event": "start", "utc": "2025-10-10T08:08:53.797673", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 10, "box": {"w_min": 0.1, "w_max": 0.18000000000000005}}
+{"event": "sigma_psd", "utc": "2025-10-10T08:08:53.798115", "elapsed_sec": 0.0, "cond": 155.70163802815262}
+{"event": "returns_cleaned", "utc": "2025-10-10T08:08:53.799515", "elapsed_sec": 0.002, "n_rows": 406, "n_cols": 11}
+{"event": "solution_ok", "utc": "2025-10-10T08:08:53.944835", "elapsed_sec": 0.147, "algo": "MV_L2", "gamma": 10.0, "lam2": 0.0}

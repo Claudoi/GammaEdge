@@ -1,0 +1,6 @@
+{"event": "start", "utc": "2025-10-10T08:09:06.199297", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 10, "box": {"w_min": 0.1, "w_max": 0.22000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-10T08:09:06.243339", "elapsed_sec": 0.044, "cond": 155.70163802815262}
+{"event": "returns_cleaned", "utc": "2025-10-10T08:09:06.332731", "elapsed_sec": 0.133, "n_rows": 406, "n_cols": 11}
+{"event": "start", "utc": "2025-10-10T08:09:06.853030", "elapsed_sec": 0.0, "mode": "Mean-Variance (L2)", "n_assets": 10, "box": {"w_min": 0.1, "w_max": 0.22000000000000008}}
+{"event": "sigma_psd", "utc": "2025-10-10T08:09:06.872005", "elapsed_sec": 0.019, "cond": 155.70163802815262}
+{"event": "returns_cleaned", "utc": "2025-10-10T08:09:06.984252", "elapsed_sec": 0.131, "n_rows": 406, "n_cols": 11}

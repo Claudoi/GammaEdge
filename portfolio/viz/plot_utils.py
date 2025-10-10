@@ -10,6 +10,7 @@ import numpy as np
 import plotly.graph_objects as go
 import polars as pl
 import plotly.express as px
+import pandas as pd
 from scipy.cluster.hierarchy import dendrogram, leaves_list, linkage, optimal_leaf_ordering
 from scipy.spatial.distance import squareform
 
@@ -1024,5 +1025,312 @@ def plot_brinson_cumulative(df_brinson: pl.DataFrame, title="Brinson-Fachler Att
     fig.update_layout(
         title=title, xaxis_title="Date", yaxis_title="Attribution (%)",
         yaxis=dict(tickformat=".0%"), template="plotly_white"
+    )
+    return fig
+
+
+
+# =========================
+# Advanced attribution plots (non-breaking additions)
+# =========================
+
+
+def plot_asset_contrib_heatmap_adv(
+    df_asset_daily: pl.DataFrame,
+    *,
+    topk_by_abs_total: int = 30,
+    title: str = "Asset Daily Contribution Heatmap",
+) -> go.Figure:
+
+    req = {"date", "ticker", "contrib"}
+    if not req.issubset(set(df_asset_daily.columns)):
+        raise ValueError("df_asset_daily must contain 'date','ticker','contrib'")
+
+    totals = (
+        df_asset_daily.group_by("ticker")
+        .agg(pl.col("contrib").sum().abs().alias("abs_total"))
+        .sort("abs_total", descending=True)
+        .head(topk_by_abs_total)
+    )
+    keep = set(totals["ticker"].to_list())
+    df_top = df_asset_daily.filter(pl.col("ticker").is_in(keep))
+
+    wide = (
+        df_top.select(["date", "ticker", "contrib"])
+        .pivot(values="contrib", index="date", columns="ticker")
+        .sort("date")
+    )
+    pdf = wide.to_pandas().set_index("date")
+    fig = px.imshow(
+        pdf.T,
+        aspect="auto",
+        origin="lower",
+        title=title,
+        labels=dict(x="Date", y="Ticker", color="Contribution"),
+    )
+    fig.update_layout(template="plotly_white")
+    return fig
+
+
+def plot_cumulative_contrib_curves_adv(
+    df_asset_daily: pl.DataFrame,
+    *,
+    topk_by_abs_total: int = 10,
+    title: str = "Cumulative Contribution (Top-k assets)",
+) -> go.Figure:
+
+    req = {"date", "ticker", "contrib"}
+    if not req.issubset(set(df_asset_daily.columns)):
+        raise ValueError("df_asset_daily must contain 'date','ticker','contrib'")
+
+    totals = (
+        df_asset_daily.group_by("ticker")
+        .agg(pl.col("contrib").sum().abs().alias("abs_total"))
+        .sort("abs_total", descending=True)
+        .head(topk_by_abs_total)
+    )
+    keep = set(totals["ticker"].to_list())
+    df_top = (
+        df_asset_daily
+        .filter(pl.col("ticker").is_in(keep))
+        .sort(["ticker", "date"])
+        .with_columns(pl.col("contrib").cum_sum().over("ticker").alias("cum_contrib"))
+    )
+    pdf = df_top.select(["date", "ticker", "cum_contrib"]).to_pandas()
+    fig = px.line(pdf, x="date", y="cum_contrib", color="ticker", title=title, labels={"cum_contrib": "Cumulative"})
+    fig.update_layout(template="plotly_white")
+    fig.update_yaxes(tickformat=".2%")
+    return fig
+
+
+def plot_brinson_components_bar_adv(
+    df_brinson: pl.DataFrame,
+    *,
+    title: str = "Brinson Components (final snapshot)",
+    as_percent: bool = True,
+) -> go.Figure:
+
+    needed = {"date", "alloc", "select", "interact", "total"}
+    if not needed.issubset(set(df_brinson.columns)):
+        raise ValueError("df_brinson must contain 'date','alloc','select','interact','total'")
+    last = df_brinson.sort("date").tail(1).select(["alloc", "select", "interact", "total"]).to_pandas()
+    last = last.replace([np.inf, -np.inf], np.nan).dropna()
+    vals = last.iloc[0].values if len(last) else [0, 0, 0, 0]
+    fig = go.Figure(go.Bar(x=["Allocation", "Selection", "Interaction", "Total"], y=vals))
+    fig.update_layout(title=title, template="plotly_white", xaxis_title="", yaxis_title="Attribution")
+    if as_percent:
+        fig.update_yaxes(tickformat=".2%")
+    return fig
+
+
+def plot_brinson_components_area_adv(
+    df_brinson: pl.DataFrame,
+    *,
+    title: str = "Brinson Components Over Time",
+    as_percent: bool = True,
+) -> go.Figure:
+
+    need = {"date", "alloc", "select", "interact"}
+    if not need.issubset(set(df_brinson.columns)):
+        raise ValueError("df_brinson must contain 'date','alloc','select','interact'")
+    pdf = (
+        df_brinson.select(["date", "alloc", "select", "interact"])
+        .to_pandas()
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+        .sort_values("date")
+    )
+    pdf_m = pdf.melt(id_vars="date", var_name="component", value_name="value")
+    fig = px.area(pdf_m, x="date", y="value", color="component", title=title, labels={"value": "Attribution"})
+    fig.update_layout(template="plotly_white", legend_title="Component")
+    if as_percent:
+        fig.update_yaxes(tickformat=".0%")
+    return fig
+
+
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Extra attribution plots
+# ──────────────────────────────────────────────────────────────────────────────
+
+def plot_contrib_heatmap_daily(
+    df_asset_daily: pl.DataFrame,
+    *,
+    title: str = "Daily Contribution Heatmap",
+    tickers_order: list[str] | None = None,
+) -> go.Figure:
+    """
+    Heatmap of daily contributions by ticker.
+    Expects columns ['date','ticker','contrib'] in df_asset_daily.
+    Useful to spot regime shifts and concentration of contribution.
+    """
+    req = {"date", "ticker", "contrib"}
+    if not req.issubset(set(df_asset_daily.columns)):
+        raise ValueError("df_asset_daily must include 'date','ticker','contrib'.")
+
+    pdf = (
+        df_asset_daily
+        .select(["date", "ticker", "contrib"])
+        .to_pandas()
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna(subset=["date", "ticker", "contrib"])
+    )
+    # Optional user order (e.g., sort by total contribution elsewhere)
+    if tickers_order:
+        cat = pd.Categorical(pdf["ticker"], categories=tickers_order, ordered=True)
+        pdf = pdf.assign(ticker=cat).sort_values(["ticker", "date"])
+    pivot = pdf.pivot_table(index="ticker", columns="date", values="contrib", aggfunc="sum", fill_value=0.0)
+    # Ensure increasing date order on columns
+    pivot = pivot.reindex(sorted(pivot.columns), axis=1)
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=pivot.values,
+            x=pivot.columns,
+            y=pivot.index.astype(str),
+            colorbar=dict(title="Contribution"),
+            hovertemplate="Date=%{x}<br>Ticker=%{y}<br>Contrib=%{z:.4f}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Ticker",
+        template="plotly_white",
+        margin=dict(l=80, r=40, t=60, b=60),
+    )
+    return fig
+
+
+def plot_top_contributors_waterfall(
+    df_cum: pl.DataFrame,
+    *,
+    k: int = 10,
+    orientation: str = "v",
+    title: str = "Cumulative Contribution (Waterfall)",
+) -> go.Figure:
+
+    req = {"ticker", "contrib_total"}
+    if not req.issubset(set(df_cum.columns)):
+        raise ValueError("df_cum must include 'ticker','contrib_total'.")
+
+    pdf = (
+        df_cum.select(["ticker", "contrib_total"])
+        .sort("contrib_total", descending=True)
+        .head(k)
+        .to_pandas()
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
+    labels = pdf["ticker"].tolist()
+    vals = pdf["contrib_total"].values.astype(float)
+
+    # Positive/negative steps; no running total bar at the end (keeps it compact)
+    measure = ["relative"] * len(labels)
+
+    if orientation not in ("v", "h"):
+        orientation = "v"
+
+    fig = go.Figure(
+        go.Waterfall(
+            orientation="v" if orientation == "v" else "h",
+            measure=measure,
+            x=labels if orientation == "v" else None,
+            y=vals if orientation == "v" else None,
+            text=[f"{v:.4f}" for v in vals],
+            textposition="auto",
+            connector={"line": {"width": 1}},
+        )
+    )
+    fig.update_layout(
+        title=title,
+        template="plotly_white",
+        xaxis_title=("Ticker" if orientation == "v" else "Contribution"),
+        yaxis_title=("Contribution" if orientation == "v" else "Ticker"),
+        margin=dict(l=60, r=40, t=60, b=60),
+    )
+    return fig
+
+
+def plot_group_share_area_from_share(
+    df_share: pl.DataFrame,
+    *,
+    title: str = "Group Share of Total Contribution",
+) -> go.Figure:
+
+    req = {"date", "group", "share"}
+    if not req.issubset(set(df_share.columns)):
+        raise ValueError("df_share must include 'date','group','share'.")
+
+    pdf = (
+        df_share
+        .select(["date", "group", "share"])
+        .to_pandas()
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna(subset=["date", "group", "share"])
+        .sort_values("date")
+    )
+    fig = px.area(
+        pdf,
+        x="date",
+        y="share",
+        color="group",
+        title=title,
+        labels={"share": "Share of total"},
+    )
+    fig.update_layout(
+        template="plotly_white",
+        xaxis_title="Date",
+        yaxis_title="Share",
+        yaxis_tickformat=".0%",
+        legend_title="Group",
+        margin=dict(l=60, r=40, t=60, b=60),
+    )
+    return fig
+
+
+def plot_brinson_by_group_area(
+    df_brinson_g: pl.DataFrame,
+    group_labels: list[str],
+    *,
+    component: str = "total",  # "alloc" | "select" | "interact" | "total"
+    title: str | None = None,
+) -> go.Figure:
+
+    req = {"date", "group_id", "alloc", "select", "interact", "total"}
+    if not req.issubset(set(df_brinson_g.columns)):
+        raise ValueError("df_brinson_g must come from brinson_fachler_timeseries(..., by_group=True).")
+
+    if component not in {"alloc", "select", "interact", "total"}:
+        raise ValueError("component must be one of {'alloc','select','interact','total'}.")
+
+    pdf = (
+        df_brinson_g
+        .select(["date", "group_id", component])
+        .to_pandas()
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
+    # Attach readable labels
+    gid = pdf["group_id"].astype(int).values
+    labels = [group_labels[i] if 0 <= i < len(group_labels) else f"G{i}" for i in gid]
+    pdf = pdf.assign(group=labels).drop(columns=["group_id"]).sort_values("date")
+
+    fig = px.area(
+        pdf,
+        x="date",
+        y=component,
+        color="group",
+        title=title or f"Brinson by Group – {component.capitalize()} (Cumulative)",
+        labels={component: component.capitalize()},
+    )
+    fig.update_layout(
+        template="plotly_white",
+        xaxis_title="Date",
+        yaxis_title=f"{component.capitalize()}",
+        yaxis_tickformat=".2%",
+        legend_title="Group",
+        margin=dict(l=60, r=40, t=60, b=60),
     )
     return fig
