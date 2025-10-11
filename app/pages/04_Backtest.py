@@ -9,6 +9,7 @@ import inspect
 
 # --- third-party ---
 import numpy as np
+import pandas as pd
 import polars as pl
 import streamlit as st
 
@@ -299,16 +300,19 @@ allocator = make_allocator(alloc_kind)
 def cached_backtest(df_ret_wide, lookback, rebalance_freq, cost_bps, alloc_kind, w_min, w_max,
                     cov_estimator, ewma_lambda, use_to_budget, max_turnover, band_eps):
     alloc = make_allocator(alloc_kind)
+    # compute local number of assets (exclude 'date')
+    n_cols = len([c for c in df_ret_wide.columns if c != "date"])
     return backtest_rebalanced(
         df_ret_wide=df_ret_wide,
         lookback=int(lookback),
         rebalance_freq=rebalance_freq,
         cost_bps=float(cost_bps),
         allocator=alloc,
-        bench_weights=np.full(len([c for c in df_ret_wide.columns if c != "date"]), 1.0 / max(N, 1)),
+        bench_weights=np.full(n_cols, 1.0 / max(n_cols, 1)),
     )
 
 # Run backtest or grid depending on user setting
+bt = None
 if not do_grid:
     with st.spinner("Running backtest..."):
         bt = cached_backtest(
@@ -316,6 +320,40 @@ if not do_grid:
             cov_estimator, float(ewma_lambda), use_to_budget, float(max_turnover), float(band_eps)
         )
     st.success("✅ Backtest executed.")
+
+    # ─────────────────────────────────────────────────────────────────
+    # Handoff to 05_Attribution (persist into session_state)
+    # ─────────────────────────────────────────────────────────────────
+    def _export_to_05(bt_obj, df_wide_obj):
+        # normalize to Polars with datetime
+        if isinstance(df_wide_obj, pd.DataFrame):
+            df_pl = pl.from_pandas(df_wide_obj)
+        elif isinstance(df_wide_obj, pl.DataFrame):
+            df_pl = df_wide_obj
+        else:
+            st.error("`returns_wide/df_ret_wide` must be a Polars/Pandas DataFrame.")
+            return
+
+        if df_pl.schema.get("date") != pl.Datetime:
+            df_pl = df_pl.with_columns(pl.col("date").cast(pl.Datetime))
+
+        st.session_state["bt"] = bt_obj
+        st.session_state["df_ret_wide"] = df_pl
+        # keep a generic copy as well (so 05 can fallback)
+        st.session_state["returns_wide"] = df_pl
+        try:
+            st.toast("Artifacts saved for 05_Attribution.", icon="💾")
+        except Exception:
+            pass  # older Streamlit versions may not have toast
+
+    # auto-export now that bt exists
+    _export_to_05(bt, st.session_state.get("returns_wide", df_ret_wide))
+
+    # optional manual button to re-export on demand
+    with st.sidebar:
+        if st.button("Export to 05_Attribution"):
+            _export_to_05(bt, st.session_state.get("returns_wide", df_ret_wide))
+            st.success("Exported to session_state.")
 
 # ─────────────────────────────────────────────────────────────────────
 # Grid search mode (optional)
