@@ -5,8 +5,10 @@ import os
 import sys
 import numpy as np
 import polars as pl
+import pandas as pd
 import streamlit as st
-import plotly.graph_objects as go  # for local fallback plots
+import plotly.graph_objects as go
+import plotly.express as px
 
 # ---------------------------------------------------------------------
 # Repo root for local imports
@@ -16,11 +18,11 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 # --- core attribution ---
 from portfolio.backtest import attribution as bt_attr
 
-# --- plots (import only those guaranteed to exist in your repo) ---
+# --- plots guaranteed to exist in your repo ---
 from portfolio.viz.plot_utils import (
     plot_top_contributors,
-    plot_group_contrib_area,    # your existing function (no "mode" arg)
-    plot_brinson_cumulative,    # your existing function (no "as_percent" arg)
+    plot_group_contrib_area,   # existing signature in your repo
+    plot_brinson_cumulative,   # existing signature in your repo
 )
 
 # Optional extras (safe to miss)
@@ -50,15 +52,13 @@ except Exception:
         title: str = "Group Total Contribution",
     ) -> go.Figure:
         """
-        Local fallback bar plot if plot_group_contrib_bar_total isn't available
-        in portfolio.viz.plot_utils. Expects df_group_total with columns:
-        ['group', 'contrib_total'] (and optionally 'avg_weight').
+        Local fallback if plot_group_contrib_bar_total isn't available.
+        Expects df_group_total with columns: ['group','contrib_total'].
         """
         req = {"group", "contrib_total"}
         if not req.issubset(set(df_group_total.columns)):
             raise ValueError(f"Missing columns for bar plot: {req}")
 
-        # convert to pandas for convenience; drop inf/nan and sort
         pdf = (
             df_group_total
             .select(["group", "contrib_total"])
@@ -83,6 +83,69 @@ except Exception:
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Helpers (local fallbacks)
+# ─────────────────────────────────────────────────────────────────────
+
+def _group_share_from_daily(df_group_daily: pl.DataFrame) -> pl.DataFrame:
+    """
+    Build a per-date share series from df_group_daily without using pl.abs module-level.
+    Returns DF: ['date','group','share'] where share = |contrib_g| / Σ_g |contrib_g|.
+    """
+    req = {"date", "group", "contrib"}
+    if not req.issubset(set(df_group_daily.columns)):
+        raise ValueError(f"df_group_daily must contain {req}")
+
+    # |contrib| per (date, group)
+    df_abs = df_group_daily.with_columns(pl.col("contrib").abs().alias("abs_contrib"))
+
+    # total |contrib| per date
+    df_tot = (
+        df_abs.group_by("date")
+        .agg(pl.col("abs_contrib").sum().alias("abs_total"))
+    )
+
+    # join & compute share with safe divide
+    df_share = (
+        df_abs.join(df_tot, on="date", how="left")
+        .with_columns(
+            (pl.col("abs_contrib") / pl.when(pl.col("abs_total") > 1e-15).then(pl.col("abs_total")).otherwise(1.0))
+            .alias("share")
+        )
+        .select(["date", "group", "share"])
+        .sort(["date", "group"])
+    )
+    return df_share
+
+
+def _plot_group_share_area(df_share: pl.DataFrame, title: str = "Group Contribution Share (%)") -> go.Figure:
+    """
+    Simple stacked area plot for group share over time (0–100%).
+    """
+    req = {"date", "group", "share"}
+    if not req.issubset(set(df_share.columns)):
+        raise ValueError(f"df_share must contain {req}")
+
+    pdf = (
+        df_share
+        .to_pandas()
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna(subset=["date", "group", "share"])
+        .sort_values("date")
+    )
+    fig = px.area(pdf, x="date", y="share", color="group", title=title,
+                  labels={"share": "Share"})
+    fig.update_layout(
+        template="plotly_white",
+        xaxis_title="Date",
+        yaxis_title="Share",
+        yaxis_tickformat=".0%",
+        legend_title="Group",
+        margin=dict(l=60, r=40, t=60, b=60)
+    )
+    return fig
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Page config
 # ─────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Attribution", layout="wide")
@@ -93,9 +156,7 @@ st.caption("Return contribution by asset and group, plus Brinson–Fachler.")
 # ─────────────────────────────────────────────────────────────────────
 # Defensive handoff: require artifacts from 04_Backtest (with fallback)
 # ─────────────────────────────────────────────────────────────────────
-
 bt = st.session_state.get("bt", None)
-# accept either "df_ret_wide" (preferred) or "returns_wide" (fallback from 01/03/04)
 df_ret_wide = st.session_state.get("df_ret_wide", st.session_state.get("returns_wide", None))
 asset_meta = st.session_state.get("asset_meta", None)
 Wb_daily_ss = st.session_state.get("bench_weights_daily", None)
@@ -132,7 +193,7 @@ try:
     tickers_bt = list(bt["tickers"])
     dates_bt = list(bt["dates"])
 
-    # ensure all tickers exist as columns
+    # ensure all tickers exist as columns (for IPO / missing history)
     have_cols = set(df_ret_wide.columns)
     add_cols = [tk for tk in tickers_bt if tk not in have_cols]
     if add_cols:
@@ -247,6 +308,7 @@ except Exception as e:
 st.markdown("---")
 st.subheader("Group attribution")
 try:
+    # Default: identity grouping (each asset is its own group)
     groups_map = {tk: tk for tk in aln_ipo.tickers}
     if asset_meta is not None:
         cols = asset_meta.columns
@@ -274,7 +336,6 @@ try:
         .sort("contrib_total", descending=True)
     )
 
-    # Your existing plots (no extra args)
     st.plotly_chart(
         plot_group_contrib_area(df_group_daily, title="Group Contributions Over Time"),
         use_container_width=True,
@@ -284,13 +345,24 @@ try:
         use_container_width=True,
     )
 
-    # Optional share area if helper exists
-    if _HAS_EXTRAS and hasattr(bt_attr, "contributions_share_by_group"):
-        df_share = bt_attr.contributions_share_by_group(df_group_daily)
-        st.plotly_chart(
-            plot_group_share_area_from_share(df_share),
-            use_container_width=True,
-        )
+    # Share (% of absolute contribution) — robust local fallback
+    try:
+        if _HAS_EXTRAS and hasattr(bt_attr, "contributions_share_by_group"):
+            df_share = bt_attr.contributions_share_by_group(df_group_daily)  # your advanced helper
+            st.plotly_chart(
+                plot_group_share_area_from_share(df_share),
+                use_container_width=True,
+            )
+        else:
+            df_share = _group_share_from_daily(df_group_daily)
+            st.plotly_chart(
+                _plot_group_share_area(df_share),
+                use_container_width=True,
+            )
+    except Exception:
+        # If anything fails here, keep the core plots working
+        pass
+
 except Exception as e:
     st.info(f"Group attribution unavailable: {e}")
 
@@ -309,17 +381,72 @@ try:
     else:
         Wb_daily = np.full((T, N), 1.0 / max(N, 1), dtype=float)
 
-    # Build group indices if advanced helper exists; fallback to identity
+    # ---------- Robust group index builder ----------
+    def _make_groups_idx_local(tickers, meta_df):
+        """Fallback: sector -> country -> identity."""
+        if meta_df is not None and "ticker" in meta_df.columns:
+            if "sector" in meta_df.columns:
+                col = "sector"
+            elif "country" in meta_df.columns:
+                col = "country"
+            else:
+                col = None
+            if col:
+                lut = dict(zip(meta_df["ticker"].to_list(),
+                               meta_df[col].to_list()))
+                labels = [lut.get(tk, "OTHER") for tk in tickers]
+                uniq = {}
+                idx = []
+                for lab in labels:
+                    if lab not in uniq:
+                        uniq[lab] = len(uniq)
+                    idx.append(uniq[lab])
+                return idx, list(uniq.keys()), col
+        # identity
+        return list(range(len(tickers))), list(tickers), None
+
+    # Try bt_attr.build_groups_idx with multiple signatures
     if hasattr(bt_attr, "build_groups_idx"):
-        groups_idx, group_labels, _ = bt_attr.build_groups_idx(
-            tickers=aln_ipo.tickers,
-            meta_df=asset_meta,
-            col=("sector" if (asset_meta is not None and "sector" in asset_meta.columns) else None),
-            other="OTHER",
-            fallback_identity=True,
-        )
+        col_pref = None
+        if asset_meta is not None:
+            if "sector" in asset_meta.columns:
+                col_pref = "sector"
+            elif "country" in asset_meta.columns:
+                col_pref = "country"
+
+        try:
+            # Newer signature
+            groups_idx, group_labels, _ = bt_attr.build_groups_idx(
+                tickers=aln_ipo.tickers,
+                meta_df=asset_meta,
+                col=col_pref,
+                other="OTHER",
+                fallback_identity=True,
+            )
+        except TypeError:
+            # No fallback_identity
+            try:
+                groups_idx, group_labels, _ = bt_attr.build_groups_idx(
+                    tickers=aln_ipo.tickers,
+                    meta_df=asset_meta,
+                    col=col_pref,
+                    other="OTHER",
+                )
+            except TypeError:
+                # Very old: without 'other'
+                try:
+                    groups_idx, group_labels, _ = bt_attr.build_groups_idx(
+                        tickers=aln_ipo.tickers,
+                        meta_df=asset_meta,
+                        col=col_pref,
+                    )
+                except Exception:
+                    groups_idx, group_labels, _ = _make_groups_idx_local(aln_ipo.tickers, asset_meta)
+        except Exception:
+            groups_idx, group_labels, _ = _make_groups_idx_local(aln_ipo.tickers, asset_meta)
     else:
-        groups_idx = list(range(N))
+        groups_idx, group_labels, _ = _make_groups_idx_local(aln_ipo.tickers, asset_meta)
+    # ---------- end robust builder ----------
 
     df_brinson = bt_attr.brinson_fachler_cumulative(
         aln=aln_ipo,
@@ -331,6 +458,7 @@ try:
         use_container_width=True,
     )
 
+    # Optional “by group” timeseries if your repo lo tiene
     if _HAS_EXTRAS and hasattr(bt_attr, "brinson_fachler_timeseries"):
         df_brinson_g = bt_attr.brinson_fachler_timeseries(
             aln=aln_ipo,
