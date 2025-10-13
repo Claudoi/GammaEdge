@@ -1334,3 +1334,141 @@ def plot_brinson_by_group_area(
         margin=dict(l=60, r=40, t=60, b=60),
     )
     return fig
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Brinson – extras (safe add-ons)
+# ──────────────────────────────────────────────────────────────────────────────
+def plot_brinson_cumulative_components(
+    df_brinson: pl.DataFrame,
+    title: str = "Cumulative Brinson–Fachler Attribution",
+) -> go.Figure:
+    """
+    Lines of cumulative allocation/select/interaction/total over time.
+    Expects df_brinson with: ['date','alloc','select','interact','total'].
+    """
+    need = {"date", "alloc", "select", "interact", "total"}
+    if not need.issubset(set(df_brinson.columns)):
+        raise ValueError(f"Missing columns in df_brinson: {need}")
+
+    df_cum = df_brinson.with_columns([
+        pl.col("alloc").cum_sum().alias("alloc_cum"),
+        pl.col("select").cum_sum().alias("select_cum"),
+        pl.col("interact").cum_sum().alias("interact_cum"),
+        pl.col("total").cum_sum().alias("total_cum"),
+    ])
+    pdf = (
+        df_cum.to_pandas()
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna(subset=["date"])
+    )
+
+    fig = go.Figure()
+    for col in ["alloc_cum", "select_cum", "interact_cum", "total_cum"]:
+        fig.add_trace(
+            go.Scatter(
+                x=pdf["date"],
+                y=pdf[col],
+                mode="lines",
+                name=col.replace("_cum", "").capitalize(),
+                hovertemplate="%{x}<br>%{y:.2%}<extra></extra>",
+            )
+        )
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Cumulative Attribution (%)",
+        yaxis_tickformat=".1%",
+        template="plotly_white",
+        margin=dict(l=60, r=40, t=60, b=60),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    return fig
+
+
+def plot_brinson_final_bar(
+    df_brinson: pl.DataFrame,
+    title: str = "Final Attribution Breakdown",
+) -> go.Figure:
+    """
+    Single bar chart of the last cumulative values for each component.
+    Expects df_brinson with: ['date','alloc','select','interact','total'].
+    """
+    need = {"alloc", "select", "interact", "total"}
+    if not need.issubset(set(df_brinson.columns)):
+        raise ValueError(f"Missing columns in df_brinson: {need}")
+
+    # take last row; if empty, make zeros
+    if df_brinson.height == 0:
+        comps = ["alloc", "select", "interact", "total"]
+        vals = [0.0, 0.0, 0.0, 0.0]
+    else:
+        last = df_brinson.tail(1).select(list(need)).to_pandas().iloc[0]
+        comps = ["alloc", "select", "interact", "total"]
+        vals = [float(last[c]) for c in comps]
+
+    fig = go.Figure(
+        go.Bar(
+            x=[c.capitalize() for c in comps],
+            y=vals,
+            text=[f"{v:.2%}" for v in vals],
+            textposition="auto",
+        )
+    )
+    fig.update_layout(
+        title=title,
+        xaxis_title="Component",
+        yaxis_title="Attribution (%)",
+        yaxis_tickformat=".1%",
+        template="plotly_white",
+        margin=dict(l=60, r=40, t=60, b=60),
+    )
+    return fig
+
+
+def plot_brinson_by_group_area(
+    df_brinson_group: pl.DataFrame,
+    component: str = "total",
+    title: str = "Brinson by Group – Total (Cumulative)",
+) -> go.Figure:
+    """
+    Area chart by group for a chosen cumulative component.
+    Expects columns: ['date','group','alloc','select','interact','total'].
+    """
+    need = {"date", "group", "alloc", "select", "interact", "total"}
+    if not need.issubset(set(df_brinson_group.columns)):
+        raise ValueError(f"Missing columns in df_brinson_group: {need}")
+    if component not in {"alloc", "select", "interact", "total"}:
+        raise ValueError("component must be one of: alloc, select, interact, total")
+
+    pdf = (
+        df_brinson_group
+        .select(["date", "group", component])
+        .to_pandas()
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna(subset=["date", "group"])
+        .sort_values("date")
+    )
+
+    # stack area by group (each group's cumulative series is already in df)
+    fig = go.Figure()
+    for g, gp in pdf.groupby("group"):
+        fig.add_trace(
+            go.Scatter(
+                x=gp["date"],
+                y=gp[component],
+                stackgroup="one",
+                mode="lines",
+                name=str(g),
+                hovertemplate="%{x}<br>%{y:.2%}<extra>"+str(g)+"</extra>",
+            )
+        )
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Total",
+        yaxis_tickformat=".2%",
+        template="plotly_white",
+        margin=dict(l=60, r=40, t=60, b=60),
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
+    )
+    return fig

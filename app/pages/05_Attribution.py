@@ -18,21 +18,23 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 # --- core attribution ---
 from portfolio.backtest import attribution as bt_attr
 
-# --- plots guaranteed to exist in your repo ---
+# --- plots (core) ---
 from portfolio.viz.plot_utils import (
     plot_top_contributors,
-    plot_group_contrib_area,   # existing signature in your repo
-    plot_brinson_cumulative,   # existing signature in your repo
+    plot_group_contrib_area,
+    plot_brinson_cumulative,
+    plot_brinson_cumulative_components,
+    plot_brinson_final_bar,
+    plot_brinson_by_group_area,
 )
 
-# Optional extras (safe to miss)
+# --- extras optionals ---
 _HAS_EXTRAS = False
 try:
     from portfolio.viz.plot_utils import (
         plot_contrib_heatmap_daily,
         plot_top_contributors_waterfall,
         plot_group_share_area_from_share,
-        plot_brinson_by_group_area,
     )
     _HAS_EXTRAS = True
 except Exception:
@@ -143,6 +145,59 @@ def _plot_group_share_area(df_share: pl.DataFrame, title: str = "Group Contribut
         margin=dict(l=60, r=40, t=60, b=60)
     )
     return fig
+
+
+#  helper: build daily benchmark weights automatically (no user params) ---
+def _make_benchmark_daily(aln: bt_attr.DailyAlignment,
+                          bt_dict: dict,
+                          asset_meta: pl.DataFrame | None) -> np.ndarray:
+    """
+    Returns Wb_daily with shape (T, N), fully automated:
+      1) If session benchmark exists and matches shape -> use it
+      2) Else build a buy-and-hold benchmark from w0 and cum returns:
+         w_b(t) ∝ w0 * Π(1+r)  (row-normalized each day)
+         where w0 = bt['weights'][0] if available else equal-weight
+      3) If asset_meta has 'cap0'/'mcap0' (optional), it will override w0.
+    """
+    R = np.asarray(aln.returns, dtype=float)          # (T, N)
+    T, N = R.shape
+
+    # 2a) base w0 from bt first rebalance or equal-weight
+    w0 = None
+    try:
+        W_reb = np.asarray(bt_dict.get("weights", []), dtype=float)
+        if W_reb.ndim == 2 and W_reb.shape[1] == N and W_reb.shape[0] >= 1:
+            w0 = W_reb[0].astype(float, copy=False)
+    except Exception:
+        pass
+    if w0 is None:
+        w0 = np.full(N, 1.0 / max(N, 1), dtype=float)
+
+    # 2b) optional override: use initial market-cap proxy if available
+    if asset_meta is not None:
+        cols = set(asset_meta.columns)
+        # look for a plausible initial cap column name
+        for cap_col in ("cap0", "mcap0", "market_cap0", "mcap_init"):
+            if cap_col in cols:
+                try:
+                    lut = dict(zip(asset_meta["ticker"].to_list(),
+                                   asset_meta[cap_col].to_list()))
+                    w0 = np.array([float(lut.get(tk, 0.0)) for tk in aln.tickers], dtype=float)
+                    s = float(np.sum(w0))
+                    w0 = (w0 / s) if s > 1e-12 else np.full(N, 1.0 / max(N, 1))
+                except Exception:
+                    pass
+                break
+
+    # 2c) buy-and-hold from w0 using cumulated simple returns
+    # cum_growth[t, j] = Π_{τ≤t} (1 + r_{τ,j})
+    cum_growth = np.cumprod(1.0 + np.nan_to_num(R, nan=0.0, posinf=0.0, neginf=0.0), axis=0)
+    # Wb_daily[t, j] ∝ w0[j] * cum_growth[t, j]
+    Wb_daily = cum_growth * w0.reshape(1, -1)
+    row_sum = np.sum(Wb_daily, axis=1, keepdims=True)
+    Wb_daily = Wb_daily / np.clip(row_sum, 1e-15, None)
+
+    return Wb_daily
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -368,109 +423,114 @@ except Exception as e:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# 4) Brinson–Fachler
+# 4) Brinson–Fachler Attribution
 # ─────────────────────────────────────────────────────────────────────
 st.markdown("---")
 st.subheader("Brinson–Fachler")
+
 try:
     T, N = aln_ipo.returns.shape
 
-    # Benchmark: use session’s daily weights if present; else equal-weight
-    if isinstance(Wb_daily_ss, np.ndarray) and Wb_daily_ss.shape == (T, N):
-        Wb_daily = Wb_daily_ss
+    # 1) Build benchmark automatically (no manual parameters required)
+    #    If session_state already contains a valid benchmark matrix, use it.
+    #    Otherwise, generate a buy-and-hold benchmark from the initial weights.
+    Wb_session = st.session_state.get("bench_weights_daily", None)
+    if isinstance(Wb_session, np.ndarray) and Wb_session.shape == (T, N):
+        Wb_daily = Wb_session
     else:
-        Wb_daily = np.full((T, N), 1.0 / max(N, 1), dtype=float)
+        Wb_daily = _make_benchmark_daily(aln_ipo, bt, asset_meta)
 
-    # ---------- Robust group index builder ----------
-    def _make_groups_idx_local(tickers, meta_df):
-        """Fallback: sector -> country -> identity."""
-        if meta_df is not None and "ticker" in meta_df.columns:
-            if "sector" in meta_df.columns:
-                col = "sector"
-            elif "country" in meta_df.columns:
-                col = "country"
-            else:
-                col = None
-            if col:
-                lut = dict(zip(meta_df["ticker"].to_list(),
-                               meta_df[col].to_list()))
-                labels = [lut.get(tk, "OTHER") for tk in tickers]
-                uniq = {}
-                idx = []
-                for lab in labels:
-                    if lab not in uniq:
-                        uniq[lab] = len(uniq)
-                    idx.append(uniq[lab])
-                return idx, list(uniq.keys()), col
-        # identity
-        return list(range(len(tickers))), list(tickers), None
+    # 2) Build group indices (identity fallback if no metadata available)
+    #    Support both Polars and Pandas DataFrames for metadata.
+    meta_df = asset_meta
+    try:
+        if isinstance(meta_df, pd.DataFrame):
+            meta_df = pl.from_pandas(meta_df)
+    except Exception:
+        pass
 
-    # Try bt_attr.build_groups_idx with multiple signatures
-    if hasattr(bt_attr, "build_groups_idx"):
-        col_pref = None
-        if asset_meta is not None:
-            if "sector" in asset_meta.columns:
-                col_pref = "sector"
-            elif "country" in asset_meta.columns:
-                col_pref = "country"
+    groups_idx = list(range(N))  # Default fallback: one group per asset
+    if hasattr(bt_attr, "build_groups_idx") and meta_df is not None and "sector" in meta_df.columns:
+        # Standard signature: (tickers, meta_df, col, other)
+        groups_idx, group_labels, _ = bt_attr.build_groups_idx(
+            tickers=aln_ipo.tickers, meta_df=meta_df, col="sector", other="OTHER"
+        )
 
-        try:
-            # Newer signature
-            groups_idx, group_labels, _ = bt_attr.build_groups_idx(
-                tickers=aln_ipo.tickers,
-                meta_df=asset_meta,
-                col=col_pref,
-                other="OTHER",
-                fallback_identity=True,
-            )
-        except TypeError:
-            # No fallback_identity
-            try:
-                groups_idx, group_labels, _ = bt_attr.build_groups_idx(
-                    tickers=aln_ipo.tickers,
-                    meta_df=asset_meta,
-                    col=col_pref,
-                    other="OTHER",
-                )
-            except TypeError:
-                # Very old: without 'other'
-                try:
-                    groups_idx, group_labels, _ = bt_attr.build_groups_idx(
-                        tickers=aln_ipo.tickers,
-                        meta_df=asset_meta,
-                        col=col_pref,
-                    )
-                except Exception:
-                    groups_idx, group_labels, _ = _make_groups_idx_local(aln_ipo.tickers, asset_meta)
-        except Exception:
-            groups_idx, group_labels, _ = _make_groups_idx_local(aln_ipo.tickers, asset_meta)
-    else:
-        groups_idx, group_labels, _ = _make_groups_idx_local(aln_ipo.tickers, asset_meta)
-    # ---------- end robust builder ----------
-
+    # 3) Compute cumulative Brinson–Fachler decomposition
     df_brinson = bt_attr.brinson_fachler_cumulative(
         aln=aln_ipo,
         bench_weights_daily=Wb_daily,
         groups_idx=groups_idx,
     )
+
+    # (a) Base cumulative attribution line plot
     st.plotly_chart(
-        plot_brinson_cumulative(df_brinson, title="Brinson-Fachler Attribution"),
+        plot_brinson_cumulative(df_brinson, title="Brinson–Fachler Attribution"),
         use_container_width=True,
     )
 
-    # Optional “by group” timeseries if your repo lo tiene
-    if _HAS_EXTRAS and hasattr(bt_attr, "brinson_fachler_timeseries"):
-        df_brinson_g = bt_attr.brinson_fachler_timeseries(
-            aln=aln_ipo,
-            bench_weights_daily=Wb_daily,
-            groups_idx=groups_idx,
-            cumulative=True,
-            by_group=True,
-        )
+    # (b) Cumulative components (Allocation / Selection / Interaction / Total)
+    try:
         st.plotly_chart(
-            plot_brinson_by_group_area(df_brinson_g, group_labels=None, component="total"),
+            plot_brinson_cumulative_components(
+                df_brinson, title="Cumulative Brinson–Fachler Components"
+            ),
             use_container_width=True,
         )
+    except Exception:
+        pass  # silently skip if not implemented in plot_utils
+
+    # (c) Final component breakdown (bar chart of last cumulative values)
+    try:
+        st.plotly_chart(
+            plot_brinson_final_bar(
+                df_brinson, title="Final Attribution Breakdown"
+            ),
+            use_container_width=True,
+        )
+    except Exception:
+        pass
+
+    # 4) (Optional) Group-level cumulative view, if backend exposes time series
+    if hasattr(bt_attr, "brinson_fachler_timeseries"):
+        try:
+            df_brinson_g = bt_attr.brinson_fachler_timeseries(
+                aln=aln_ipo,
+                bench_weights_daily=Wb_daily,
+                groups_idx=groups_idx,
+                cumulative=True,
+                by_group=True,
+            )
+
+            # Try to extract group labels safely and adapt to plot signature
+            try:
+                group_labels = (
+                    df_brinson_g.get_column("group").unique().to_list()
+                    if "group" in df_brinson_g.columns
+                    else []
+                )
+                st.plotly_chart(
+                    plot_brinson_by_group_area(
+                        df_brinson_g,
+                        group_labels=group_labels,
+                        component="total",
+                        title="Brinson by Group – Total (Cumulative)",
+                    ),
+                    use_container_width=True,
+                )
+            except TypeError:
+                # Fallback for plot functions without the 'group_labels' parameter
+                st.plotly_chart(
+                    plot_brinson_by_group_area(
+                        df_brinson_g,
+                        component="total",
+                        title="Brinson by Group – Total (Cumulative)",
+                    ),
+                    use_container_width=True,
+                )
+        except Exception as e:
+            st.info(f"Brinson by-group plot skipped: {e}")
+
 except Exception as e:
     st.info(f"Brinson attribution unavailable: {e}")
 
