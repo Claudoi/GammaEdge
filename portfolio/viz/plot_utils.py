@@ -1472,3 +1472,57 @@ def plot_brinson_by_group_area(
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
     return fig
+
+
+
+
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Brinson – extras (safe add-ons)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+
+def plot_scenario_equity_panel(results: list, title: str = "Scenario Equity Panel") -> go.Figure:
+    """
+    Draw multiple equity curves on the same chart.
+    Expects results: list of ScenarioResult-like objects with bt['dates'], bt['equity'].
+    """
+    fig = go.Figure()
+    for r in results:
+        dates = r.bt.get("dates", [])
+        eq = r.bt.get("equity", [])
+        fig.add_trace(go.Scatter(x=dates, y=eq, mode="lines", name=r.name))
+    fig.update_layout(title=title, xaxis_title="Date", yaxis_title="Equity", template="plotly_white")
+    return fig
+
+def plot_scenario_metrics_bars(df_metrics: pl.DataFrame, title: str = "Scenario Metrics") -> go.Figure:
+    """
+    Bar chart for key metrics across scenarios.
+    Expects columns: ['scenario','CAGR','Sharpe','MaxDD'] (percentages handled upstream).
+    """
+    pdf = df_metrics.to_pandas()
+    pdf = pdf.replace([np.inf, -np.inf], np.nan).dropna()
+    fig = px.bar(pdf.melt(id_vars="scenario"), x="scenario", y="value", color="variable", barmode="group", title=title)
+    fig.update_layout(template="plotly_white", xaxis_tickangle=-20)
+    return fig
+
+def plot_weights_delta_heatmap(tickers: list[str], W_base: np.ndarray, W_scn: np.ndarray,
+                               title: str = "Δ Weights (Scenario - Baseline)") -> go.Figure:
+    """
+    Heatmap of per-asset weight changes between baseline last weights and scenario last weights.
+    """
+    base = (W_base[-1] if W_base.ndim == 2 else W_base).astype(float)
+    scn = (W_scn[-1] if W_scn.ndim == 2 else W_scn).astype(float)
+    d = scn - base
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=d.reshape(1, -1),
+            x=tickers,
+            y=["Δw"],
+            colorbar=dict(title="Δw"),
+        )
+    )
+    fig.update_layout(title=title, template="plotly_white", xaxis_nticks=min(40, len(tickers)))
+    return fig

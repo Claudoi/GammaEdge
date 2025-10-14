@@ -200,6 +200,70 @@ def _make_benchmark_daily(aln: bt_attr.DailyAlignment,
     return Wb_daily
 
 
+
+def _brinson_group_timeseries_local(
+    aln: bt_attr.DailyAlignment,
+    Wb_daily: np.ndarray,           # shape (T, N)
+    groups_idx: list[int],          # asset -> group index [0..G-1]
+    group_labels: list[str] | None = None,
+    cumulative: bool = True,
+) -> pl.DataFrame:
+    """
+    Build a by-group Brinson–Fachler time series:
+    returns Polars DF with columns ['date','group','alloc','select','interact','total'].
+    If cumulative=True, components are cum-summed over time.
+    """
+    R = np.asarray(aln.returns, float)     # (T, N)
+    Wp = np.asarray(aln.weights, float)    # (T, N)
+    Wb = np.asarray(Wb_daily, float)
+    T, N = R.shape
+
+    gi = np.asarray(groups_idx, int)
+    G = int(gi.max()) + 1 if gi.size else 0
+    if group_labels is None or len(group_labels) != G:
+        group_labels = [f"G{g}" for g in range(G)]
+
+    # Accumulators (if cumulative)
+    A_c = np.zeros((T, G), float)
+    S_c = np.zeros((T, G), float)
+    I_c = np.zeros((T, G), float)
+
+    for t in range(T):
+        for g in range(G):
+            idx = (gi == g)
+            if not np.any(idx):
+                continue
+            wp_g = float(np.sum(Wp[t, idx]))
+            wb_g = float(np.sum(Wb[t, idx]))
+            rb_g = float(np.sum(Wb[t, idx] * R[t, idx])) / wb_g if wb_g > 1e-16 else 0.0
+            rp_g = float(np.sum(Wp[t, idx] * R[t, idx])) / wp_g if wp_g > 1e-16 else 0.0
+
+            diff_w = wp_g - wb_g
+            diff_r = rp_g - rb_g
+
+            a = diff_w * rb_g
+            s = wb_g   * diff_r
+            inter = diff_w * diff_r
+
+            if t == 0 or not cumulative:
+                A_c[t, g] = a
+                S_c[t, g] = s
+                I_c[t, g] = inter
+            else:
+                A_c[t, g] = A_c[t-1, g] + a
+                S_c[t, g] = S_c[t-1, g] + s
+                I_c[t, g] = I_c[t-1, g] + inter
+
+    rows = []
+    for t in range(T):
+        for g in range(G):
+            tot = A_c[t, g] + S_c[t, g] + I_c[t, g]
+            rows.append((aln.dates[t], group_labels[g], A_c[t, g], S_c[t, g], I_c[t, g], tot))
+
+    return pl.DataFrame(rows, schema=["date", "group", "alloc", "select", "interact", "total"]) \
+             .with_columns(pl.col("date").cast(pl.Datetime))
+
+
 # ─────────────────────────────────────────────────────────────────────
 # Page config
 # ─────────────────────────────────────────────────────────────────────
@@ -429,19 +493,17 @@ st.markdown("---")
 st.subheader("Brinson–Fachler")
 
 try:
+    # --- 1) Setup basic shapes -----------------------------------------------
     T, N = aln_ipo.returns.shape
 
-    # 1) Build benchmark automatically (no manual parameters required)
-    #    If session_state already contains a valid benchmark matrix, use it.
-    #    Otherwise, generate a buy-and-hold benchmark from the initial weights.
+    # --- 2) Benchmark weights (automatic) ------------------------------------
     Wb_session = st.session_state.get("bench_weights_daily", None)
     if isinstance(Wb_session, np.ndarray) and Wb_session.shape == (T, N):
         Wb_daily = Wb_session
     else:
         Wb_daily = _make_benchmark_daily(aln_ipo, bt, asset_meta)
 
-    # 2) Build group indices (identity fallback if no metadata available)
-    #    Support both Polars and Pandas DataFrames for metadata.
+    # --- 3) Group indices and labels -----------------------------------------
     meta_df = asset_meta
     try:
         if isinstance(meta_df, pd.DataFrame):
@@ -449,77 +511,109 @@ try:
     except Exception:
         pass
 
-    groups_idx = list(range(N))  # Default fallback: one group per asset
-    if hasattr(bt_attr, "build_groups_idx") and meta_df is not None and "sector" in meta_df.columns:
-        # Standard signature: (tickers, meta_df, col, other)
-        groups_idx, group_labels, _ = bt_attr.build_groups_idx(
-            tickers=aln_ipo.tickers, meta_df=meta_df, col="sector", other="OTHER"
-        )
+    if hasattr(bt_attr, "build_groups_idx") and (meta_df is not None):
+        if "sector" in meta_df.columns:
+            groups_idx, group_labels, _ = bt_attr.build_groups_idx(
+                tickers=aln_ipo.tickers, meta_df=meta_df, col="sector", other="OTHER"
+            )
+        elif "country" in meta_df.columns:
+            groups_idx, group_labels, _ = bt_attr.build_groups_idx(
+                tickers=aln_ipo.tickers, meta_df=meta_df, col="country", other="OTHER"
+            )
+        else:
+            groups_idx = list(range(N))
+            group_labels = [f"A{i}" for i in range(N)]
+    else:
+        groups_idx = list(range(N))
+        group_labels = [f"A{i}" for i in range(N)]
 
-    # 3) Compute cumulative Brinson–Fachler decomposition
+    # --- 4) Cumulative Brinson ------------------------------------------------
     df_brinson = bt_attr.brinson_fachler_cumulative(
         aln=aln_ipo,
         bench_weights_daily=Wb_daily,
         groups_idx=groups_idx,
     )
 
-    # (a) Base cumulative attribution line plot
+    # Main cumulative line chart
     st.plotly_chart(
-        plot_brinson_cumulative(df_brinson, title="Brinson–Fachler Attribution"),
+        plot_brinson_cumulative(df_brinson, title="Brinson-Fachler Attribution (Total)"),
         use_container_width=True,
     )
 
-    # (b) Cumulative components (Allocation / Selection / Interaction / Total)
+    # --- 5) Optional advanced component charts -------------------------------
+    # If your repo has these functions, display detailed and summary breakdowns.
     try:
-        st.plotly_chart(
-            plot_brinson_cumulative_components(
-                df_brinson, title="Cumulative Brinson–Fachler Components"
-            ),
-            use_container_width=True,
-        )
-    except Exception:
-        pass  # silently skip if not implemented in plot_utils
+        if "plot_brinson_cumulative_components" in globals() or hasattr(
+            sys.modules.get("portfolio.viz.plot_utils"), "plot_brinson_cumulative_components"
+        ):
+            st.plotly_chart(
+                plot_brinson_cumulative_components(df_brinson),
+                use_container_width=True,
+            )
 
-    # (c) Final component breakdown (bar chart of last cumulative values)
-    try:
-        st.plotly_chart(
-            plot_brinson_final_bar(
-                df_brinson, title="Final Attribution Breakdown"
-            ),
-            use_container_width=True,
-        )
-    except Exception:
-        pass
+        if "plot_brinson_final_bar" in globals() or hasattr(
+            sys.modules.get("portfolio.viz.plot_utils"), "plot_brinson_final_bar"
+        ):
+            st.plotly_chart(
+                plot_brinson_final_bar(df_brinson),
+                use_container_width=True,
+            )
+    except Exception as e:
+        st.info(f"Optional Brinson component plots skipped: {e}")
 
-    # 4) (Optional) Group-level cumulative view, if backend exposes time series
-    if hasattr(bt_attr, "brinson_fachler_timeseries"):
+    # --- 6) By-group cumulative timeseries -----------------------------------
+    df_brinson_g = None
+    if hasattr(bt_attr, "brinson_fachler_timeseries") and _HAS_EXTRAS:
         try:
-            df_brinson_g = bt_attr.brinson_fachler_timeseries(
+            tmp = bt_attr.brinson_fachler_timeseries(
                 aln=aln_ipo,
                 bench_weights_daily=Wb_daily,
                 groups_idx=groups_idx,
                 cumulative=True,
                 by_group=True,
             )
+            rename_map = {
+                "allocation": "alloc", "selection": "select", "interaction": "interact",
+                "cum_total": "total", "group_name": "group"
+            }
+            for old, new in rename_map.items():
+                if (old in tmp.columns) and (new not in tmp.columns):
+                    tmp = tmp.rename({old: new})
+            required = {"date", "group", "alloc", "select", "interact", "total"}
+            if required.issubset(set(tmp.columns)):
+                df_brinson_g = tmp
+        except Exception:
+            df_brinson_g = None
 
-            # Try to extract group labels safely and adapt to plot signature
+    # Local fallback helper if repo helper is missing
+    if df_brinson_g is None:
+        df_brinson_g = _brinson_group_timeseries_local(
+            aln=aln_ipo,
+            Wb_daily=Wb_daily,
+            groups_idx=groups_idx,
+            group_labels=group_labels,
+            cumulative=True,
+        )
+
+    # --- 7) By-group cumulative plots ----------------------------------------
+    try:
+        if _HAS_EXTRAS:
             try:
-                group_labels = (
-                    df_brinson_g.get_column("group").unique().to_list()
-                    if "group" in df_brinson_g.columns
-                    else []
-                )
+                glabels = df_brinson_g.get_column("group").unique().to_list()
+            except Exception:
+                glabels = []
+
+            try:
                 st.plotly_chart(
                     plot_brinson_by_group_area(
                         df_brinson_g,
-                        group_labels=group_labels,
+                        group_labels=glabels,
                         component="total",
                         title="Brinson by Group – Total (Cumulative)",
                     ),
                     use_container_width=True,
                 )
             except TypeError:
-                # Fallback for plot functions without the 'group_labels' parameter
                 st.plotly_chart(
                     plot_brinson_by_group_area(
                         df_brinson_g,
@@ -528,8 +622,21 @@ try:
                     ),
                     use_container_width=True,
                 )
-        except Exception as e:
-            st.info(f"Brinson by-group plot skipped: {e}")
+        else:
+            import plotly.express as px
+            pdf = df_brinson_g.to_pandas()
+            fig = px.area(
+                pdf,
+                x="date",
+                y="total",
+                color="group",
+                title="Brinson by Group – Total (Cumulative)",
+                labels={"total": "Attribution"},
+            )
+            fig.update_layout(template="plotly_white")
+            st.plotly_chart(fig, use_container_width=True)
+    except Exception as e:
+        st.info(f"Brinson by-group plot skipped: {e}")
 
 except Exception as e:
     st.info(f"Brinson attribution unavailable: {e}")

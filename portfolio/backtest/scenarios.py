@@ -1,5 +1,6 @@
 # portfolio/backtest/scenarios.py
 from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Tuple, Optional
 
@@ -9,17 +10,25 @@ import polars as pl
 from portfolio.backtest.engine import backtest_rebalanced
 from portfolio.backtest import metrics as bt_metrics
 
+__all__ = [
+    "ShockSpec",
+    "ScenarioConfig",
+    "ScenarioResult",
+    "run_scenarios",
+]
 
-# -----------------------------
+# ─────────────────────────────────────────────────────────────────────
 # Datatypes
-# -----------------------------
+# ─────────────────────────────────────────────────────────────────────
+
 @dataclass(frozen=True)
 class ShockSpec:
     """
-    Scenario shock specification. All fields are optional; use only what you need.
-    - mean_shift: add a constant daily drift (vector or scalar) to asset returns
-    - cov_scale: multiply (idiosyncratic) vol; e.g. 1.5 makes returns noisier
-    - crash: (date_index, pct_drop) applies a single-day gap in all assets (or vector)
+    Scenario shock specification applied to a (T,N) daily returns matrix:
+      - mean_shift: add constant daily drift (scalar or shape (N,))
+      - cov_scale : scale deviations from mean (vol/dispersion scale)
+      - crash     : (t_index, drop) apply a one-day gap at t_index
+                    'drop' can be scalar (same for all assets) or (N,)
     """
     mean_shift: Optional[float | np.ndarray] = None
     cov_scale: float = 1.0
@@ -28,36 +37,42 @@ class ShockSpec:
 
 @dataclass(frozen=True)
 class ScenarioConfig:
+    """
+    Configuration for a scenario run. If B>0, run block-bootstrap resamples.
+    """
     name: str
-    B: int = 0                 # bootstrap paths (0 = deterministic/stressed original)
-    block: int = 10            # block length for bootstrap
+    B: int = 0
+    block: int = 10
     seed: int = 42
     shock: ShockSpec = ShockSpec()
 
 
 @dataclass
 class ScenarioResult:
+    """
+    Output container for each scenario/backtest pair.
+    """
     name: str
-    bt: Dict                  # full backtest dict (equity, weights, etc.)
-    metrics: pl.DataFrame     # metrics DF
+    bt: Dict
+    metrics: pl.DataFrame
     shock: ShockSpec
 
 
-# -----------------------------
+# ─────────────────────────────────────────────────────────────────────
 # Helpers
-# -----------------------------
+# ─────────────────────────────────────────────────────────────────────
+
 def _to_numpy_wide(df_ret_wide: pl.DataFrame, tickers: List[str]) -> np.ndarray:
+    """Extract a (T,N) numpy array from a wide Polars DF."""
     R = df_ret_wide.select(tickers).to_numpy()
-    R = np.nan_to_num(R, nan=0.0, posinf=0.0, neginf=0.0)
-    return R
+    return np.nan_to_num(R, nan=0.0, posinf=0.0, neginf=0.0)
 
 def _from_numpy_wide(dates: List, tickers: List[str], R: np.ndarray) -> pl.DataFrame:
+    """Build a wide Polars DF from numpy (T,N)."""
     return pl.DataFrame({"date": dates, **{t: R[:, j] for j, t in enumerate(tickers)}})
 
 def _bootstrap_paths(R: np.ndarray, B: int, block: int, seed: int) -> List[np.ndarray]:
-    """
-    Block bootstrap paths over rows (time). Each path has the same length as R.
-    """
+    """Block bootstrap paths; returns [R] when B<=0 (i.e., original chronology)."""
     if B <= 0:
         return [R.copy()]
     T, _ = R.shape
@@ -73,44 +88,43 @@ def _bootstrap_paths(R: np.ndarray, B: int, block: int, seed: int) -> List[np.nd
     return out
 
 def _apply_shock(R: np.ndarray, shock: ShockSpec) -> np.ndarray:
-    """
-    Apply shock to returns matrix R (T, N).
-    - mean_shift: add daily drift
-    - cov_scale: scale deviations from mean
-    - crash: inject a single-day drop
-    """
+    """Apply mean shift, cov scale, and single-day crash to returns matrix."""
     R2 = R.copy()
     T, N = R2.shape
+
+    # mean shift
     if shock.mean_shift is not None:
         ms = np.asarray(shock.mean_shift)
         if ms.size == 1:
             R2 += float(ms)
         else:
-            ms = ms.reshape(1, -1)
-            R2 += ms
+            R2 += ms.reshape(1, -1)
 
+    # dispersion scaling
     if abs(shock.cov_scale - 1.0) > 1e-12:
         mu = np.mean(R2, axis=0, keepdims=True)
         R2 = mu + (R2 - mu) * float(shock.cov_scale)
 
+    # one-day crash
     if shock.crash is not None:
         t_idx, drop = shock.crash
         if 0 <= t_idx < T:
             d = np.asarray(drop)
             if d.size == 1:
-                R2[t_idx, :] += float(d)  # drop is negative number, e.g. -0.05
+                R2[t_idx, :] += float(d)
             else:
                 R2[t_idx, :] += d.reshape(1, -1)
 
     return R2
 
 
-# -----------------------------
+# ─────────────────────────────────────────────────────────────────────
 # API
-# -----------------------------
+# ─────────────────────────────────────────────────────────────────────
+
 def run_scenarios(
     cfgs: List[ScenarioConfig],
-    df_ret_wide: pl.DataFrame,                 # ['date', tickers...]
+    df_ret_wide: pl.DataFrame,
     allocator_factory: Callable[[], Callable[[pl.DataFrame], np.ndarray]],
     *,
     lookback: int,
@@ -119,13 +133,9 @@ def run_scenarios(
     bench_weights: np.ndarray,
 ) -> List[ScenarioResult]:
     """
-    Run one or more scenarios. For each config:
-      - bootstrap paths (if B>0),
-      - apply shocks,
-      - backtest with provided allocator.
-    Returns list of ScenarioResult (one result if B==0; B results if B>0).
+    For each ScenarioConfig, generate one or more return paths (bootstrap),
+    apply shocks, run backtests with allocator_factory(), and collect metrics.
     """
-    # Dates / tickers
     dates = df_ret_wide.get_column("date").to_list()
     tickers = [c for c in df_ret_wide.columns if c != "date"]
     R_base = _to_numpy_wide(df_ret_wide, tickers)
