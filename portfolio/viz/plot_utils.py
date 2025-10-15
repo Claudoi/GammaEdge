@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
 from portfolio.core.compat import dataclass_compat as dataclass
-from typing import Literal, Union
+from typing import Iterable, Optional, Sequence, Union, Dict, Literal
 
 
 import numpy as np
@@ -13,6 +13,9 @@ import plotly.express as px
 import pandas as pd
 from scipy.cluster.hierarchy import dendrogram, leaves_list, linkage, optimal_leaf_ordering
 from scipy.spatial.distance import squareform
+
+
+DataFrameLike = Union[pd.DataFrame, "pl.DataFrame"] 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers numéricos
@@ -57,6 +60,18 @@ def _hierarchical_order(Corr: np.ndarray, order_cfg: HeatmapOrder) -> np.ndarray
 
 def _apply_order(mat: np.ndarray, order: np.ndarray) -> np.ndarray:
     return mat[np.ix_(order, order)]
+
+def _to_pandas(df: DataFrameLike) -> pd.DataFrame:
+    """Convert Polars DataFrame to Pandas if needed."""
+    try:
+        import polars as pl  # type: ignore
+        if isinstance(df, pl.DataFrame):
+            return df.to_pandas()
+    except Exception:
+        pass
+    if isinstance(df, pd.DataFrame):
+        return df
+    raise TypeError("Unsupported DataFrame type. Expected pandas or polars.")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1483,12 +1498,8 @@ def plot_brinson_by_group_area(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-
 def plot_scenario_equity_panel(results: list, title: str = "Scenario Equity Panel") -> go.Figure:
-    """
-    Draw multiple equity curves on the same chart.
-    Expects results: list of ScenarioResult-like objects with bt['dates'], bt['equity'].
-    """
+
     fig = go.Figure()
     for r in results:
         dates = r.bt.get("dates", [])
@@ -1498,10 +1509,7 @@ def plot_scenario_equity_panel(results: list, title: str = "Scenario Equity Pane
     return fig
 
 def plot_scenario_metrics_bars(df_metrics: pl.DataFrame, title: str = "Scenario Metrics") -> go.Figure:
-    """
-    Bar chart for key metrics across scenarios.
-    Expects columns: ['scenario','CAGR','Sharpe','MaxDD'] (percentages handled upstream).
-    """
+
     pdf = df_metrics.to_pandas()
     pdf = pdf.replace([np.inf, -np.inf], np.nan).dropna()
     fig = px.bar(pdf.melt(id_vars="scenario"), x="scenario", y="value", color="variable", barmode="group", title=title)
@@ -1510,9 +1518,7 @@ def plot_scenario_metrics_bars(df_metrics: pl.DataFrame, title: str = "Scenario 
 
 def plot_weights_delta_heatmap(tickers: list[str], W_base: np.ndarray, W_scn: np.ndarray,
                                title: str = "Δ Weights (Scenario - Baseline)") -> go.Figure:
-    """
-    Heatmap of per-asset weight changes between baseline last weights and scenario last weights.
-    """
+
     base = (W_base[-1] if W_base.ndim == 2 else W_base).astype(float)
     scn = (W_scn[-1] if W_scn.ndim == 2 else W_scn).astype(float)
     d = scn - base
@@ -1525,4 +1531,224 @@ def plot_weights_delta_heatmap(tickers: list[str], W_base: np.ndarray, W_scn: np
         )
     )
     fig.update_layout(title=title, template="plotly_white", xaxis_nticks=min(40, len(tickers)))
+    return fig
+
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Scenarios
+# ──────────────────────────────────────────────────────────────────────────────
+
+def plot_tornado_sensitivity(
+    df_sens: DataFrameLike,
+    metric_label: str = "CAGR",
+    down_label: str = "Down",
+    up_label: str = "Up",
+    sort_by: str = "min_delta",
+) -> go.Figure:
+
+    pdf = _to_pandas(df_sens).copy()
+
+    # Normalize naming
+    if "asset" not in pdf.columns and "name" in pdf.columns:
+        pdf.rename(columns={"name": "asset"}, inplace=True)
+
+    required = {"asset", "base", "down", "up"}
+    missing = required - set(pdf.columns)
+    if missing:
+        raise ValueError(f"plot_tornado_sensitivity: missing columns {missing}")
+
+    # Type coercion and NaN handling
+    for c in ["base", "down", "up"]:
+        pdf[c] = pd.to_numeric(pdf[c], errors="coerce").fillna(0.0)
+
+    # Compute deltas
+    pdf["down_delta"] = pdf["down"] - pdf["base"]
+    pdf["up_delta"] = pdf["up"] - pdf["base"]
+
+    # Sort by most adverse delta
+    pdf["min_delta"] = np.minimum(pdf["down_delta"].values, pdf["up_delta"].values)
+    pdf.sort_values(by=sort_by, inplace=True)
+    pdf.reset_index(drop=True, inplace=True)
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(y=pdf["asset"], x=pdf["down_delta"], orientation="h", name=down_label))
+    fig.add_trace(go.Bar(y=pdf["asset"], x=pdf["up_delta"], orientation="h", name=up_label))
+    fig.update_layout(
+        title=f"Tornado Sensitivity — Metric: {metric_label}",
+        barmode="overlay",
+        xaxis_title=f"Δ {metric_label} vs Base",
+        yaxis_title="Asset",
+        template="plotly_white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
+
+
+def plot_equity_compare(
+    dates: Sequence,
+    equity_a: Sequence[float],
+    equity_b: Sequence[float],
+    name_a: str = "Baseline",
+    name_b: str = "Scenario",
+    title: Optional[str] = None,
+) -> go.Figure:
+
+    title = title or f"Equity Comparison — {name_a} vs {name_b}"
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=list(dates), y=list(equity_a), mode="lines", name=name_a))
+    fig.add_trace(go.Scatter(x=list(dates), y=list(equity_b), mode="lines", name=name_b))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Equity",
+        template="plotly_white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
+
+
+def plot_drawdown_compare(
+    dates: Sequence,
+    equity_a: Sequence[float],
+    equity_b: Sequence[float],
+    name_a: str = "Baseline",
+    name_b: str = "Scenario",
+    title: Optional[str] = None,
+) -> go.Figure:
+    """Compare drawdowns (%) between two equity curves."""
+    def _dd_curve(eq: Sequence[float]) -> np.ndarray:
+        eq = np.asarray(eq, dtype=float)
+        if eq.size == 0:
+            return np.array([], dtype=float)
+        cummax = np.maximum.accumulate(eq)
+        dd = (eq / np.maximum(cummax, 1e-12)) - 1.0
+        return dd
+
+    dd_a = _dd_curve(equity_a) * 100.0
+    dd_b = _dd_curve(equity_b) * 100.0
+    title = title or f"Drawdown Comparison — {name_a} vs {name_b}"
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(x=list(dates), y=list(dd_a), mode="lines", name=name_a))
+    fig.add_trace(go.Scatter(x=list(dates), y=list(dd_b), mode="lines", name=name_b))
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Drawdown (%)",
+        template="plotly_white",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
+
+
+def plot_metric_delta_bars(
+    df_metrics: DataFrameLike,
+    baseline_value: float,
+    metric_col: str = "CAGR",
+    scenario_name_col: str = "Scenario",
+    title: Optional[str] = None,
+) -> go.Figure:
+
+    pdf = _to_pandas(df_metrics).copy()
+    for c in [metric_col]:
+        pdf[c] = pd.to_numeric(pdf[c], errors="coerce")
+
+    if scenario_name_col not in pdf.columns or metric_col not in pdf.columns:
+        raise ValueError("plot_metric_delta_bars: required columns not found.")
+
+    pdf["delta"] = pdf[metric_col] - float(baseline_value)
+    pdf.sort_values(by="delta", inplace=True)
+    title = title or f"Δ{metric_col} vs Baseline"
+
+    fig = go.Figure()
+    fig.add_trace(go.Bar(y=pdf[scenario_name_col], x=pdf["delta"], orientation="h"))
+    fig.update_layout(
+        title=title,
+        xaxis_title=f"Δ{metric_col}",
+        yaxis_title="Scenario",
+        template="plotly_white",
+        showlegend=False,
+    )
+    return fig
+
+
+def plot_weights_compare_heatmap(
+    dates: Sequence,
+    tickers: Sequence[str],
+    weights_a: Union[np.ndarray, Sequence[Sequence[float]]],
+    weights_b: Union[np.ndarray, Sequence[Sequence[float]]],
+    name_a: str = "Baseline",
+    name_b: str = "Scenario",
+    mode: str = "delta",  # {"delta", "absolute"}
+    title: Optional[str] = None,
+    zmax_abs: Optional[float] = None,
+) -> go.Figure:
+    
+    # Coerce to numpy arrays
+    A = np.asarray(weights_a, dtype=float)
+    B = np.asarray(weights_b, dtype=float)
+
+    if A.ndim != 2 or B.ndim != 2:
+        raise ValueError("weights_a and weights_b must be 2D arrays (T, N).")
+    if A.shape != B.shape:
+        raise ValueError(f"Shape mismatch: weights_a {A.shape} vs weights_b {B.shape}.")
+    T, N = A.shape
+    if len(dates) != T:
+        raise ValueError(f"'dates' length {len(dates)} must match T={T}.")
+    if len(tickers) != N:
+        raise ValueError(f"'tickers' length {len(tickers)} must match N={N}.")
+
+    # Clean NaNs/Infs
+    A = np.nan_to_num(A, nan=0.0, posinf=0.0, neginf=0.0)
+    B = np.nan_to_num(B, nan=0.0, posinf=0.0, neginf=0.0)
+
+    if mode not in {"delta", "absolute"}:
+        raise ValueError("mode must be either 'delta' or 'absolute'.")
+
+    if mode == "delta":
+        Z = B - A
+        # Symmetric color range around zero
+        max_abs = np.max(np.abs(Z)) if Z.size else 1.0
+        if zmax_abs is not None and zmax_abs > 0:
+            vmax = float(zmax_abs)
+        else:
+            vmax = float(max_abs) if max_abs > 0 else 1e-6
+        vmin = -vmax
+        colorscale = "RdBu"  # diverging
+        zmid = 0.0
+        default_title = f"Weights Heatmap — {name_b} vs {name_a} (Δ)"
+    else:
+        Z = B
+        vmax = float(np.max(Z)) if Z.size else 1.0
+        vmin = 0.0
+        colorscale = "Blues"  # sequential
+        zmid = None
+        default_title = f"Weights Heatmap — {name_b} (absolute weights)"
+
+    title = title or default_title
+
+    # Convert dates to strings for cleaner axis labels (Plotly heatmaps like strings)
+    x_labels = list(tickers)
+    y_labels = [str(d) for d in dates]
+
+    fig = go.Figure(
+        data=go.Heatmap(
+            z=Z,
+            x=x_labels,
+            y=y_labels,
+            colorscale=colorscale,
+            zmin=vmin,
+            zmax=vmax,
+            zmid=zmid,
+            colorbar=dict(title=("Δw" if mode == "delta" else "w")),
+        )
+    )
+    fig.update_layout(
+        title=title,
+        xaxis_title="Assets",
+        yaxis_title="Date",
+        template="plotly_white",
+        margin=dict(t=60, r=10, b=40, l=60),
+    )
     return fig
