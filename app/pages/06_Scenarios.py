@@ -216,6 +216,10 @@ with st.sidebar:
         ["Equal-Weight", "Min-Var (L2 PGD)", "Risk Parity", "HRP", "Min-TE (to Bench)"],
         index=0,
     )
+    
+    if alloc_kind == "Equal-Weight":
+        st.info("Equal-Weight is constant over time by design. Pick Risk Parity / HRP / Min-Var to see changing weights & turnover.")
+
     w_min = st.number_input("w_min", 0.0, 1.0, 0.0, 0.01)
     w_max = st.number_input("w_max", 0.0, 1.0, 0.2, 0.01)
     if N * w_min > 1.0 or N * w_max < 1.0:
