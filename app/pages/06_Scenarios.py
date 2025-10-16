@@ -316,10 +316,51 @@ def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
 # Engine wrapper (auto-detects param names; attaches diagnostics)
 # ─────────────────────────────────────────────────────────────────────
 def _run_engine(df_wide: pl.DataFrame) -> Dict[str, Any]:
-    alloc = make_allocator(alloc_kind)
+    """
+    Call the engine with a recording allocator:
+    - captures every window end-date and computed weights
+    - if engine returns no/constant weights, we override with recorded ones
+    - attaches diagnostics (_alloc_hook/_ret_hook, recorder stats)
+    """
+    # --- 1) build base allocator ---
+    base_alloc = make_allocator(alloc_kind)
+
+    class _Recorder:
+        def __init__(self):
+            self.dates: list = []
+            self.weights: list[np.ndarray] = []
+            self.calls: int = 0
+
+        def __call__(self, win: pl.DataFrame) -> np.ndarray:
+            self.calls += 1
+            # window end-date = last date of the window
+            try:
+                d_last = win.get_column("date")[-1]
+            except Exception:
+                d_last = None
+            w = np.asarray(base_alloc(win), float).ravel()
+            # store normalized
+            s = float(np.sum(w))
+            w = w / s if s > 1e-12 else w
+            self.dates.append(d_last)
+            self.weights.append(w)
+            return w
+
+        def as_array(self) -> np.ndarray:
+            if not self.weights:
+                return np.zeros((0, 0), float)
+            # pad ragged just in case (shouldn’t happen)
+            Nmax = max(len(w) for w in self.weights)
+            W = np.zeros((len(self.weights), Nmax), float)
+            for i, w in enumerate(self.weights):
+                W[i, :len(w)] = w
+            return W
+
+    rec = _Recorder()
+
+    # --- 2) resolve engine signature & kwargs (same logic as before) ---
     bench_w = np.full(N, 1.0 / max(N, 1))
     df_arg = df_wide.select(["date", *tickers]).sort("date")
-
     sig = inspect.signature(backtest_rebalanced)
     kw: Dict[str, Any] = {
         "lookback": int(lookback),
@@ -327,48 +368,79 @@ def _run_engine(df_wide: pl.DataFrame) -> Dict[str, Any]:
         "cost_bps": float(cost_bps),
         "bench_weights": bench_w,
     }
-
-    # Resolve returns arg name
+    # returns arg
     for rn in ["df_ret_wide", "returns_wide", "df_returns", "returns", "R_wide", "data"]:
         if rn in sig.parameters:
             kw[rn] = df_arg
             ret_hook = rn
             break
     else:
-        # fallback (still pass something for engines doing *args/**kwargs)
         kw["df_ret_wide"] = df_arg
         ret_hook = "fallback(df_ret_wide)"
 
-    # Resolve allocator arg name
+    # allocator arg
     for an in ["allocator", "allocator_factory", "weights_func", "strategy"]:
         if an in sig.parameters:
-            kw[an] = (lambda: alloc) if an == "allocator_factory" else alloc
+            kw[an] = (lambda: rec) if an == "allocator_factory" else rec
             alloc_hook = an
             break
     else:
-        kw["allocator"] = alloc
+        kw["allocator"] = rec
         alloc_hook = "fallback(allocator)"
 
+    # --- 3) run engine ---
     bt = backtest_rebalanced(**kw)
-    if isinstance(bt, dict):
-        bt["_alloc_hook"] = alloc_hook
-        bt["_ret_hook"] = ret_hook
+    if not isinstance(bt, dict):
+        bt = dict(bt)
+
+    # --- 4) attach diagnostics & recorder dumps ---
+    bt["_alloc_hook"] = alloc_hook
+    bt["_ret_hook"] = ret_hook
+    bt["_alloc_calls"] = rec.calls
+
+    # engine weights
+    W_eng = np.asarray(bt.get("weights", []), float)
+    # recorded weights
+    W_rec = rec.as_array()
+
+    def _is_constant_panel(W: np.ndarray) -> bool:
+        if W.ndim != 2 or W.size == 0 or W.shape[0] < 2:
+            return True
+        dif = np.max(np.abs(W[1:] - W[:-1]), axis=1)
+        return float(np.max(dif)) <= 1e-12
+
+    # If engine didn’t store weights OR panel is constant but recorder shows variation → override
+    if (W_eng.ndim != 2 or W_eng.size == 0 or _is_constant_panel(W_eng)) and (W_rec.ndim == 2 and W_rec.size > 0 and not _is_constant_panel(W_rec)):
+        bt["weights"] = W_rec
+        # adopt recorder dates as rebalance_dates if sensible
+        if rec.dates and len(rec.dates) == W_rec.shape[0]:
+            bt["rebalance_dates"] = rec.dates
+        # keep original tickers if present; else assume current ticker list
+        bt.setdefault("tickers", tickers)
+
+    # Always attach recorded series for transparency
+    bt["_weights_recorded"] = W_rec
+    bt["_rebalance_dates_recorded"] = rec.dates
+
     return bt
 
+
 # ─────────────────────────────────────────────────────────────────────
-# Baseline (reference) — single run
+# Baseline (reference) — run once
 # ─────────────────────────────────────────────────────────────────────
 st.subheader("Baseline (reference)")
 with st.spinner("Running baseline..."):
     df_base = df_ret_wide.select(["date", *tickers]).sort("date")
     base_bt = _run_engine(df_base)
 
+# Main equity + drawdown
 st.plotly_chart(
     equity_and_drawdown(base_bt["dates"], base_bt["equity"], title="Baseline · Equity & Drawdown"),
     width="stretch",
     key=next_key("baseline-ed"),
 )
 
+# Metrics (safe)
 try:
     base_m = bt_metrics.compute_backtest_metrics(base_bt)
 except Exception:
@@ -377,14 +449,17 @@ except Exception:
 st.dataframe(
     base_m.to_pandas() if isinstance(base_m, pl.DataFrame) else pd.DataFrame(),
     width="stretch",
+    key=next_key("baseline-metrics"),
 )
 
+# Weights heatmap
 st.plotly_chart(
     plot_weights_heatmap(base_bt["dates"], base_bt["tickers"], base_bt["weights"], title="Baseline · Weights"),
     width="stretch",
     key=next_key("baseline-weights"),
 )
 
+# Turnover (robust reconstruction if needed)
 dates_to, vals_to = _ensure_turnover_with_drift(base_bt, df_base)
 if vals_to.size > 0 and len(dates_to) == vals_to.size:
     st.plotly_chart(
@@ -395,11 +470,11 @@ if vals_to.size > 0 and len(dates_to) == vals_to.size:
 else:
     st.caption("Turnover series not available for Baseline.")
 
+# Rebalance diagnostics
 with st.expander("Rebalance diagnostics", expanded=False):
-    hook_a = base_bt.get("_alloc_hook", "unknown")
-    hook_r = base_bt.get("_ret_hook", "unknown")
-    st.write(f"Allocator hook used by engine: **{hook_a}**")
-    st.write(f"Returns hook used by engine: **{hook_r}**")
+    st.write(f"Allocator hook used by engine: **{base_bt.get('_alloc_hook','?')}**")
+    st.write(f"Returns hook used by engine: **{base_bt.get('_ret_hook','?')}**")
+    st.write(f"Allocator calls recorded: **{base_bt.get('_alloc_calls','n/a')}**")
 
     W = np.asarray(base_bt.get("weights", []), float)
     if W.ndim == 2 and W.size > 0:
@@ -414,6 +489,39 @@ with st.expander("Rebalance diagnostics", expanded=False):
                     "try a tighter color clamp in the compare heatmap (zmax_abs≈0.01).")
     else:
         st.write("No weights captured from engine.")
+
+# Data sanity checks (detect degenerate inputs)
+with st.expander("Data sanity checks", expanded=False):
+    try:
+        cols = [c for c in df_base.columns if c != "date"]
+        X = np.nan_to_num(df_base.select(cols).to_numpy(), nan=0.0, posinf=0.0, neginf=0.0)
+        T, M = X.shape
+        variances = np.var(X, axis=0, ddof=1) if T > 1 else np.zeros(M)
+        zero_var = int(np.sum(variances < 1e-12))
+        st.write(f"Observations: {T}, Assets: {M}")
+        st.write(f"Assets with ~zero variance: {zero_var} / {M}")
+
+        if M >= 2 and T > 2:
+            C = np.corrcoef(X.T)
+            np.fill_diagonal(C, np.nan)
+            offdiag = C[~np.isnan(C)]
+            mean_off = float(np.nanmean(offdiag)) if offdiag.size else float("nan")
+            max_off = float(np.nanmax(offdiag)) if offdiag.size else float("nan")
+            st.write(f"Mean off-diagonal corr: {mean_off:.3f}, max: {max_off:.3f}")
+
+        if T >= 40:
+            mid = T // 2
+            S1 = np.cov(X[:mid], rowvar=False)
+            S2 = np.cov(X[mid:], rowvar=False)
+            diff = np.max(np.abs(S1 - S2))
+            st.write(f"Max |Σ1-Σ2| across halves: {float(diff):.6f}")
+
+        if zero_var == M:
+            st.warning("All asset variances are ~0. Returns look degenerate (all zeros).")
+        elif zero_var > 0:
+            st.info("Some assets have ~0 variance. Optimizers may collapse to 1/N.")
+    except Exception as e:
+        st.write(f"Sanity checks skipped: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────
