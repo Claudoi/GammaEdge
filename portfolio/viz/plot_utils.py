@@ -130,6 +130,16 @@ def corr_heatmap(
 # 2) Correlation Dendrogram
 # ──────────────────────────────────────────────────────────────────────────────
 
+# Optional SciPy import with safe fallback
+try:
+    from scipy.cluster.hierarchy import linkage, dendrogram
+    from scipy.spatial.distance import squareform
+except Exception:
+    linkage = None
+    dendrogram = None
+    squareform = None
+
+
 def corr_dendrogram(
     Sigma_or_Corr: np.ndarray | pl.DataFrame,
     labels: Sequence[str] | None = None,
@@ -139,33 +149,108 @@ def corr_dendrogram(
     title: str = "Correlation Dendrogram",
 ) -> go.Figure:
     """
-    Dendrograma jerárquico basado en la distancia de correlación.
-    Útil para visualizar clústeres y justificar HRP/estrategias de agrupación.
+    Build a hierarchical clustering dendrogram from a correlation or covariance matrix.
+
+    Parameters
+    ----------
+    Sigma_or_Corr : np.ndarray | pl.DataFrame
+        Covariance or correlation matrix (NxN).
+    labels : list[str] | None
+        Asset labels for leaf nodes.
+    is_cov : bool
+        Whether the input is covariance (True) or already a correlation matrix.
+    method : str
+        Linkage method for hierarchical clustering (e.g., 'ward', 'average', etc.).
+    title : str
+        Plot title.
     """
-    M = _to_numpy_matrix(Sigma_or_Corr)
-    Corr = _safe_corr_from_cov(M) if is_cov else np.copy(M)
+    # ---- Sanitize input matrix ----
+    M = Sigma_or_Corr.to_numpy() if hasattr(Sigma_or_Corr, "to_numpy") else np.asarray(Sigma_or_Corr, dtype=float)
+    M = np.asarray(M, dtype=float)
+    if M.ndim != 2 or M.shape[0] != M.shape[1]:
+        raise ValueError("corr_dendrogram: input must be a square matrix (NxN).")
+    M = np.nan_to_num(M, nan=0.0, posinf=0.0, neginf=0.0)
+
+    # ---- Convert covariance to correlation if necessary ----
+    if is_cov:
+        std = np.sqrt(np.clip(np.diag(M), 0.0, np.inf))
+        std[std == 0.0] = 1.0
+        Corr = M / np.outer(std, std)
+    else:
+        Corr = np.copy(M)
+
+    # Clamp to [-1, 1] to avoid numerical issues
+    Corr = np.clip(Corr, -1.0, 1.0)
     n = Corr.shape[0]
+
+    # ---- Prepare labels ----
     if labels is None:
         labels = [f"A{i}" for i in range(n)]
+    else:
+        labels = list(labels)
+        if len(labels) != n:
+            # Adjust label list length for safety
+            labels = (labels + [f"A{i}" for i in range(len(labels), n)])[:n]
+
+    # ---- Compute pairwise distance from correlation ----
+    # Distance = sqrt(0.5 * (1 - Corr)) ensures values in [0, 1]
     dist = np.sqrt(np.maximum(0.0, 0.5 * (1.0 - Corr)))
-    Z = linkage(squareform(dist, checks=False), method=method)
-    # Usamos el dendrogram de scipy para extraer coordenadas y lo pintamos con Plotly
-    dendro = dendrogram(Z, labels=list(labels), no_plot=True)
-    icoord = np.array(dendro["icoord"])
-    dcoord = np.array(dendro["dcoord"])
-    xlbls = dendro["ivl"]
+    dist = np.nan_to_num(dist, nan=0.0, posinf=0.0, neginf=0.0)
 
-    data = []
-    for xs, ys in zip(icoord, dcoord, strict=False):
-        data.append(go.Scatter(x=xs, y=ys, mode="lines", line=dict(width=1)))
+    # ---- Fallback if SciPy is unavailable ----
+    if linkage is None or dendrogram is None or squareform is None:
+        fig = go.Figure()
+        fig.update_layout(
+            title=title + " (scipy missing)",
+            xaxis_title="Assets",
+            yaxis_title="Distance",
+            template="plotly_white",
+            height=420,
+            margin=dict(l=60, r=20, t=60, b=80),
+        )
+        return fig
 
-    fig = go.Figure(data=data)
+    # ---- Condensed vector expected by linkage ----
+    dvec = squareform(dist, checks=False)
+
+    # ---- Compute linkage and dendrogram (without plotting) ----
+    Z = linkage(dvec, method=method)
+    dn = dendrogram(Z, labels=labels, no_plot=True)
+
+    icoord = np.asarray(dn["icoord"], dtype=float)
+    dcoord = np.asarray(dn["dcoord"], dtype=float)
+    xlbls = dn.get("ivl", labels)
+
+    # ---- Build Plotly figure ----
+    lines = []
+    for xs, ys in zip(icoord, dcoord):  # Compatible with Python 3.9 (no strict argument)
+        lines.append(
+            go.Scatter(
+                x=xs,
+                y=ys,
+                mode="lines",
+                line=dict(width=1.5),
+                hoverinfo="skip",
+                showlegend=False,
+            )
+        )
+
+    fig = go.Figure(data=lines)
     fig.update_layout(
         title=title,
-        xaxis=dict(tickmode="array", tickvals=list(range(5, 10 * n, 10)), ticktext=xlbls, tickangle=45),
-        yaxis=dict(title="distance"),
-        showlegend=False,
+        xaxis=dict(
+            tickmode="array",
+            tickvals=list(range(5, 10 * n, 10)),  # Standard tick positions for dendrogram leaves
+            ticktext=xlbls,
+            tickangle=45,
+            showgrid=False,
+            zeroline=False,
+        ),
+        yaxis=dict(title="Distance", showgrid=True, zeroline=False),
+        template="plotly_white",
+        height=420,
         margin=dict(l=60, r=20, t=60, b=120),
+        showlegend=False,
     )
     return fig
 

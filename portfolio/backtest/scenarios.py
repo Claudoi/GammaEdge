@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
+from datetime import datetime, date
 
 import numpy as np
 import polars as pl
@@ -131,22 +132,66 @@ def apply_shock(df_wide: pl.DataFrame, shock: Optional[ShockSpec]) -> pl.DataFra
 # ---------------------------------------------------------------------
 # Historical slice and bootstrap
 # ---------------------------------------------------------------------
+def _parse_to_py_datetime(x: Union[str, datetime, date]) -> datetime:
+    """Parse input into a Python datetime (timezone-naive)."""
+    if isinstance(x, datetime):
+        return x.replace(tzinfo=None)
+    if isinstance(x, date):
+        return datetime(x.year, x.month, x.day)
+    # Let pandas handle a wide range of formats, then strip tz
+    dt = pd.to_datetime(x).to_pydatetime()
+    return dt.replace(tzinfo=None)
+
+
 def historical_slice_returns(
     df_wide: pl.DataFrame,
-    start: str,
-    end: str,
+    start: Union[str, datetime, date],
+    end: Union[str, datetime, date],
     tickers: Optional[List[str]] = None,
 ) -> pl.DataFrame:
-    """Extract a historical time slice from a wide return matrix."""
-    d0 = pl.datetime.strptime(start, fmt="%Y-%m-%d")
-    d1 = pl.datetime.strptime(end, fmt="%Y-%m-%d")
-    cols = ["date", *(tickers if tickers else [c for c in df_wide.columns if c != "date"])]
+    """
+    Extract an inclusive historical time slice from a wide returns DataFrame.
+
+    - Accepts date strings (any common format), datetime/date objects.
+    - Works with 'date' column of dtype pl.Date or pl.Datetime.
+    - Returns a sorted frame with ['date', *tickers].
+    """
+    if "date" not in df_wide.columns:
+        raise ValueError("historical_slice_returns: missing 'date' column.")
+
+    # Parse boundaries to Python datetime
+    start_ts = _parse_to_py_datetime(start)
+    end_ts = _parse_to_py_datetime(end)
+
+    # Ensure proper temporal dtype on 'date'
+    date_dtype = df_wide.schema.get("date")
+    if date_dtype not in (pl.Date, pl.Datetime):
+        # If it's string/int, try to cast sensibly to Datetime
+        df_wide = df_wide.with_columns(pl.col("date").str.strptime(pl.Datetime, strict=False, fmt=None))
+
+    # After possible cast, re-check dtype
+    date_dtype = df_wide.schema.get("date")
+    if date_dtype == pl.Date:
+        # Compare using pl.Date literals
+        start_lit = pl.lit(start_ts.date(), dtype=pl.Date)
+        end_lit = pl.lit(end_ts.date(), dtype=pl.Date)
+    else:
+        # Treat everything else as Datetime (naive)
+        start_lit = pl.lit(start_ts, dtype=pl.Datetime)
+        end_lit = pl.lit(end_ts, dtype=pl.Datetime)
+
+    # Choose columns
+    asset_cols = tickers if tickers else [c for c in df_wide.columns if c != "date"]
+    cols = ["date", *asset_cols]
+
+    # Filter inclusive window and sort
     out = (
         df_wide
         .select(cols)
-        .filter((pl.col("date") >= d0) & (pl.col("date") <= d1))
+        .filter((pl.col("date") >= start_lit) & (pl.col("date") <= end_lit))
         .sort("date")
     )
+
     if out.height == 0:
         raise ValueError("historical_slice_returns: empty slice.")
     return out
