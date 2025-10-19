@@ -709,7 +709,7 @@ with st.sidebar:
     with c1:
         hist_start = st.text_input("Start (YYYY-MM-DD)", "2020-02-15", disabled=not use_hist)
     with c2:
-        hist_end = st.text_input("End (YYYY-MM-DD)", "2020-04-15", disabled=not use_hist)
+        hist_end = st.text_input("End (YYYY-MM-DD)", "2025-010-15", disabled=not use_hist)
 
     st.markdown("---")
     st.header("Tornado sensitivity")
