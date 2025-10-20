@@ -448,118 +448,85 @@ if not do_grid:
         )
 
 # ─────────────────────────────────────────────────────────────────────
-# Attribution (daily-aligned weights to returns)
+# Attribution (only when not running grid search)
 # ─────────────────────────────────────────────────────────────────────
-st.subheader("📊 Attribution")
+aln = None  # Prevent undefined variable if attribution fails
 
-try:
-    # 1) Align the date grid: ensure we only use the same daily dates as in the backtest
-    dates_bt = list(bt["dates"])  # all daily dates used by the backtest engine
-    df_ret_bt = df_ret_wide.filter(pl.col("date").is_in(dates_bt)).sort("date")
-    # Remove duplicates and ensure chronological order
-    df_ret_bt = df_ret_bt.unique(subset=["date"]).sort("date")
+if not do_grid and bt is not None:
+    st.subheader("📊 Attribution")
 
-    # 2) Expand rebalancing weights to a full daily matrix
-    # bt["weights"] has shape (K, N) where K = number of rebalances, N = assets
-    W_reb = np.asarray(bt["weights"], dtype=float)
-    rb_dates = list(bt.get("rebalance_dates", []))
+    # ────────────────────────────────
+    # Basic / Asset-level attribution
+    # ────────────────────────────────
+    try:
+        # 1) Align the date grid
+        dates_bt = list(bt["dates"])
+        df_ret_bt = df_ret_wide.filter(pl.col("date").is_in(dates_bt)).sort("date")
+        df_ret_bt = df_ret_bt.unique(subset=["date"]).sort("date")
 
-    # If rebalancing dates are missing or mismatch with W_reb, build an approximate schedule
-    if W_reb.size == 0 or len(rb_dates) != W_reb.shape[0]:
-        K = W_reb.shape[0]
-        rb_dates = dates_bt[:: max(1, len(dates_bt)//max(1, K))][:K]
+        # 2) Expand rebalancing weights to daily frequency
+        W_reb = np.asarray(bt["weights"], dtype=float)
+        rb_dates = list(bt.get("rebalance_dates", []))
+        if W_reb.size == 0 or len(rb_dates) != W_reb.shape[0]:
+            K = W_reb.shape[0]
+            rb_dates = dates_bt[:: max(1, len(dates_bt)//max(1, K))][:K]
 
-    # Convert rebalance-level weights into daily weights (shape → T×N)
-    # This function linearly “fills forward” each weight until the next rebalance date
-    daily_W = bt_attr.expand_rebalance_weights(
-        dates=df_ret_bt.get_column("date").to_list(),
-        rb_dates=rb_dates,
-        W_reb=W_reb,
-    )
+        daily_W = bt_attr.expand_rebalance_weights(
+            dates=df_ret_bt.get_column("date").to_list(),
+            rb_dates=rb_dates,
+            W_reb=W_reb,
+        )
 
-    # 3) Align returns and daily weights into a single data structure
-    aln = bt_attr.align_returns_and_weights(df_ret_bt, daily_W)
+        # 3) Align and compute contributions
+        aln = bt_attr.align_returns_and_weights(df_ret_bt, daily_W)
+        df_contrib_asset = bt_attr.contributions_by_asset(aln)
+        df_top = bt_attr.top_contributors(bt=bt, df_ret_wide=df_ret_bt, top_n=10, sign="both")
 
-    # 4) Compute asset-level daily contributions (return × weight)
-    df_contrib_asset = bt_attr.contributions_by_asset(aln)
+        # 4) Plots
+        st.plotly_chart(plot_top_contributors(df_top), width="stretch")
+        df_bottom = (
+            df_contrib_asset.group_by("ticker")
+            .agg(pl.col("contrib").sum().alias("contrib_total"))
+            .sort("contrib_total")
+            .head(10)
+        )
+        st.plotly_chart(plot_top_contributors(df_bottom, title="Bottom Contributors"), width="stretch")
 
-    # Extract top contributors (10 assets with the highest cumulative contribution)
-    df_top = bt_attr.top_contributors(
-        bt=bt,
-        df_ret_wide=df_ret_bt,   
-        top_n=10,
-        sign="both"              
-    )
-    
+    except Exception as e:
+        st.info(f"Basic attribution not available: {e}")
 
-    # Plot top contributors as a horizontal bar chart
-    st.plotly_chart(plot_top_contributors(df_top), width="stretch")
+    # ────────────────────────────────
+    # Group / Sector attribution
+    # ────────────────────────────────
+    try:
+        groups_map = {tk: "OTHER" for tk in bt["tickers"]}
+        df_group_daily = bt_attr.contributions_by_group(aln, groups_map)
+        df_group_total = (
+            df_group_daily.group_by("group")
+            .agg([
+                pl.col("contrib").sum().alias("contrib_total"),
+                pl.col("weight").mean().alias("avg_weight"),
+            ])
+            .sort("contrib_total", descending=True)
+        )
+        st.plotly_chart(plot_group_contrib(df_group_total), width="stretch")
+        st.plotly_chart(plot_group_contrib_area(df_group_daily), width="stretch")
+    except Exception as e:
+        st.info(f"Group attribution not available: {e}")
 
-    # Plot bottom contributors (10 worst performing assets)
-    df_bottom = (
-        df_contrib_asset.group_by("ticker")
-        .agg(pl.col("contrib").sum().alias("contrib_total"))
-        .sort("contrib_total")
-        .head(10)
-    )
-    st.plotly_chart(plot_top_contributors(df_bottom, title="Bottom Contributors"), width="stretch")
-
-except Exception as e:
-    # Catch any alignment errors or dimension mismatches
-    st.info(f"Basic attribution not available: {e}")
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Group / sector attribution (ticker → group mapping)
-# ─────────────────────────────────────────────────────────────────────
-try:
-    # Placeholder mapping: replace with your actual sector / country classification
-    groups_map = {tk: "OTHER" for tk in bt["tickers"]}
-
-    # Compute daily group-level contributions from asset-level contributions
-    df_group_daily = bt_attr.contributions_by_group(aln, groups_map)
-
-    # Aggregate total contribution and average weight by group
-    df_group_total = (
-        df_group_daily.group_by("group")
-        .agg([
-            pl.col("contrib").sum().alias("contrib_total"),
-            pl.col("weight").mean().alias("avg_weight"),
-        ])
-        .sort("contrib_total", descending=True)
-    )
-
-    # Plot stacked contribution per group and the area plot over time
-    st.plotly_chart(plot_group_contrib(df_group_total), width="stretch")
-    st.plotly_chart(plot_group_contrib_area(df_group_daily), width="stretch")
-
-except Exception as e:
-    # Usually triggered if group mapping or alignment fails
-    st.info(f"Group attribution not available: {e}")
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Brinson–Fachler performance attribution
-# ─────────────────────────────────────────────────────────────────────
-try:
-    # Create a static equal-weight benchmark repeated across all dates
-    N_assets = len(bt["tickers"])
-    w_bench = np.full(N_assets, 1.0 / max(N_assets, 1))
-    Wb_daily = np.tile(w_bench, (len(aln.dates), 1))
-
-    # Example group index: each asset is its own group (replace with real indices)
-    groups_idx = list(range(N_assets))
-
-    # Compute cumulative Brinson–Fachler attribution over time
-    df_brinson = bt_attr.brinson_fachler_cumulative(
-        aln=aln,
-        bench_weights_daily=Wb_daily,
-        groups_idx=groups_idx,
-    )
-
-    # Plot the cumulative active contribution curve
-    st.plotly_chart(plot_brinson_cumulative(df_brinson), width="stretch")
-
-except Exception as e:
-    # Fallback if benchmark data or group info are missing
-    st.info(f"Brinson attribution not available: {e}")
+    # ────────────────────────────────
+    # Brinson–Fachler performance attribution
+    # ────────────────────────────────
+    try:
+        N_assets = len(bt["tickers"])
+        w_bench = np.full(N_assets, 1.0 / max(N_assets, 1))
+        Wb_daily = np.tile(w_bench, (len(aln.dates), 1))
+        groups_idx = list(range(N_assets))
+        df_brinson = bt_attr.brinson_fachler_cumulative(
+            aln=aln,
+            bench_weights_daily=Wb_daily,
+            groups_idx=groups_idx,
+        )
+        st.plotly_chart(plot_brinson_cumulative(df_brinson), width="stretch")
+    except Exception as e:
+        st.info(f"Brinson attribution not available: {e}")

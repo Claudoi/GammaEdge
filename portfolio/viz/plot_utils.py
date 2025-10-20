@@ -294,6 +294,35 @@ def covariance_spectrum(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Small internal helpers
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _placeholder_figure(title: str, subtitle: str = "No data available") -> go.Figure:
+    """Return a minimal placeholder figure instead of raising exceptions."""
+    fig = go.Figure()
+    fig.add_annotation(
+        text=subtitle,
+        xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, align="center", font=dict(size=14)
+    )
+    fig.update_layout(title=title, margin=dict(l=60, r=20, t=60, b=60), showlegend=False)
+    return fig
+
+def _to_1d_float(x) -> np.ndarray:
+    """Coerce input to a 1-D float array; on failure return an empty array."""
+    if x is None:
+        return np.array([], dtype=float)
+    try:
+        arr = np.asarray(x, dtype=float)
+    except Exception:
+        return np.array([], dtype=float)
+    if arr.ndim == 0:
+        return arr.reshape(1)
+    if arr.ndim > 1:
+        arr = arr.ravel()
+    return arr
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # 4) Efficient Frontier
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -306,24 +335,29 @@ def efficient_frontier(
     rets_closed: Iterable[float] | None = None,
     risks_box: Iterable[float] | None = None,
     rets_box: Iterable[float] | None = None,
-    msr_point: tuple[float, float] | None = None,
-    minvar_point: tuple[float, float] | None = None,
-    custom_points: dict[str, tuple[float, float]] | None = None,
+    msr_point: Tuple[float, float] | None = None,
+    minvar_point: Tuple[float, float] | None = None,
+    custom_points: dict[str, Tuple[float, float]] | None = None,
     title: str = "Efficient Frontier",
     **kwargs,
 ) -> go.Figure:
+    """
+    Robust frontier figure that accepts either:
+      • risks_closed/rets_closed and optional risks_box/rets_box, or
+      • efficient_frontier(risks, rets) via *args compatibility.
+    The function filters NaNs, sorts by risk, and never raises if inputs are partial.
+    """
 
-    # Compat: efficient_frontier(risks, rets)
+    # Backward compatibility: efficient_frontier(risks, rets)
     if len(args) == 2 and risks_closed is None and rets_closed is None:
-        risks_closed = np.asarray(args[0], dtype=float)
-        rets_closed  = np.asarray(args[1], dtype=float)
+        risks_closed = args[0]
+        rets_closed  = args[1]
 
-    def _clean_and_sort(xy):
-        x_raw, y_raw = xy
-        if x_raw is None or y_raw is None:
+    def _clean_and_sort(x_raw, y_raw):
+        x = _to_1d_float(x_raw)
+        y = _to_1d_float(y_raw)
+        if x.size == 0 or y.size == 0:
             return np.array([]), np.array([])
-        x = np.asarray(x_raw, dtype=float)
-        y = np.asarray(y_raw, dtype=float)
         m = np.isfinite(x) & np.isfinite(y)
         x, y = x[m], y[m]
         if x.size == 0:
@@ -333,136 +367,134 @@ def efficient_frontier(
 
     fig = go.Figure()
 
-    # Curvas limpias/ordenadas
-    x_c, y_c = _clean_and_sort((risks_closed, rets_closed))
-    x_b, y_b = _clean_and_sort((risks_box, rets_box))
+    # Clean/ordered series
+    x_c, y_c = _clean_and_sort(risks_closed, rets_closed)
+    x_b, y_b = _clean_and_sort(risks_box,   rets_box)
 
-    # (Opcional) sombreado entre closed y box si existen ambas
-    # Interpolamos sobre el dominio común en σ (riesgo)
-    def _add_constraint_gap_fill(fig, x1, y1, x2, y2):
+    # Optional shaded gap between the two frontiers over common σ domain
+    def _add_constraint_gap_fill(fig: go.Figure, x1, y1, x2, y2):
         try:
             if x1.size and x2.size:
                 xmin = max(x1.min(), x2.min())
                 xmax = min(x1.max(), x2.max())
-                if xmax > xmin:
-                    xs = np.linspace(xmin, xmax, 200)
+                if np.isfinite([xmin, xmax]).all() and xmax > xmin:
+                    xs  = np.linspace(xmin, xmax, 200)
                     y1i = np.interp(xs, x1, y1)
                     y2i = np.interp(xs, x2, y2)
-                    # gap = diferencia en retorno para mismo riesgo (visual)
-                    # rellenamos entre y1 y y2
                     fig.add_trace(go.Scatter(
                         x=np.concatenate([xs, xs[::-1]]),
                         y=np.concatenate([y1i, y2i[::-1]]),
                         fill="toself",
                         mode="lines",
                         line=dict(width=0),
-                        fillcolor="rgba(99, 110, 250, 0.15)",  # suave
+                        fillcolor="rgba(99,110,250,0.15)",
                         name="Constraint gap",
                         hoverinfo="skip",
                         showlegend=True,
                     ))
         except Exception:
+            # Never fail on cosmetic fill
             pass
 
-    # Primero el fill (para que quede por detrás de las líneas)
     if x_c.size and x_b.size:
         _add_constraint_gap_fill(fig, x_c, y_c, x_b, y_b)
 
-    # Curva cerrada
+    # Closed-form curve
     if x_c.size:
         fig.add_trace(go.Scatter(
-            x=x_c, y=y_c, mode="lines",
-            name="Closed‑form (no box)",
+            x=x_c, y=y_c, mode="lines", name="Closed-form (no box)",
             line=dict(width=2),
-            hovertemplate="σ=%{x:.4f}<br>μ=%{y:.4f}<extra>Closed‑form</extra>"
+            hovertemplate="σ=%{x:.4f}<br>μ=%{y:.4f}<extra>Closed-form</extra>",
         ))
 
-    # Curva con caja
+    # Box-projected curve
     if x_b.size:
         fig.add_trace(go.Scatter(
-            x=x_b, y=y_b, mode="lines",
-            name="Box‑projected",
+            x=x_b, y=y_b, mode="lines", name="Box-projected",
             line=dict(width=2, dash="dash"),
-            hovertemplate="σ=%{x:.4f}<br>μ=%{y:.4f}<extra>Box‑projected</extra>"
+            hovertemplate="σ=%{x:.4f}<br>μ=%{y:.4f}<extra>Box-projected</extra>",
         ))
 
-    # Puntos clave
-    if minvar_point is not None and np.all(np.isfinite(minvar_point)):
+    # Key points (MinVar & MSR)
+    if isinstance(minvar_point, (tuple, list)) and len(minvar_point) == 2:
         sx, ry = float(minvar_point[0]), float(minvar_point[1])
-        fig.add_trace(go.Scatter(
-            x=[sx], y=[ry], mode="markers", name="MinVar",
-            marker=dict(size=10, symbol="diamond"),
-            hovertemplate="MinVar<br>σ=%{x:.4f}<br>μ=%{y:.4f}<extra></extra>"
-        ))
+        if np.isfinite(sx) and np.isfinite(ry):
+            fig.add_trace(go.Scatter(
+                x=[sx], y=[ry], mode="markers", name="MinVar",
+                marker=dict(size=10, symbol="diamond"),
+                hovertemplate="MinVar<br>σ=%{x:.4f}<br>μ=%{y:.4f}<extra></extra>",
+            ))
 
-    if msr_point is not None and np.all(np.isfinite(msr_point)):
-        sx, ry = float(msr_point[0]), float(msr_point[1])
-        fig.add_trace(go.Scatter(
-            x=[sx], y=[ry], mode="markers", name="Max Sharpe",
-            marker=dict(size=11, symbol="star"),
-            hovertemplate="Max Sharpe<br>σ=%{x:.4f}<br>μ=%{y:.4f}<extra></extra>"
-        ))
-
-    # Puntos custom
-    if custom_points:
-        for label, (sx, ry) in custom_points.items():
-            if np.isfinite(sx) and np.isfinite(ry):
-                fig.add_trace(go.Scatter(
-                    x=[float(sx)], y=[float(ry)], mode="markers+text",
-                    name=str(label),
-                    text=[str(label)], textposition="top center",
-                    marker=dict(size=8),
-                    hovertemplate=f"{label}<br>σ=%{{x:.4f}}<br>μ=%{{y:.4f}}<extra></extra>"
-                ))
-
-    # CAL (Capital Allocation Line) + Sharpe en título si msr_point & rf
     title_suffix = ""
-    if msr_point is not None and np.isfinite(rf):
-        try:
-            s_msr, r_msr = float(msr_point[0]), float(msr_point[1])
-            if s_msr > 1e-12:
-                sharpe = (r_msr - rf) / s_msr
+    if isinstance(msr_point, (tuple, list)) and len(msr_point) == 2:
+        sx, ry = float(msr_point[0]), float(msr_point[1])
+        if np.isfinite(sx) and np.isfinite(ry):
+            fig.add_trace(go.Scatter(
+                x=[sx], y=[ry], mode="markers", name="Max Sharpe",
+                marker=dict(size=11, symbol="star"),
+                hovertemplate="Max Sharpe<br>σ=%{x:.4f}<br>μ=%{y:.4f}<extra></extra>",
+            ))
+            # CAL (if rf is provided)
+            if np.isfinite(rf) and sx > 1e-12:
+                sharpe = (ry - rf) / sx
                 title_suffix = f" · Sharpe*={sharpe:.2f}"
                 fig.add_trace(go.Scatter(
-                    x=[0.0, s_msr], y=[rf, r_msr],
+                    x=[0.0, sx], y=[rf, ry],
                     mode="lines", name="CAL",
                     line=dict(width=1, dash="dot"),
-                    hovertemplate="CAL<extra></extra>"
+                    hovertemplate="CAL<extra></extra>",
                 ))
-        except Exception:
-            pass
 
-    # Ejes y layout
-    x_max = float(np.nanmax([
-        x_c.max() if x_c.size else np.nan,
-        x_b.max() if x_b.size else np.nan,
-        msr_point[0] if msr_point is not None else np.nan
-    ]))
-    y_max = float(np.nanmax([
-        y_c.max() if y_c.size else np.nan,
-        y_b.max() if y_b.size else np.nan,
-        msr_point[1] if msr_point is not None else np.nan,
-        minvar_point[1] if minvar_point is not None else np.nan
-    ]))
+    # Custom points
+    if isinstance(custom_points, dict) and custom_points:
+        for label, pt in custom_points.items():
+            if isinstance(pt, (tuple, list)) and len(pt) == 2:
+                sx, ry = float(pt[0]), float(pt[1])
+                if np.isfinite(sx) and np.isfinite(ry):
+                    fig.add_trace(go.Scatter(
+                        x=[sx], y=[ry], mode="markers+text",
+                        name=str(label),
+                        text=[str(label)], textposition="top center",
+                        marker=dict(size=8),
+                        hovertemplate=f"{label}<br>σ=%{{x:.4f}}<br>μ=%{{y:.4f}}<extra></extra>",
+                    ))
+
+    # Auto ranges (do not crash if everything is empty)
+    candidates_x = []
+    candidates_y = []
+    if x_c.size: candidates_x.append(x_c.max())
+    if x_b.size: candidates_x.append(x_b.max())
+    if isinstance(msr_point, (tuple, list)) and len(msr_point) == 2:
+        candidates_x.append(float(msr_point[0]))
+        candidates_y.append(float(msr_point[1]))
+    if isinstance(minvar_point, (tuple, list)) and len(minvar_point) == 2:
+        candidates_y.append(float(minvar_point[1]))
+    if y_c.size: candidates_y.append(y_c.max())
+    if y_b.size: candidates_y.append(y_b.max())
+
+    x_max = np.nanmax(candidates_x) if candidates_x else np.nan
+    y_max = np.nanmax(candidates_y) if candidates_y else np.nan
+
+    if not (x_c.size or x_b.size or candidates_x or candidates_y):
+        return _placeholder_figure(title, subtitle="Frontier data not available")
 
     fig.update_layout(
-        title=(title + title_suffix),
+        title=title + title_suffix,
         xaxis=dict(
             title="Risk (σ)", rangemode="tozero",
-            range=[0, x_max * 1.05 if np.isfinite(x_max) and x_max > 0 else None],
-            showgrid=True, zeroline=True
+            range=[0, x_max * 1.05] if np.isfinite(x_max) and x_max > 0 else None,
+            showgrid=True, zeroline=True,
         ),
         yaxis=dict(
             title="Return (μ)",
-            range=[None, y_max * 1.06 if np.isfinite(y_max) and y_max > 0 else None],
-            showgrid=True, zeroline=True
+            range=[None, y_max * 1.06] if np.isfinite(y_max) and y_max > 0 else None,
+            showgrid=True, zeroline=True,
         ),
         margin=dict(l=60, r=20, t=60, b=60),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-        hovermode="x unified"
+        hovermode="x unified",
     )
     return fig
-
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -470,7 +502,7 @@ def efficient_frontier(
 # ──────────────────────────────────────────────────────────────────────────────
 
 def weights_bar(
-    weights: ArrayLike,
+    weights,
     labels: Sequence[str],
     *,
     sort: bool = True,
@@ -479,69 +511,121 @@ def weights_bar(
     title: str = "Portfolio Weights",
 ) -> go.Figure:
     """
-    Barras de pesos. Útil para inspección de carteras óptimas o actuales.
+    Bar plot of portfolio weights. Defensive against NaNs and inconsistent inputs.
     """
-    w = np.asarray(weights).astype(float)
-    if w.ndim != 1:
-        raise ValueError("weights must be 1D")
-    if len(w) != len(labels):
-        raise ValueError("weights and labels must align")
+    w = _to_1d_float(weights)
+    if w.size == 0 or labels is None or len(labels) == 0:
+        return _placeholder_figure(title)
 
-    idx = np.arange(len(w))
+    # Align lengths defensively
+    N = min(w.size, len(labels))
+    if N == 0:
+        return _placeholder_figure(title)
+    w = w[:N]
+    lab = list(labels)[:N]
+
+    # Replace non-finite values with zeros for plotting
+    w = np.where(np.isfinite(w), w, 0.0)
+
+    idx = np.arange(N)
     if sort:
         idx = np.argsort(w)
     if topn is not None:
+        topn = int(max(1, min(topn, N)))
         idx = idx[-topn:]
 
     w_plot = w[idx]
-    l_plot = [labels[i] for i in idx]
+    l_plot = [lab[i] for i in idx]
 
     if horizontal:
-        fig = go.Figure(go.Bar(x=w_plot, y=l_plot, orientation="h", hovertemplate="%{y}: %{x:.2%}<extra></extra>"))
-        fig.update_layout(xaxis_tickformat=".0%", title=title, margin=dict(l=80, r=20, t=60, b=40))
+        fig = go.Figure(go.Bar(
+            x=w_plot, y=l_plot, orientation="h",
+            hovertemplate="%{y}: %{x:.2%}<extra></extra>"
+        ))
+        fig.update_layout(
+            xaxis_tickformat=".0%",
+            title=title,
+            margin=dict(l=90, r=20, t=60, b=40),
+        )
     else:
-        fig = go.Figure(go.Bar(x=l_plot, y=w_plot, hovertemplate="%{x}: %{y:.2%}<extra></extra>"))
-        fig.update_layout(yaxis_tickformat=".0%", title=title, margin=dict(l=40, r=20, t=60, b=80))
+        fig = go.Figure(go.Bar(
+            x=l_plot, y=w_plot,
+            hovertemplate="%{x}: %{y:.2%}<extra></extra>"
+        ))
+        fig.update_layout(
+            yaxis_tickformat=".0%",
+            title=title,
+            margin=dict(l=40, r=20, t=60, b=80),
+        )
     return fig
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 6) Weights Heatmap (escenarios)
+# 6) Weights Heatmap (scenarios)
 # ──────────────────────────────────────────────────────────────────────────────
 
 def weights_heatmap(
-    W: np.ndarray,                      # shape (S, N) escenarios x activos
+    W: np.ndarray,
     asset_labels: Sequence[str],
     scenario_labels: Sequence[str] | None = None,
     *,
     title: str = "Weights by Scenario",
 ) -> go.Figure:
-    if W.ndim != 2:
-        raise ValueError("W must be 2D (scenarios x assets)")
+    """
+    Heatmap for scenario weights. Handles empty/degenerate arrays gracefully.
+    """
+    if W is None:
+        return _placeholder_figure(title)
+    W = np.asarray(W, dtype=float)
+    if W.ndim != 2 or W.size == 0:
+        return _placeholder_figure(title, subtitle="No weights matrix to display")
+
     S, N = W.shape
-    if len(asset_labels) != N:
-        raise ValueError("asset_labels length mismatch")
-    if scenario_labels is None:
-        scenario_labels = [f"S{i}" for i in range(S)]
+    # Defensive label alignment
+    assets = list(asset_labels)[:N] if asset_labels is not None else [f"A{i}" for i in range(N)]
+    if len(assets) != N:
+        assets = [f"A{i}" for i in range(N)]
+    scenarios = list(scenario_labels)[:S] if scenario_labels is not None else [f"S{i}" for i in range(S)]
+    if len(scenarios) != S:
+        scenarios = [f"S{i}" for i in range(S)]
+
+    # Replace non-finites for plotting; keep the color range informative
+    W_plot = np.where(np.isfinite(W), W, 0.0)
+    zmin = np.nanmin(W_plot) if np.isfinite(W_plot).any() else 0.0
+    zmax = np.nanmax(W_plot) if np.isfinite(W_plot).any() else 0.0
+    if not np.isfinite(zmin): zmin = 0.0
+    if not np.isfinite(zmax): zmax = 0.0
+    if zmax == zmin:
+        # Avoid a flat colorbar; widen slightly
+        zmax = zmin + (abs(zmin) + 1e-6)
 
     fig = go.Figure(
         data=go.Heatmap(
-            z=W,
-            x=asset_labels,
-            y=scenario_labels,
+            z=W_plot,
+            x=assets,
+            y=scenarios,
             colorbar=dict(title="weight"),
-            zmin=np.min(W), zmax=np.max(W),
+            zmin=zmin,
+            zmax=zmax,
             hovertemplate="scenario=%{y}<br>asset=%{x}<br>w=%{z:.2%}<extra></extra>",
         )
     )
-    fig.update_layout(title=title, xaxis=dict(tickangle=45, automargin=True), margin=dict(l=60, r=20, t=60, b=80))
+    fig.update_layout(
+        title=title,
+        xaxis=dict(tickangle=45, automargin=True),
+        margin=dict(l=60, r=20, t=60, b=80),
+    )
     return fig
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# 7) Equity Curve + Drawdown
-# ──────────────────────────────────────────────────────────────────────────────
 
+
+
+ArrayLike = np.ndarray  # simple alias here; adjust if you have a typed alias elsewhere
+
+# ──────────────────────────────────────────────────────────────────────────────
+# 1) Equity Curve + Drawdown
+# ──────────────────────────────────────────────────────────────────────────────
 def equity_and_drawdown(
     dates: Sequence,
     equity,
@@ -549,16 +633,16 @@ def equity_and_drawdown(
     title: str = "Equity & Drawdown"
 ) -> go.Figure:
     """
-    Curva de equity (nivel) y drawdown (ratio, formateado como % en el eje derecho).
+    Equity curve (level) and drawdown (as a ratio, formatted as %) on a secondary y-axis.
     """
     eq = np.asarray(equity, dtype=float)
     if len(dates) != len(eq):
-        raise ValueError("dates y equity deben tener la misma longitud")
+        raise ValueError("`dates` and `equity` must have the same length.")
 
-    # Sanitizar valores
+    # Sanitize values
     eq = np.where(np.isfinite(eq), eq, np.nan)
 
-    # Drawdown como v/peak - 1 (negativo en caídas)
+    # Drawdown as v/peak - 1 (negative while underwater)
     dd = np.full_like(eq, np.nan, dtype=float)
     peak = -np.inf
     for i, v in enumerate(eq):
@@ -566,21 +650,18 @@ def equity_and_drawdown(
             if v > peak:
                 peak = v
             if np.isfinite(peak) and peak > 0:
-                dd[i] = (v / peak) - 1.0  # negativo en drawdown
+                dd[i] = (v / peak) - 1.0
 
     fig = go.Figure()
-
     fig.add_trace(go.Scatter(
         x=dates, y=eq, mode="lines", name="Equity",
         hovertemplate="%{x}<br>%{y:.4f}<extra></extra>"
     ))
-
     fig.add_trace(go.Scatter(
         x=dates, y=dd, mode="lines", name="Drawdown",
         yaxis="y2", fill="tozeroy",
         hovertemplate="%{x}<br>%{y:.2%}<extra></extra>"
     ))
-
     fig.update_layout(
         title=title,
         xaxis=dict(title="Date"),
@@ -598,9 +679,8 @@ def equity_and_drawdown(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# 8) Loss Distribution with VaR/ES markers
+# 2) Loss Distribution with VaR/ES markers
 # ──────────────────────────────────────────────────────────────────────────────
-
 def loss_distribution(
     losses: ArrayLike,
     *,
@@ -609,10 +689,10 @@ def loss_distribution(
     title: str = "Loss Distribution with VaR / ES",
 ) -> go.Figure:
     """
-    losses: array de pérdidas (+ es pérdida; si trabajas con PnL usa -PnL).
-    Dibuja histograma y marca VaR/ES en niveles alpha.
+    Plot a histogram of losses and annotate VaR/ES for given alphas.
+    `losses` should be positive for losses (if you have PnL, pass `-PnL`).
     """
-    x = np.asarray(losses).astype(float)
+    x = np.asarray(losses, dtype=float)
     x = x[np.isfinite(x)]
     x.sort()
 
@@ -623,9 +703,17 @@ def loss_distribution(
         q = np.quantile(x, a)
         tail = x[x >= q]
         es = float(tail.mean()) if tail.size else np.nan
-        fig.add_vline(x=q, line_dash="dash", annotation_text=f"VaR {int(a*100)}%: {q:.2f}", annotation_position="top")
+        fig.add_vline(
+            x=q, line_dash="dash",
+            annotation_text=f"VaR {int(a*100)}%: {q:.2f}",
+            annotation_position="top"
+        )
         if np.isfinite(es):
-            fig.add_vline(x=es, line_dash="dot", annotation_text=f"ES {int(a*100)}%: {es:.2f}", annotation_position="top")
+            fig.add_vline(
+                x=es, line_dash="dot",
+                annotation_text=f"ES {int(a*100)}%: {es:.2f}",
+                annotation_position="top"
+            )
 
     fig.update_layout(
         title=title,
@@ -638,7 +726,7 @@ def loss_distribution(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Scree Plot (explained variance)
+# 3) Scree Plot (explained variance)
 # ──────────────────────────────────────────────────────────────────────────────
 def scree_plot(
     eigvals: ArrayLike,
@@ -646,8 +734,8 @@ def scree_plot(
     title: str = "Scree Plot (Explained Variance)",
 ) -> go.Figure:
     """
-    Barras de varianza explicada por autovalor + línea de acumulada.
-    Acepta eigenvalues no negativos (no hace falta que estén normalizados).
+    Bar chart of explained variance per eigenvalue with a cumulative line.
+    Input eigenvalues do not need to be normalized.
     """
     lam = np.asarray(eigvals, dtype=float)
     lam = lam[np.isfinite(lam)]
@@ -662,10 +750,11 @@ def scree_plot(
 
     fig = go.Figure()
     fig.add_trace(go.Bar(x=np.arange(1, len(exp) + 1), y=exp, name="Explained"))
-    fig.add_trace(go.Scatter(x=np.arange(1, len(cum) + 1), y=cum, mode="lines+markers",
-                             name="Cumulative", yaxis="y2",
-                             hovertemplate="k=%{x}<br>cum=%{y:.1%}<extra></extra>"))
-
+    fig.add_trace(go.Scatter(
+        x=np.arange(1, len(cum) + 1), y=cum, mode="lines+markers",
+        name="Cumulative", yaxis="y2",
+        hovertemplate="k=%{x}<br>cum=%{y:.1%}<extra></extra>"
+    ))
     fig.update_layout(
         title=title,
         xaxis_title="Component (k)",
@@ -679,73 +768,58 @@ def scree_plot(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Correlation Network Graph
+# 4) Correlation Network Graph (simple circular layout)
 # ──────────────────────────────────────────────────────────────────────────────
 def network_corr_graph(
     Sigma_or_Corr: np.ndarray | pl.DataFrame,
     labels: Sequence[str] | None = None,
     *,
     is_cov: bool = True,
-    threshold: float = 0.3,        # dibuja aristas con |ρ|>=threshold
+    threshold: float = 0.3,        # draw edges with |ρ| >= threshold
     title: str = "Correlation Network Graph",
 ) -> go.Figure:
     """
-    Grafo de correlaciones con layout circular (sin networkx).
-    - Nodos: activos
-    - Aristas: |ρ_ij|>=threshold (ancho/alpha según |ρ|)
-    - Color de arista: tono por signo (positivo/negativo)
+    Correlation graph (without networkx): circular node layout, edges scaled by |ρ|.
     """
+    # Expect helpers _to_numpy_matrix and _safe_corr_from_cov to exist in your module
     M = _to_numpy_matrix(Sigma_or_Corr)
     Corr = _safe_corr_from_cov(M) if is_cov else np.copy(M)
     n = Corr.shape[0]
     if labels is None:
         labels = [f"A{i}" for i in range(n)]
 
-    # Layout circular
     theta = np.linspace(0, 2*np.pi, n, endpoint=False)
     xs = np.cos(theta)
     ys = np.sin(theta)
 
-    edge_x, edge_y, edge_width, edge_color = [], [], [], []
-    for i in range(n):
-        for j in range(i+1, n):
-            rho = float(Corr[i, j])
-            if np.isnan(rho) or abs(rho) < threshold: 
-                continue
-            edge_x += [xs[i], xs[j], None]
-            edge_y += [ys[i], ys[j], None]
-            edge_width.append(1.0 + 3.0*abs(rho))
-            edge_color.append("rgba(0,0,0,0)")  # dummy; se usa en traces separados
-
-    # Para colorear por signo, creamos dos trazas: positivas y negativas
     pos_x, pos_y, pos_w = [], [], []
     neg_x, neg_y, neg_w = [], [], []
-    k = 0
     for i in range(n):
         for j in range(i+1, n):
             rho = float(Corr[i, j])
-            if np.isnan(rho) or abs(rho) < threshold: 
+            if np.isnan(rho) or abs(rho) < threshold:
                 continue
             segx = [xs[i], xs[j], None]
             segy = [ys[i], ys[j], None]
+            width = 1.0 + 3.0*abs(rho)
             if rho >= 0:
-                pos_x += segx; pos_y += segy; pos_w.append(1.0 + 3.0*abs(rho))
+                pos_x += segx; pos_y += segy; pos_w.append(width)
             else:
-                neg_x += segx; neg_y += segy; neg_w.append(1.0 + 3.0*abs(rho))
-            k += 1
+                neg_x += segx; neg_y += segy; neg_w.append(width)
 
     fig = go.Figure()
-
     if pos_x:
-        fig.add_trace(go.Scatter(x=pos_x, y=pos_y, mode="lines", name="ρ ≥ 0",
-                                 line=dict(width=np.mean(pos_w) if pos_w else 1.5, color="rgba(0,120,255,0.5)"),
-                                 hoverinfo="none"))
+        fig.add_trace(go.Scatter(
+            x=pos_x, y=pos_y, mode="lines", name="ρ ≥ 0",
+            line=dict(width=np.mean(pos_w) if pos_w else 1.5, color="rgba(0,120,255,0.5)"),
+            hoverinfo="none"
+        ))
     if neg_x:
-        fig.add_trace(go.Scatter(x=neg_x, y=neg_y, mode="lines", name="ρ < 0",
-                                 line=dict(width=np.mean(neg_w) if neg_w else 1.5, color="rgba(255,80,80,0.5)"),
-                                 hoverinfo="none"))
-
-    # Nodos (tamaño ~ grado)
+        fig.add_trace(go.Scatter(
+            x=neg_x, y=neg_y, mode="lines", name="ρ < 0",
+            line=dict(width=np.mean(neg_w) if neg_w else 1.5, color="rgba(255,80,80,0.5)"),
+            hoverinfo="none"
+        ))
     deg = (np.abs(Corr) >= threshold).sum(axis=0) - 1
     node_size = 10 + 3*np.clip(deg, 0, None)
     fig.add_trace(go.Scatter(
@@ -753,19 +827,15 @@ def network_corr_graph(
         marker=dict(size=node_size, line=dict(width=1, color="#333")),
         hovertemplate="%{text}<extra></extra>", name="assets"
     ))
-
     fig.update_layout(
-        title=title,
-        xaxis=dict(visible=False), yaxis=dict(visible=False),
-        showlegend=True,
-        margin=dict(l=20, r=20, t=60, b=20),
-        height=600
+        title=title, xaxis=dict(visible=False), yaxis=dict(visible=False),
+        showlegend=True, margin=dict(l=20, r=20, t=60, b=20), height=600
     )
     return fig
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Risk Contributions bar
+# 5) Risk Contributions bar
 # ──────────────────────────────────────────────────────────────────────────────
 def risk_contributions_bar(
     rc: ArrayLike,
@@ -776,12 +846,11 @@ def risk_contributions_bar(
     title: str = "Risk Contributions",
 ) -> go.Figure:
     """
-    Barras horizontales de contribución al riesgo (por ejemplo, marginal*weight o RC%).
-    `rc` puede estar en unidades absolutas o en porcentaje; aquí sólo graficamos.
+    Horizontal bars for risk contributions (absolute or %).
     """
     v = np.asarray(rc, dtype=float)
     if v.ndim != 1 or len(v) != len(labels):
-        raise ValueError("rc must be 1D and aligned with labels")
+        raise ValueError("`rc` must be 1D and aligned with `labels`.")
     idx = np.arange(len(v))
     if sort:
         idx = np.argsort(v)
@@ -789,7 +858,6 @@ def risk_contributions_bar(
         idx = idx[-topn:]
     v_plot = v[idx]
     l_plot = [labels[i] for i in idx]
-
     fig = go.Figure(go.Bar(x=v_plot, y=l_plot, orientation="h",
                            hovertemplate="%{y}: %{x:.4f}<extra></extra>"))
     fig.update_layout(
@@ -800,7 +868,7 @@ def risk_contributions_bar(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Rolling lines (multi-series)
+# 6) Rolling lines (multi-series)
 # ──────────────────────────────────────────────────────────────────────────────
 def rolling_lines(
     dates: Sequence,
@@ -809,14 +877,15 @@ def rolling_lines(
     title: str = "Rolling Metrics",
 ) -> go.Figure:
     """
-    Línea por cada serie (p.ej. vol 26/52, corr rolling, etc.).
-    `series_dict` = {"label": array_like_alineada_con_dates, ...}
+    One line per series in `series_dict = {"label": aligned_array, ...}`.
     """
     fig = go.Figure()
     for name, arr in series_dict.items():
         y = np.asarray(arr, dtype=float)
-        fig.add_trace(go.Scatter(x=dates, y=y, mode="lines", name=name,
-                                 hovertemplate="%{x}<br>%{y:.4f}<extra></extra>"))
+        fig.add_trace(go.Scatter(
+            x=dates, y=y, mode="lines", name=name,
+            hovertemplate="%{x}<br>%{y:.4f}<extra></extra>"
+        ))
     fig.update_layout(
         title=title,
         xaxis_title="Date",
@@ -828,27 +897,31 @@ def rolling_lines(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Heatmap WebGL (para N grandes)
+# 7) Correlation Heatmap (WebGL)
 # ──────────────────────────────────────────────────────────────────────────────
 def corr_heatmap_gl(
     Sigma_or_Corr: np.ndarray | pl.DataFrame,
     labels: Sequence[str] | None = None,
     *,
     is_cov: bool = True,
-    order: HeatmapOrder = HeatmapOrder(),
+    order: "HeatmapOrder" = None,   # keep your real type if available
     zlim: tuple[float, float] = (-1.0, 1.0),
     title: str = "Correlation Heatmap (WebGL)",
 ) -> go.Figure:
     """
-    Igual que corr_heatmap pero usando Heatmapgl (más rápido para N>200).
+    Same as a standard correlation heatmap but using Heatmapgl (faster for N > ~200).
+    Expects helper functions _to_numpy_matrix / _safe_corr_from_cov / _hierarchical_order / _apply_order.
     """
+    if order is None:
+        order = HeatmapOrder()  # relies on your existing class
+
     M = _to_numpy_matrix(Sigma_or_Corr)
     Corr = _safe_corr_from_cov(M) if is_cov else np.copy(M)
     n = Corr.shape[0]
     if labels is None:
         labels = [f"A{i}" for i in range(n)]
 
-    if order.clustered and n >= 3:
+    if getattr(order, "clustered", False) and n >= 3:
         ord_idx = _hierarchical_order(Corr, order)
         Corr_ord = _apply_order(Corr, ord_idx)
         labels_ord = [labels[i] for i in ord_idx]
@@ -872,69 +945,72 @@ def corr_heatmap_gl(
     return fig
 
 
-
+# ──────────────────────────────────────────────────────────────────────────────
+# 8) Weights path vs γ
+# ──────────────────────────────────────────────────────────────────────────────
 def weights_path_gammas(
     Ws: np.ndarray, gammas: Sequence[float], labels: Sequence[str], *, topn: int = 20,
     title: str = "Weights path vs γ (top names)"
 ) -> go.Figure:
     """
-    Cada fila de Ws corresponde a un γ. Dibuja trayectorias de pesos por γ (log10).
-    Muestra las top 'topn' por max peso a lo largo del barrido.
+    Each row of `Ws` corresponds to a γ. Plot trajectories of weights against log10(γ)
+    for the top `topn` names by peak weight across the sweep.
     """
     if Ws.ndim != 2:
-        raise ValueError("Ws must be 2D (n_gamma x N)")
+        raise ValueError("`Ws` must be 2D (n_gamma x N).")
     nG, N = Ws.shape
-    g = np.asarray(gammas)
+    g = np.asarray(gammas, dtype=float)
     x = np.log10(g)
     peak = np.max(Ws, axis=0)
     idx = np.argsort(peak)[::-1][:min(topn, N)]
     fig = go.Figure()
     for i in idx:
-        fig.add_trace(go.Scatter(x=x, y=Ws[:, i], mode="lines", name=labels[i],
-                                 hovertemplate="log10 γ=%{x:.2f}<br>w=%{y:.2%}<extra></extra>"))
+        fig.add_trace(go.Scatter(
+            x=x, y=Ws[:, i], mode="lines", name=labels[i],
+            hovertemplate="log10 γ=%{x:.2f}<br>w=%{y:.2%}<extra></extra>"
+        ))
     fig.update_layout(title=title, xaxis_title="log10(γ)", yaxis_title="Weight", yaxis_tickformat=".0%")
     return fig
+
 
 def turnover_vs_gamma(
     Ws: np.ndarray, w_ref: np.ndarray, gammas: Sequence[float], *,
     title: str = "Turnover vs γ"
 ) -> go.Figure:
     """
-    Curva L1/L2 turnover vs γ tomando Ws (n_gamma x N).
+    L1/L2 turnover vs γ using `Ws` (n_gamma x N) and a reference portfolio `w_ref`.
     """
     L1 = np.sum(np.abs(Ws - w_ref[None, :]), axis=1)
     L2 = np.sqrt(np.sum((Ws - w_ref[None, :]) ** 2, axis=1))
-    x = np.log10(np.asarray(gammas))
+    x = np.log10(np.asarray(gammas, dtype=float))
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=x, y=L1, mode="lines+markers", name="L1"))
     fig.add_trace(go.Scatter(x=x, y=L2, mode="lines+markers", name="L2"))
     fig.update_layout(title=title, xaxis_title="log10(γ)", yaxis_title="Turnover")
     return fig
 
+
 def te_frontier(
     mu: np.ndarray, Sigma: np.ndarray, w_bench: np.ndarray, Ws: np.ndarray, *,
     title: str = "Tracking-Error Frontier", annualize: bool = False, periods_per_year: int = 252
 ) -> go.Figure:
+    """
+    TE frontier: plot per-period (or annualized) expected return vs tracking error for a set of portfolios.
+    """
     mu = np.asarray(mu, dtype=float).reshape(-1)
     Sigma = np.asarray(Sigma, dtype=float)
     w_bench = np.asarray(w_bench, dtype=float).reshape(-1)
     Ws = np.asarray(Ws, dtype=float)
 
-    # Checks rápidos
     n = mu.shape[0]
     if Sigma.shape != (n, n):
-        raise ValueError("Sigma debe ser (n, n)")
+        raise ValueError("`Sigma` must be (n, n).")
     if w_bench.shape[0] != n or Ws.shape[1] != n:
-        raise ValueError("Dimensiones de pesos incompatibles con mu/Sigma")
-
-    # (Opcional) avisar si no están normalizados
-    if not (np.isclose(w_bench.sum(), 1.0, atol=1e-6) and np.allclose(Ws.sum(axis=1), 1.0, atol=1e-6)):
-        # No normalizamos automáticamente para no sorprender; solo avisamos.
-        pass
+        raise ValueError("Weights dimensions must match `mu/Sigma`.")
 
     dW = Ws - w_bench[None, :]
-    mu_p = Ws @ mu                          # retorno por periodo
-    te = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", dW, Sigma, dW), 0.0))  # TE por periodo
+    mu_p = Ws @ mu
+    te = np.sqrt(np.maximum(np.einsum("ij,jk,ik->i", dW, Sigma, dW), 0.0))
 
     if annualize:
         mu_p = (1 + mu_p) ** periods_per_year - 1.0
@@ -954,20 +1030,12 @@ def te_frontier(
     return fig
 
 
-
-### 04 Backtest & Attribution Plots
 # ──────────────────────────────────────────────────────────────────────────────
-# Equity & Drawdown
+# 9) Backtest & Attribution plots
 # ──────────────────────────────────────────────────────────────────────────────
-
 def plot_equity(dates: list, equity: np.ndarray, title: str = "Equity Curve") -> go.Figure:
     fig = go.Figure(go.Scatter(x=dates, y=equity, mode="lines", name="Equity"))
-    fig.update_layout(
-        title=title,
-        xaxis_title="Date",
-        yaxis_title="NAV",
-        template="plotly_white",
-    )
+    fig.update_layout(title=title, xaxis_title="Date", yaxis_title="NAV", template="plotly_white")
     return fig
 
 
@@ -975,25 +1043,15 @@ def plot_drawdown(dates: list, equity: np.ndarray, title: str = "Drawdown") -> g
     cummax = np.maximum.accumulate(equity)
     dd = (equity / np.maximum(cummax, 1e-12)) - 1.0
     fig = go.Figure(go.Scatter(x=dates, y=dd, mode="lines", name="Drawdown"))
-    fig.update_layout(
-        title=title,
-        xaxis_title="Date",
-        yaxis_title="Drawdown",
-        template="plotly_white",
-    )
+    fig.update_layout(title=title, xaxis_title="Date", yaxis_title="Drawdown", template="plotly_white")
     return fig
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Weights, Turnover & TE
-# ──────────────────────────────────────────────────────────────────────────────
-
 def plot_weights_heatmap(dates: list, tickers: list[str], W: np.ndarray, title="Weights") -> go.Figure:
-    avg_w = W.mean(axis=0)
+    avg_w = np.asarray(W, dtype=float).mean(axis=0)
     order = np.argsort(-avg_w)
     tickers_ord = [tickers[i] for i in order]
-    W_ord = W[:, order]
-
+    W_ord = np.asarray(W, dtype=float)[:, order]
     fig = go.Figure(
         data=go.Heatmap(
             z=W_ord.T,
@@ -1008,35 +1066,40 @@ def plot_weights_heatmap(dates: list, tickers: list[str], W: np.ndarray, title="
 
 
 def plot_turnover(dates_or_df, turnover=None, title: str = "Turnover") -> go.Figure:
-
+    """
+    Accepts either:
+      - (dates, turnover_array)
+      - A DataFrame with columns ['date', 'turnover'] (Polars or Pandas)
+    Robust to Polars vs Pandas.
+    """
     if turnover is None:
         df = dates_or_df
         # Polars
-        if hasattr(df, "to_pandas") and {"date","turnover"}.issubset(df.columns):
-            x = df["date"].to_list()
-            y = np.asarray(df["turnover"], dtype=float)
+        if isinstance(df, pl.DataFrame) and {"date", "turnover"}.issubset(set(df.columns)):
+            x = df.get_column("date").to_list()
+            y = df.get_column("turnover").to_numpy()
         # Pandas
-        elif hasattr(df, "reset_index") and {"date","turnover"}.issubset(df.columns):
-            x = df["date"].values
-            y = np.asarray(df["turnover"], dtype=float)
+        elif hasattr(df, "columns") and {"date", "turnover"}.issubset(set(df.columns)):
+            x = df["date"].tolist()
+            y = np.asarray(df["turnover"].values, dtype=float)
         else:
-            raise ValueError("Si pasas un DataFrame debe tener columnas ['date','turnover']")
+            raise ValueError("If you pass a DataFrame it must have columns ['date','turnover'].")
     else:
         x = list(dates_or_df)
         y = np.asarray(turnover, dtype=float)
         if len(x) != len(y):
-            raise ValueError("dates y turnover deben tener la misma longitud")
+            raise ValueError("`dates` and `turnover` must have the same length.")
 
     y = np.where(np.isfinite(y), y, np.nan)
     y = np.clip(y, 0.0, None)
-
     fig = go.Figure(go.Scatter(
         x=x, y=y, mode="lines", name="Turnover",
         hovertemplate="%{x}<br>%{y:.1%}<extra></extra>"
     ))
     fig.update_layout(
         title=title, xaxis_title="Date", yaxis_title="Turnover (%)",
-        yaxis=dict(tickformat=".0%"), margin=dict(l=60, r=40, t=60, b=60),
+        yaxis=dict(tickformat=".0%"),
+        margin=dict(l=60, r=40, t=60, b=60),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
         template="plotly_white",
     )
@@ -1046,9 +1109,8 @@ def plot_turnover(dates_or_df, turnover=None, title: str = "Turnover") -> go.Fig
 def plot_tracking_error(dates: list, te: np.ndarray, title="Tracking Error (daily proxy)") -> go.Figure:
     te = np.asarray(te, dtype=float)
     if len(dates) != len(te):
-        raise ValueError("dates y te deben tener la misma longitud")
+        raise ValueError("`dates` and `te` must have the same length.")
     te = np.where(np.isfinite(te), te, np.nan)
-
     fig = go.Figure(go.Scatter(
         x=dates, y=te, mode="lines", name="TE",
         hovertemplate="%{x}<br>TE: %{y:.2%}<extra></extra>"
@@ -1060,20 +1122,12 @@ def plot_tracking_error(dates: list, te: np.ndarray, title="Tracking Error (dail
     return fig
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Contributors
-# ──────────────────────────────────────────────────────────────────────────────
-
 def plot_top_contributors(df_top: pl.DataFrame, title="Top Contributors") -> go.Figure:
     pdf = df_top.select(["ticker", "contrib_total"]).to_pandas()
     pdf = pdf.replace([np.inf, -np.inf], np.nan).dropna()
     pdf = pdf.sort_values("contrib_total", ascending=False)
-
     fig = go.Figure(go.Bar(x=pdf["ticker"], y=pdf["contrib_total"]))
-    fig.update_layout(
-        title=title, xaxis_title="Ticker", yaxis_title="Total Contribution",
-        template="plotly_white"
-    )
+    fig.update_layout(title=title, xaxis_title="Ticker", yaxis_title="Total Contribution", template="plotly_white")
     return fig
 
 
@@ -1081,40 +1135,34 @@ def plot_group_contrib(df_group_total: pl.DataFrame, title="Group Contributions"
     pdf = df_group_total.select(["group", "contrib_total"]).to_pandas()
     pdf = pdf.replace([np.inf, -np.inf], np.nan).dropna()
     pdf = pdf.sort_values("contrib_total", ascending=False)
-
     fig = go.Figure(go.Bar(x=pdf["group"], y=pdf["contrib_total"]))
-    fig.update_layout(
-        title=title, xaxis_title="Group", yaxis_title="Total Contribution",
-        template="plotly_white"
-    )
+    fig.update_layout(title=title, xaxis_title="Group", yaxis_title="Total Contribution", template="plotly_white")
     return fig
 
 
 def plot_group_contrib_area(df: pl.DataFrame, title="Group Contributions Over Time") -> go.Figure:
     req = {"date", "group", "contrib"}
-    if not req.issubset(df.columns):
-        raise ValueError(f"Faltan columnas: {req}")
-    pdf = (df.to_pandas()
-             .replace([np.inf, -np.inf], np.nan)
-             .dropna(subset=["date", "group", "contrib"])
-             .sort_values("date"))
-    fig = px.area(pdf, x="date", y="contrib", color="group", title=title,
-                  labels={"contrib": "Contribution"})
-    fig.update_layout(template="plotly_white", xaxis_title="Date",
-                      yaxis_title="Contribution", yaxis_tickformat=".2%",
-                      legend_title="Group", margin=dict(l=60, r=40, t=60, b=60))
+    if not req.issubset(set(df.columns)):
+        raise ValueError(f"Missing columns: {req}")
+    pdf = (
+        df.to_pandas()
+          .replace([np.inf, -np.inf], np.nan)
+          .dropna(subset=["date", "group", "contrib"])
+          .sort_values("date")
+    )
+    fig = px.area(pdf, x="date", y="contrib", color="group", title=title, labels={"contrib": "Contribution"})
+    fig.update_layout(
+        template="plotly_white", xaxis_title="Date", yaxis_title="Contribution",
+        yaxis_tickformat=".2%", legend_title="Group",
+        margin=dict(l=60, r=40, t=60, b=60)
+    )
     return fig
 
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Brinson-Fachler
-# ──────────────────────────────────────────────────────────────────────────────
 
 def plot_brinson_cumulative(df_brinson: pl.DataFrame, title="Brinson-Fachler Attribution") -> go.Figure:
     cols = {"date", "alloc", "select", "interact", "total"}
     if not cols.issubset(set(df_brinson.columns)):
-        raise ValueError(f"Faltan columnas en df_brinson. Esperadas: {cols}")
-
+        raise ValueError(f"Missing columns in df_brinson. Expected: {cols}")
     pdf = df_brinson.to_pandas().replace([np.inf, -np.inf], np.nan).dropna()
     fig = go.Figure()
     for col in ["alloc", "select", "interact", "total"]:
@@ -1127,8 +1175,6 @@ def plot_brinson_cumulative(df_brinson: pl.DataFrame, title="Brinson-Fachler Att
         yaxis=dict(tickformat=".0%"), template="plotly_white"
     )
     return fig
-
-
 
 # =========================
 # Advanced attribution plots (non-breaking additions)

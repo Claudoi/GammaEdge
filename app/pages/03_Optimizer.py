@@ -69,8 +69,7 @@ if not all(k in st.session_state for k in required_keys):
 
 Sigma = np.asarray(st.session_state["cov_mat"], dtype=float)
 mu = np.asarray(st.session_state["mu_vec"], dtype=float)
-# ---- SANIDAD CRÍTICA DE μ ----
-mu = np.nan_to_num(mu, nan=0.0, posinf=0.0, neginf=0.0)
+mu = np.nan_to_num(mu, nan=0.0, posinf=0.0, neginf=0.0)  # critical de-noising
 names = list(st.session_state["asset_names"])
 df_ret_wide: pl.DataFrame = st.session_state["returns_wide"]
 meta_df: pl.DataFrame | None = st.session_state.get("asset_meta", None)
@@ -81,7 +80,7 @@ Sigma = 0.5 * (Sigma + Sigma.T)
 np.fill_diagonal(Sigma, np.maximum(np.diag(Sigma), 1e-12))
 N = len(names)
 if Sigma.shape != (N, N) or mu.shape != (N,):
-    st.error("Shape mismatch between μ, Σ and names.")
+    st.error("Shape mismatch between μ, Σ and asset names.")
     st.stop()
 Sigma = ensure_psd(Sigma, eps=1e-10, clip=True)
 
@@ -91,7 +90,7 @@ Sigma = ensure_psd(Sigma, eps=1e-10, clip=True)
 with st.sidebar:
     st.header("Settings")
 
-    # Box + gentle autocorrect
+    # Box with gentle auto-correct
     w_min = st.number_input("w_min", 0.0, 1.0, 0.0, 0.01)
     w_max = st.number_input("w_max", 0.0, 1.0, 0.1, 0.01)
     if N > 0 and (N * w_min > 1.0 or N * w_max < 1.0):
@@ -123,7 +122,7 @@ with st.sidebar:
             w_bench = np.full(N, 1.0 / max(N, 1))
     w_bench = project_to_box_simplex(w_bench, w_min, w_max)
 
-    # Active exposures: sector/country
+    # Active exposures (sector/country)
     st.markdown("---")
     st.caption("Active exposure constraints (sector/country)")
     use_expos = st.checkbox("Enable active exposure bounds", value=False)
@@ -320,18 +319,17 @@ st.markdown("---")
 st.subheader("Efficient Frontier")
 
 try:
-    # 1) Robust return range (sobre μ ya saneado, pero volvemos a blindar)
+    # 1) Robust return range (use a denoised μ; widen if degenerate)
     mu_valid = np.nan_to_num(mu, nan=0.0, posinf=0.0, neginf=0.0)
     r_lo = float(np.nanpercentile(mu_valid, 10))
     r_hi = float(np.nanpercentile(mu_valid, 90))
     if not (np.isfinite(r_lo) and np.isfinite(r_hi)) or r_lo >= r_hi:
-        # fallback por si todos los μ son iguales o cero
-        r_lo, r_hi = -0.1, 0.1
+        r_lo, r_hi = -0.1, 0.1  # conservative fallback if μ is flat
 
     # 2) Closed-form frontier (short allowed)
     risks_closed, rets_closed = frontier_closed_form(mu_valid, Sigma, r_min=r_lo, r_max=r_hi, npts=100)
 
-    # 3) Box frontier (sin cambios, pero usando mu_valid)
+    # 3) Box frontier (long-only with box)
     if not box_feasible(N, w_min, w_max):
         st.warning(
             f"Box infeasible: N*w_min={N*w_min:.3f}, N*w_max={N*w_max:.3f}. "
@@ -343,10 +341,10 @@ try:
             mu_valid, Sigma, w_min=w_min, w_max=w_max, r_min=r_lo, r_max=r_hi, npts=100
         )
         if np.size(risks_box) <= 1:
-            st.info("Degenerate box-frontier (single point). Relax box or widen μ range.")
+            st.info("Degenerate box-frontier (single point). Relax the box or widen the μ range.")
             risks_box = rets_box = None
 
-    # 5) GMV & Tangency (con defensas suaves)
+    # 4) GMV & Tangency (safe math)
     w_mvp, w_tan = markowitz_closed_form(mu_valid, Sigma, rf=rf)
     r_mvp = float(w_mvp @ mu_valid)
     s_mvp = float(np.sqrt(max(w_mvp @ Sigma @ w_mvp, 0.0)))
@@ -387,7 +385,7 @@ lbk = st.number_input("Lookback (periods)", min_value=30, max_value=2000, value=
 cost = st.number_input("Cost (bps per turnover)", min_value=0.0, max_value=100.0, value=2.0, step=0.5)
 
 def allocator(win: pl.DataFrame) -> np.ndarray:
-    # Window data
+    """Allocator used inside the rolling backtest; long-only with PSD covariance and safe numerics."""
     cols = [c for c in win.columns if c != "date"]
     R = win.select(cols).to_numpy() if cols else np.zeros((0, 0), dtype=float)
     mu_win = np.nanmean(R, axis=0) if R.size else np.zeros(N)
@@ -451,7 +449,6 @@ def allocator(win: pl.DataFrame) -> np.ndarray:
 
     return project_to_box_simplex(w, w_min, w_max)
 
-
 bt = backtest_rebalanced(
     df_ret_wide,
     lookback=int(lbk),
@@ -461,22 +458,42 @@ bt = backtest_rebalanced(
     bench_weights=w_bench,
 )
 
-st.plotly_chart(equity_and_drawdown(bt["dates"], bt["equity"], title="Equity & Drawdown"), width="stretch")
-
-# --- turnover mean: now bt["turnover"] is a DF with ['date','turnover'] ---
-def _turnover_mean(turnover_obj) -> float:
-    try:
-        # Polars
-        return float(turnover_obj.select(pl.col("turnover").mean()).item())
-    except Exception:
-        # Pandas
-        return float(turnover_obj["turnover"].mean())
-
-st.write(f"Mean turnover per rebalance: {_turnover_mean(bt['turnover']):.3f}")
-
-# --- quick backtest metrics (using core.metrics-style logic) ---
+# ---- Equity & drawdown (safe) ----
 try:
-    eq = np.asarray(bt["equity"], float)
+    st.plotly_chart(
+        equity_and_drawdown(bt["dates"], bt["equity"], title="Equity & Drawdown"),
+        width="stretch",
+    )
+except Exception as e:
+    st.info(f"Could not plot equity/drawdown: {e}")
+
+# ---- Turnover mean (robust to different engine outputs) ----
+def _turnover_mean(turnover_obj) -> float:
+    """Return the mean turnover if possible; otherwise NaN without crashing."""
+    try:
+        if turnover_obj is None:
+            return float("nan")
+        # Polars
+        if isinstance(turnover_obj, pl.DataFrame) and "turnover" in turnover_obj.columns:
+            return float(turnover_obj.select(pl.col("turnover").mean()).item())
+        # Pandas
+        import pandas as pd  # local import to avoid hard dep
+        if isinstance(turnover_obj, pd.DataFrame) and "turnover" in turnover_obj.columns:
+            return float(turnover_obj["turnover"].mean())
+        # Fallback: vector/array
+        arr = np.asarray(turnover_obj, dtype=float).ravel()
+        if arr.size > 0:
+            return float(np.mean(arr))
+        return float("nan")
+    except Exception:
+        return float("nan")
+
+mean_to = _turnover_mean(bt.get("turnover"))
+st.caption(f"Mean turnover per rebalance: {mean_to:.3f}" if np.isfinite(mean_to) else "Turnover not available.")
+
+# ---- Quick backtest metrics (from equity) ----
+try:
+    eq = np.asarray(bt.get("equity", []), float)
     ret_bt = (eq[1:] / eq[:-1]) - 1.0 if eq.size > 1 else np.array([])
     mu_bt = float(np.nanmean(ret_bt)) if ret_bt.size else np.nan
     sig_bt = float(np.nanstd(ret_bt, ddof=1)) if ret_bt.size > 1 else np.nan
@@ -486,16 +503,17 @@ try:
 except Exception:
     pass
 
-# --- (only in CVaR mode) in-sample CVaR of resulting portfolio ---
+# ---- (only in CVaR mode) in-sample CVaR of resulting portfolio ----
 if w_out is not None and mode == "CVaR":
     try:
         cols_used_eval = [c for c in names if c in R_clean_pl.columns]
         if cols_used_eval:
-            name_to_idx = {n: i for i in enumerate(names)}
+            # FIX: correct (i, n) unpack — previously swapped
+            name_to_idx = {n: i for i, n in enumerate(names)}
             W_eval = np.array([w_out[name_to_idx[c]] for c in cols_used_eval], dtype=float)
             R_eval = R_clean_pl.select(cols_used_eval).to_numpy()
             port_rets = R_eval @ W_eval
             cvar_ins = cvar_estimate(port_rets, alpha=st.session_state.get("cvar_alpha", 0.95))
-            st.caption(f"CVaR_in-sample (α={st.session_state.get('cvar_alpha', 0.95):.3f}) = {cvar_ins:.4f}")
+            st.caption(f"CVaR in-sample (α={st.session_state.get('cvar_alpha', 0.95):.3f}) = {cvar_ins:.4f}")
     except Exception:
         pass
