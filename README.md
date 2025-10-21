@@ -38,33 +38,95 @@ This project started as a way to unify my quantitative finance tools — from co
   - Scenario-to-baseline comparisons  
 - **Streamlit UI** — A professional multi-page design with clear sidebars, expander sections, and dynamic Plotly interactivity.
 
----
+
+
 
 ## 🧩 Folder Structure
 
 GammaEdge/
 │
-├── app/                     # Streamlit pages and main UI logic  
-│   ├── pages/  
-│   │   ├── 01_Data.py  
-│   │   ├── 02_RiskModel.py  
-│   │   ├── 03_Backtest.py  
-│   │   ├── 04_Attribution.py  
-│   │   ├── 05_RiskAnalysis.py  
-│   │   └── 06_Scenarios.py  
-│   └── app.py               # main entry point  
+├── .dockerignore
+├── .gitignore
+├── README.md
+├── pyproject.toml                    # Build & dependency configuration
+├── requirements.txt                  # Python dependencies
 │
-├── portfolio/  
-│   ├── core/                # utilities, constraints, projections  
-│   ├── optim/               # optimization modules (HRP, Risk Parity, etc.)  
-│   ├── backtest/            # engine, metrics, scenarios  
-│   └── viz/                 # plot_utils.py and visualization helpers  
+├── .github/                          # CI/CD workflows
+│   └── workflows/
+│       └── ci.yml
 │
-├── data/                    # input or example datasets  
-├── tests/                   # unit tests  
-└── README.md  
+├── api/                              # Optional FastAPI backend
+│   ├── main.py
+│   └── routes/
+│       ├── backtest.py
+│       ├── health.py
+│       └── optimize.py
+│
+├── app/                              # Streamlit frontend
+│   ├── Home.py
+│   ├── utils.py
+│   └── pages/
+│       ├── 01_Data.py
+│       ├── 02_RiskModel.py
+│       ├── 03_Optimizer.py
+│       ├── 04_Backtest.py
+│       ├── 05_Attribution.py
+│       └── 06_Scenarios.py
+│
+├── data/                             # Sample datasets
+│
+├── docs/                             # Documentation files
+│   ├── index.md
+│   ├── risk_models.md
+│   ├── api_reference.md
+│   └── optimizers.md
+│
+├── notebooks/                        # Research notebooks
+│   ├── 01_eda_universe.ipynb
+│   ├── 02_markowitz_demo.ipynb
+│   ├── 03_blacklitterman_views.ipynb
+│   └── 04_backtest_analysis.ipynb
+│
+├── docker/                           # Container setup
+│   ├── Dockerfile
+│   ├── api.Dockerfile
+│   └── docker-compose.yml
+│
+├── portfolio/                        # Core analytical backend
+│   ├── viz/
+│   │   └── plot_utils.py
+│   ├── backtest/
+│   │   ├── engine.py
+│   │   ├── reporting.py
+│   │   ├── attribution.py
+│   │   └── metrics.py
+│   ├── features/
+│   │   ├── factors.py
+│   │   ├── returns.py
+│   │   ├── risk_models.py
+│   │   └── scenarios.py
+│   ├── io/
+│   │   ├── cache.py
+│   │   └── data_loader.py
+│   ├── core/
+│   │   ├── logger.py
+│   │   ├── metrics.py
+│   │   ├── opt_helpers.py
+│   │   └── utils.py
+│   └── optim/
+│       ├── hrp.py
+│       ├── mean_variance.py
+│       ├── black_litterman.py
+│       ├── cvar.py
+│       ├── risk_parity.py
+│       └── te.py
+│
+└── tests/                            # Unit tests
+    ├── test_backtest.py
+    ├── test_core_utils.py
+    ├── test_mean_variance.py
+    └── test_risk_models.py
 
----
 
 ## ⚙️ Tech Stack
 
