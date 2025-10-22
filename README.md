@@ -43,6 +43,7 @@ This project started as a way to unify my quantitative finance tools — from co
 
 ## 🧩 Folder Structure
 
+```bash
 GammaEdge/
 │
 ├── .dockerignore
@@ -126,7 +127,7 @@ GammaEdge/
     ├── test_core_utils.py
     ├── test_mean_variance.py
     └── test_risk_models.py
-
+```
 
 
 
@@ -179,23 +180,23 @@ Every formula and method is implemented from first principles, with emphasis on 
 ## 🖥️ How to Run Locally
 
 1. **Clone the repository and enter the project directory**
-
+```bash
    git clone https://github.com/<your-username>/GammaEdge.git  
    cd GammaEdge  
-
+```
 2. **(Optional) Create a virtual environment**
-
+```bash
    python -m venv .venv  
    source .venv/bin/activate   # on Windows: .venv\Scripts\activate  
-
+```
 3. **Install dependencies**
-
+```bash
    pip install -r requirements.txt  
-
+```
 4. **Run the Streamlit app**
-
+```bash
    streamlit run app/app.py  
-
+```
 You can then navigate across the pages using the left sidebar (Data → Risk Model → Backtest → Scenarios → Attribution → Risk Analysis).
 
 ---
