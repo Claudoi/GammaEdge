@@ -16,3 +16,5 @@ data/cache/
 .venv/*
 .venv/
 venv/
+.logs/
+*.log
