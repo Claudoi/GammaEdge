@@ -48,21 +48,21 @@ GammaEdge/
 ├── .dockerignore
 ├── .gitignore
 ├── README.md
-├── pyproject.toml                    # Build & dependency configuration
-├── requirements.txt                  # Python dependencies
+├── pyproject.toml              # Build & dependency configuration
+├── requirements.txt            # Python dependencies
 │
-├── .github/                          # CI/CD workflows
+├── .github/                    # CI/CD workflows
 │   └── workflows/
 │       └── ci.yml
 │
-├── api/                              # Optional FastAPI backend
+├── api/                        # Optional FastAPI backend
 │   ├── main.py
 │   └── routes/
 │       ├── backtest.py
 │       ├── health.py
 │       └── optimize.py
 │
-├── app/                              # Streamlit frontend
+├── app/                        # Streamlit frontend
 │   ├── Home.py
 │   ├── utils.py
 │   └── pages/
@@ -73,26 +73,26 @@ GammaEdge/
 │       ├── 05_Attribution.py
 │       └── 06_Scenarios.py
 │
-├── data/                             # Sample datasets
+├── data/                       # Sample datasets
 │
-├── docs/                             # Documentation files
+├── docs/                       # Documentation files
 │   ├── index.md
 │   ├── risk_models.md
 │   ├── api_reference.md
 │   └── optimizers.md
 │
-├── notebooks/                        # Research notebooks
+├── notebooks/                  # Research notebooks
 │   ├── 01_eda_universe.ipynb
 │   ├── 02_markowitz_demo.ipynb
 │   ├── 03_blacklitterman_views.ipynb
 │   └── 04_backtest_analysis.ipynb
 │
-├── docker/                           # Container setup
+├── docker/                     # Container setup
 │   ├── Dockerfile
 │   ├── api.Dockerfile
 │   └── docker-compose.yml
 │
-├── portfolio/                        # Core analytical backend
+├── portfolio/                  # Core analytical backend
 │   ├── viz/
 │   │   └── plot_utils.py
 │   ├── backtest/
@@ -121,11 +121,12 @@ GammaEdge/
 │       ├── risk_parity.py
 │       └── te.py
 │
-└── tests/                            # Unit tests
+└── tests/                      # Unit tests
     ├── test_backtest.py
     ├── test_core_utils.py
     ├── test_mean_variance.py
     └── test_risk_models.py
+
 
 
 ## ⚙️ Tech Stack
