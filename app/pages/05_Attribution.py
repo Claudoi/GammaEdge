@@ -3,12 +3,13 @@ from __future__ import annotations
 
 import os
 import sys
+
 import numpy as np
-import polars as pl
 import pandas as pd
-import streamlit as st
-import plotly.graph_objects as go
 import plotly.express as px
+import plotly.graph_objects as go
+import polars as pl
+import streamlit as st
 
 # ---------------------------------------------------------------------
 # Repo root for local imports
@@ -20,12 +21,12 @@ from portfolio.backtest import attribution as bt_attr
 
 # --- plots (core) ---
 from portfolio.viz.plot_utils import (
-    plot_top_contributors,
-    plot_group_contrib_area,
+    plot_brinson_by_group_area,
     plot_brinson_cumulative,
     plot_brinson_cumulative_components,
     plot_brinson_final_bar,
-    plot_brinson_by_group_area,
+    plot_group_contrib_area,
+    plot_top_contributors,
 )
 
 # --- extras optionals ---
@@ -33,9 +34,10 @@ _HAS_EXTRAS = False
 try:
     from portfolio.viz.plot_utils import (
         plot_contrib_heatmap_daily,
-        plot_top_contributors_waterfall,
         plot_group_share_area_from_share,
+        plot_top_contributors_waterfall,
     )
+
     _HAS_EXTRAS = True
 except Exception:
     _HAS_EXTRAS = False
@@ -43,6 +45,7 @@ except Exception:
 # Try to import plot_group_contrib_bar_total; if missing, define a local shim
 try:
     from portfolio.viz.plot_utils import plot_group_contrib_bar_total  # type: ignore
+
     _HAS_BAR_TOTAL = True
 except Exception:
     _HAS_BAR_TOTAL = False
@@ -62,8 +65,7 @@ except Exception:
             raise ValueError(f"Missing columns for bar plot: {req}")
 
         pdf = (
-            df_group_total
-            .select(["group", "contrib_total"])
+            df_group_total.select(["group", "contrib_total"])
             .to_pandas()
             .replace([np.inf, -np.inf], np.nan)
             .dropna()
@@ -74,12 +76,18 @@ except Exception:
         if orientation == "h":
             fig = go.Figure(go.Bar(y=pdf["group"], x=pdf["contrib_total"], orientation="h"))
             fig.update_layout(
-                title=title, xaxis_title="Total Contribution", yaxis_title="Group", template="plotly_white"
+                title=title,
+                xaxis_title="Total Contribution",
+                yaxis_title="Group",
+                template="plotly_white",
             )
         else:
             fig = go.Figure(go.Bar(x=pdf["group"], y=pdf["contrib_total"]))
             fig.update_layout(
-                title=title, xaxis_title="Group", yaxis_title="Total Contribution", template="plotly_white"
+                title=title,
+                xaxis_title="Group",
+                yaxis_title="Total Contribution",
+                template="plotly_white",
             )
         return fig
 
@@ -87,6 +95,7 @@ except Exception:
 # ─────────────────────────────────────────────────────────────────────
 # Helpers (local fallbacks)
 # ─────────────────────────────────────────────────────────────────────
+
 
 def _group_share_from_daily(df_group_daily: pl.DataFrame) -> pl.DataFrame:
     """
@@ -101,17 +110,16 @@ def _group_share_from_daily(df_group_daily: pl.DataFrame) -> pl.DataFrame:
     df_abs = df_group_daily.with_columns(pl.col("contrib").abs().alias("abs_contrib"))
 
     # total |contrib| per date
-    df_tot = (
-        df_abs.group_by("date")
-        .agg(pl.col("abs_contrib").sum().alias("abs_total"))
-    )
+    df_tot = df_abs.group_by("date").agg(pl.col("abs_contrib").sum().alias("abs_total"))
 
     # join & compute share with safe divide
     df_share = (
         df_abs.join(df_tot, on="date", how="left")
         .with_columns(
-            (pl.col("abs_contrib") / pl.when(pl.col("abs_total") > 1e-15).then(pl.col("abs_total")).otherwise(1.0))
-            .alias("share")
+            (
+                pl.col("abs_contrib")
+                / pl.when(pl.col("abs_total") > 1e-15).then(pl.col("abs_total")).otherwise(1.0)
+            ).alias("share")
         )
         .select(["date", "group", "share"])
         .sort(["date", "group"])
@@ -119,7 +127,9 @@ def _group_share_from_daily(df_group_daily: pl.DataFrame) -> pl.DataFrame:
     return df_share
 
 
-def _plot_group_share_area(df_share: pl.DataFrame, title: str = "Group Contribution Share (%)") -> go.Figure:
+def _plot_group_share_area(
+    df_share: pl.DataFrame, title: str = "Group Contribution Share (%)"
+) -> go.Figure:
     """
     Simple stacked area plot for group share over time (0–100%).
     """
@@ -128,29 +138,27 @@ def _plot_group_share_area(df_share: pl.DataFrame, title: str = "Group Contribut
         raise ValueError(f"df_share must contain {req}")
 
     pdf = (
-        df_share
-        .to_pandas()
+        df_share.to_pandas()
         .replace([np.inf, -np.inf], np.nan)
         .dropna(subset=["date", "group", "share"])
         .sort_values("date")
     )
-    fig = px.area(pdf, x="date", y="share", color="group", title=title,
-                  labels={"share": "Share"})
+    fig = px.area(pdf, x="date", y="share", color="group", title=title, labels={"share": "Share"})
     fig.update_layout(
         template="plotly_white",
         xaxis_title="Date",
         yaxis_title="Share",
         yaxis_tickformat=".0%",
         legend_title="Group",
-        margin=dict(l=60, r=40, t=60, b=60)
+        margin=dict(l=60, r=40, t=60, b=60),
     )
     return fig
 
 
 #  helper: build daily benchmark weights automatically (no user params) ---
-def _make_benchmark_daily(aln: bt_attr.DailyAlignment,
-                          bt_dict: dict,
-                          asset_meta: pl.DataFrame | None) -> np.ndarray:
+def _make_benchmark_daily(
+    aln: bt_attr.DailyAlignment, bt_dict: dict, asset_meta: pl.DataFrame | None
+) -> np.ndarray:
     """
     Returns Wb_daily with shape (T, N), fully automated:
       1) If session benchmark exists and matches shape -> use it
@@ -159,7 +167,7 @@ def _make_benchmark_daily(aln: bt_attr.DailyAlignment,
          where w0 = bt['weights'][0] if available else equal-weight
       3) If asset_meta has 'cap0'/'mcap0' (optional), it will override w0.
     """
-    R = np.asarray(aln.returns, dtype=float)          # (T, N)
+    R = np.asarray(aln.returns, dtype=float)  # (T, N)
     T, N = R.shape
 
     # 2a) base w0 from bt first rebalance or equal-weight
@@ -180,8 +188,7 @@ def _make_benchmark_daily(aln: bt_attr.DailyAlignment,
         for cap_col in ("cap0", "mcap0", "market_cap0", "mcap_init"):
             if cap_col in cols:
                 try:
-                    lut = dict(zip(asset_meta["ticker"].to_list(),
-                                   asset_meta[cap_col].to_list()))
+                    lut = dict(zip(asset_meta["ticker"].to_list(), asset_meta[cap_col].to_list()))
                     w0 = np.array([float(lut.get(tk, 0.0)) for tk in aln.tickers], dtype=float)
                     s = float(np.sum(w0))
                     w0 = (w0 / s) if s > 1e-12 else np.full(N, 1.0 / max(N, 1))
@@ -200,11 +207,10 @@ def _make_benchmark_daily(aln: bt_attr.DailyAlignment,
     return Wb_daily
 
 
-
 def _brinson_group_timeseries_local(
     aln: bt_attr.DailyAlignment,
-    Wb_daily: np.ndarray,           # shape (T, N)
-    groups_idx: list[int],          # asset -> group index [0..G-1]
+    Wb_daily: np.ndarray,  # shape (T, N)
+    groups_idx: list[int],  # asset -> group index [0..G-1]
     group_labels: list[str] | None = None,
     cumulative: bool = True,
 ) -> pl.DataFrame:
@@ -213,8 +219,8 @@ def _brinson_group_timeseries_local(
     returns Polars DF with columns ['date','group','alloc','select','interact','total'].
     If cumulative=True, components are cum-summed over time.
     """
-    R = np.asarray(aln.returns, float)     # (T, N)
-    Wp = np.asarray(aln.weights, float)    # (T, N)
+    R = np.asarray(aln.returns, float)  # (T, N)
+    Wp = np.asarray(aln.weights, float)  # (T, N)
     Wb = np.asarray(Wb_daily, float)
     T, N = R.shape
 
@@ -230,7 +236,7 @@ def _brinson_group_timeseries_local(
 
     for t in range(T):
         for g in range(G):
-            idx = (gi == g)
+            idx = gi == g
             if not np.any(idx):
                 continue
             wp_g = float(np.sum(Wp[t, idx]))
@@ -242,7 +248,7 @@ def _brinson_group_timeseries_local(
             diff_r = rp_g - rb_g
 
             a = diff_w * rb_g
-            s = wb_g   * diff_r
+            s = wb_g * diff_r
             inter = diff_w * diff_r
 
             if t == 0 or not cumulative:
@@ -250,9 +256,9 @@ def _brinson_group_timeseries_local(
                 S_c[t, g] = s
                 I_c[t, g] = inter
             else:
-                A_c[t, g] = A_c[t-1, g] + a
-                S_c[t, g] = S_c[t-1, g] + s
-                I_c[t, g] = I_c[t-1, g] + inter
+                A_c[t, g] = A_c[t - 1, g] + a
+                S_c[t, g] = S_c[t - 1, g] + s
+                I_c[t, g] = I_c[t - 1, g] + inter
 
     rows = []
     for t in range(T):
@@ -260,8 +266,9 @@ def _brinson_group_timeseries_local(
             tot = A_c[t, g] + S_c[t, g] + I_c[t, g]
             rows.append((aln.dates[t], group_labels[g], A_c[t, g], S_c[t, g], I_c[t, g], tot))
 
-    return pl.DataFrame(rows, schema=["date", "group", "alloc", "select", "interact", "total"]) \
-             .with_columns(pl.col("date").cast(pl.Datetime))
+    return pl.DataFrame(
+        rows, schema=["date", "group", "alloc", "select", "interact", "total"]
+    ).with_columns(pl.col("date").cast(pl.Datetime))
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -316,12 +323,13 @@ try:
     have_cols = set(df_ret_wide.columns)
     add_cols = [tk for tk in tickers_bt if tk not in have_cols]
     if add_cols:
-        df_ret_wide = df_ret_wide.with_columns(**{c: pl.lit(None, dtype=pl.Float64) for c in add_cols})
+        df_ret_wide = df_ret_wide.with_columns(
+            **{c: pl.lit(None, dtype=pl.Float64) for c in add_cols}
+        )
 
     # filter/select in the exact order
     df_ret_bt = (
-        df_ret_wide
-        .filter(pl.col("date").is_in(dates_bt))
+        df_ret_wide.filter(pl.col("date").is_in(dates_bt))
         .unique(subset=["date"])
         .sort("date")
         .select(["date", *tickers_bt])
@@ -405,18 +413,18 @@ try:
     with c1:
         st.plotly_chart(
             plot_top_contributors(df_cum.head(10), title="Top 10 Contributors"),
-            use_container_width=True,
+            width="stretch",
         )
     with c2:
         st.plotly_chart(
             plot_top_contributors(df_cum.tail(10), title="Bottom 10 Contributors"),
-            use_container_width=True,
+            width="stretch",
         )
 
     if _HAS_EXTRAS:
         with st.expander("More asset diagnostics", expanded=False):
-            st.plotly_chart(plot_contrib_heatmap_daily(df_asset_daily), use_container_width=True)
-            st.plotly_chart(plot_top_contributors_waterfall(df_cum, k=12), use_container_width=True)
+            st.plotly_chart(plot_contrib_heatmap_daily(df_asset_daily), width="stretch")
+            st.plotly_chart(plot_top_contributors_waterfall(df_cum, k=12), width="stretch")
 except Exception as e:
     st.info(f"Asset-level attribution unavailable: {e}")
 
@@ -448,20 +456,24 @@ try:
 
     df_group_total = (
         df_group_daily.group_by("group")
-        .agg([
-            pl.col("contrib").sum().alias("contrib_total"),
-            pl.col("weight").mean().alias("avg_weight"),
-        ])
+        .agg(
+            [
+                pl.col("contrib").sum().alias("contrib_total"),
+                pl.col("weight").mean().alias("avg_weight"),
+            ]
+        )
         .sort("contrib_total", descending=True)
     )
 
     st.plotly_chart(
         plot_group_contrib_area(df_group_daily, title="Group Contributions Over Time"),
-        use_container_width=True,
+        width="stretch",
     )
     st.plotly_chart(
-        plot_group_contrib_bar_total(df_group_total, k=min(12, df_group_total.height), orientation="h"),
-        use_container_width=True,
+        plot_group_contrib_bar_total(
+            df_group_total, k=min(12, df_group_total.height), orientation="h"
+        ),
+        width="stretch",
     )
 
     # Share (% of absolute contribution) — robust local fallback
@@ -470,13 +482,13 @@ try:
             df_share = bt_attr.contributions_share_by_group(df_group_daily)  # your advanced helper
             st.plotly_chart(
                 plot_group_share_area_from_share(df_share),
-                use_container_width=True,
+                width="stretch",
             )
         else:
             df_share = _group_share_from_daily(df_group_daily)
             st.plotly_chart(
                 _plot_group_share_area(df_share),
-                use_container_width=True,
+                width="stretch",
             )
     except Exception:
         # If anything fails here, keep the core plots working
@@ -537,7 +549,7 @@ try:
     # Main cumulative line chart
     st.plotly_chart(
         plot_brinson_cumulative(df_brinson, title="Brinson-Fachler Attribution (Total)"),
-        use_container_width=True,
+        width="stretch",
     )
 
     # --- 5) Optional advanced component charts -------------------------------
@@ -548,7 +560,7 @@ try:
         ):
             st.plotly_chart(
                 plot_brinson_cumulative_components(df_brinson),
-                use_container_width=True,
+                width="stretch",
             )
 
         if "plot_brinson_final_bar" in globals() or hasattr(
@@ -556,7 +568,7 @@ try:
         ):
             st.plotly_chart(
                 plot_brinson_final_bar(df_brinson),
-                use_container_width=True,
+                width="stretch",
             )
     except Exception as e:
         st.info(f"Optional Brinson component plots skipped: {e}")
@@ -573,8 +585,11 @@ try:
                 by_group=True,
             )
             rename_map = {
-                "allocation": "alloc", "selection": "select", "interaction": "interact",
-                "cum_total": "total", "group_name": "group"
+                "allocation": "alloc",
+                "selection": "select",
+                "interaction": "interact",
+                "cum_total": "total",
+                "group_name": "group",
             }
             for old, new in rename_map.items():
                 if (old in tmp.columns) and (new not in tmp.columns):
@@ -611,7 +626,7 @@ try:
                         component="total",
                         title="Brinson by Group – Total (Cumulative)",
                     ),
-                    use_container_width=True,
+                    width="stretch",
                 )
             except TypeError:
                 st.plotly_chart(
@@ -620,10 +635,11 @@ try:
                         component="total",
                         title="Brinson by Group – Total (Cumulative)",
                     ),
-                    use_container_width=True,
+                    width="stretch",
                 )
         else:
             import plotly.express as px
+
             pdf = df_brinson_g.to_pandas()
             fig = px.area(
                 pdf,
@@ -634,7 +650,7 @@ try:
                 labels={"total": "Attribution"},
             )
             fig.update_layout(template="plotly_white")
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
     except Exception as e:
         st.info(f"Brinson by-group plot skipped: {e}")
 

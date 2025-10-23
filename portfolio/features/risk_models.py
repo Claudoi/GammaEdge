@@ -24,8 +24,8 @@ class Periodicity:
     per_year: int  # 252, 52, 12 ...
 
 
-PERIODICITY_DAY   = Periodicity(252)
-PERIODICITY_WEEK  = Periodicity(52)
+PERIODICITY_DAY = Periodicity(252)
+PERIODICITY_WEEK = Periodicity(52)
 PERIODICITY_MONTH = Periodicity(12)
 
 
@@ -35,11 +35,7 @@ def _infer_periodicity(df_ret_wide: pl.DataFrame) -> Periodicity:
     """
     if "date" not in df_ret_wide.columns or df_ret_wide.height < 2:
         return PERIODICITY_DAY
-    d = (
-        df_ret_wide.select(pl.col("date").diff().dt.total_days())
-                   .drop_nulls()
-                   .to_series()
-    )
+    d = df_ret_wide.select(pl.col("date").diff().dt.total_days()).drop_nulls().to_series()
     if d.is_empty():
         return PERIODICITY_DAY
     m = pl.Series(d).median()
@@ -155,9 +151,11 @@ def apply_ridge(Sigma: np.ndarray, eps: float) -> np.ndarray:
     n = Sigma.shape[0]
     return Sigma + np.eye(n) * float(eps)
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Expected returns (μ)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def expected_returns(
     df_ret_wide: pl.DataFrame | pd.DataFrame,
@@ -167,19 +165,18 @@ def expected_returns(
     shrink_to: np.ndarray | None = None,
     annualize: bool = True,
     fill: Literal["drop", "mean", "none"] = "drop",
-) -> tuple[np.ndarray, list[str]]:
-
+) -> pd.Series:
     """
-    Calcula μ con varios métodos. Devuelve (mu_vec, tickers) alineados.
+    Calcula el vector de retornos esperados μ y lo devuelve como un pd.Series.
 
-    - historical: media muestral.
-    - ema: media exponencial, usa _ema_last por columna.
-    - shrunk: shrinkage convexo hacia 'shrink_to'; si no se pasa, target=0.
-              λ heurístico a partir de varianzas.
+    Métodos disponibles:
+    - 'historical': media muestral simple.
+    - 'ema': media exponencial (usa _ema_last por columna).
+    - 'shrunk': shrinkage convexo hacia 'shrink_to' (por defecto, cero).
     """
     X, names = _wide_to_matrix(df_ret_wide, fill=fill)
     if X.size == 0:
-        return np.array([]), names
+        return pd.Series([], index=names, dtype=float, name="expected_return")
 
     per = _infer_periodicity(df_ret_wide)
     ann = float(per.per_year) if annualize else 1.0
@@ -189,12 +186,12 @@ def expected_returns(
 
     elif method == "ema":
         s = int(span or 60)
+        # Vectoriza el cálculo de EMA sin bucles innecesarios
         mu = np.array([_ema_last(X[:, j], s) for j in range(X.shape[1])], dtype=float)
 
     elif method == "shrunk":
         base = np.nanmean(X, axis=0)
         target = shrink_to if shrink_to is not None else np.zeros_like(base)
-        # Heurística de λ: var media / (var media + var(base))
         var_cols = np.nanvar(X, axis=0, ddof=1)
         var_mean = float(np.nanmean(var_cols))
         base_var = float(np.var(base)) if base.size else 0.0
@@ -205,11 +202,14 @@ def expected_returns(
     else:
         raise ValueError(f"Unknown expected return method: {method}")
 
-    return mu * ann, names
+    # Devuelve siempre un pd.Series para compatibilidad con tests (.values)
+    return pd.Series(mu * ann, index=names, name="expected_return")
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Covariance (Σ)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def covariance(
     df_ret_wide: pl.DataFrame | pd.DataFrame,
@@ -221,22 +221,18 @@ def covariance(
     fill: Literal["drop", "mean", "none"] = "drop",
     psd: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
-
     """
-    Estima Σ con varios métodos. Devuelve (Sigma, tickers).
+    Estimate covariance matrix Σ. Returns (Sigma, tickers).
 
-    - sample: covarianza muestral (ddof=1)
-    - lw: Ledoit-Wolf
+    - sample: sample covariance
+    - lw: Ledoit-Wolf shrinkage
     - oas: Oracle Approximating Shrinkage
-    - ewma: RiskMetrics-style (λ≈0.94 diaria). Centra con media muestral.
-
-    Si fill="none", se asume que no existen NaNs (validado).
+    - ewma: RiskMetrics-style exponentially weighted covariance
     """
     X, names = _wide_to_matrix(df_ret_wide, fill=fill)
     T, N = X.shape if X.ndim == 2 else (0, 0)
 
     if max(2, min_periods) > T and method in ("lw", "oas", "ewma"):
-        # Fallback seguro cuando no hay suficientes observaciones
         method = "sample"
 
     per = _infer_periodicity(df_ret_wide)
@@ -244,27 +240,22 @@ def covariance(
 
     if method == "sample":
         Sigma = np.cov(X, rowvar=False, ddof=1) if T > 1 else np.zeros((N, N))
-
     elif method == "lw":
         if np.isnan(X).any():
             raise ValueError("NaNs not allowed in lw; use fill='drop' or 'mean'.")
         Sigma = LedoitWolf().fit(X).covariance_
-
     elif method == "oas":
         if np.isnan(X).any():
             raise ValueError("NaNs not allowed in oas; use fill='drop' or 'mean'.")
         Sigma = OAS().fit(X).covariance_
-
     elif method == "ewma":
         lam = float(ewma_lambda)
-        # Centro con media muestral (NaN-safe si fill!='none')
         mu = np.nanmean(X, axis=0, keepdims=True)
         Xc = X - mu
         Sigma = np.zeros((N, N), dtype=np.float64)
         for t in range(T):
             xt = Xc[t : t + 1, :]
             if np.isnan(xt).any():
-                # Si aún quedan NaNs con fill='none', saltamos esa fila
                 continue
             Sigma = lam * Sigma + (1.0 - lam) * (xt.T @ xt)
     else:
@@ -280,6 +271,7 @@ def covariance(
 # Correlación
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def correlation_from_cov(Sigma: np.ndarray) -> np.ndarray:
     """
     Convierte Σ a ρ. Clipa divisiones por cero y simetriza.
@@ -292,17 +284,19 @@ def correlation_from_cov(Sigma: np.ndarray) -> np.ndarray:
     Corr = np.clip(Corr, -1.0, 1.0)
     return 0.5 * (Corr + Corr.T)
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Black-Litterman (posterior μ) — forma canónica
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def black_litterman(
-    mu_prior: np.ndarray,        # (N,)
-    Sigma: np.ndarray,           # (N,N)
-    P: np.ndarray,               # (K,N) — pick matrix
-    Q: np.ndarray,               # (K,)   — views
+    mu_prior: np.ndarray,  # (N,)
+    Sigma: np.ndarray,  # (N,N)
+    P: np.ndarray,  # (K,N) — pick matrix
+    Q: np.ndarray,  # (K,)   — views
     *,
-    tau: float = 0.05,           # incertidumbre del prior
+    tau: float = 0.05,  # incertidumbre del prior
     Omega: np.ndarray | None = None,  # (K,K) incertidumbre de vistas; si None, diag proporcional
 ) -> np.ndarray:
     """
@@ -319,12 +313,16 @@ def black_litterman(
     mu_post = mu_prior + middle @ (Q - P @ mu_prior)
     return mu_post
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Wrappers convenientes para la UI
 # ──────────────────────────────────────────────────────────────────────────────
 
+# portfolio/features/risk_models.py
+
+
 def compute_mu_sigma(
-    df_ret_wide: pl.DataFrame,
+    df_ret_wide: pl.DataFrame | pd.DataFrame,
     *,
     mu_method: MuMethod = "ema",
     mu_span: int | None = 60,
@@ -336,10 +334,8 @@ def compute_mu_sigma(
     fill: Literal["drop", "mean", "none"] = "drop",
     psd: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, list[str]]:
-    """
-    Atajo para obtener (μ, Σ, tickers) con políticas coherentes de NaN/annualización/PSD.
-    """
-    mu, names = expected_returns(
+
+    mu_series = expected_returns(
         df_ret_wide,
         method=mu_method,
         span=mu_span,
@@ -347,6 +343,16 @@ def compute_mu_sigma(
         annualize=annualize,
         fill=fill,
     )
+
+    # Convierte el resultado (pd.Series o np.ndarray) en arrays coherentes
+    if isinstance(mu_series, pd.Series):
+        mu = mu_series.values
+        names = list(mu_series.index)
+    elif isinstance(mu_series, tuple) and len(mu_series) == 2:
+        mu, names = mu_series
+    else:
+        raise TypeError(f"Unexpected output type from expected_returns(): {type(mu_series)}")
+
     Sigma, names2 = covariance(
         df_ret_wide,
         method=cov_method,
@@ -360,15 +366,17 @@ def compute_mu_sigma(
         raise RuntimeError("Ticker order mismatch between μ and Σ.")
     return mu, Sigma, names
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # CAPM μ (rf + beta_i * (E[Rm] - rf))
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def capm_mu(
     df_ret_wide: pl.DataFrame,
     *,
     market: str = "SPY",
-    rf: float = 0.0,             # por periodo (misma frecuencia que df_ret_wide)
+    rf: float = 0.0,  # por periodo (misma frecuencia que df_ret_wide)
     fill: Literal["drop", "mean", "none"] = "drop",
     annualize: bool = True,
 ) -> np.ndarray:
@@ -396,18 +404,22 @@ def capm_mu(
         Rm = np.nanmean(X, axis=1) if X.size else np.array([])
 
     if X.size == 0 or Rm.size == 0:
-        mu_hist, _ = expected_returns(df_ret_wide, method="historical", annualize=annualize, fill=fill)
+        mu_hist, _ = expected_returns(
+            df_ret_wide, method="historical", annualize=annualize, fill=fill
+        )
         return mu_hist
 
     Er_m = float(np.nanmean(Rm))
     Rm_c = Rm - np.nanmean(Rm)
     var_m = float(np.nanvar(Rm_c, ddof=1))
     if var_m <= 0:
-        mu_hist, _ = expected_returns(df_ret_wide, method="historical", annualize=annualize, fill=fill)
+        mu_hist, _ = expected_returns(
+            df_ret_wide, method="historical", annualize=annualize, fill=fill
+        )
         return mu_hist
 
     Xc = X - np.nanmean(X, axis=0, keepdims=True)
-    cov_im = (Xc * Rm_c[:, None])
+    cov_im = Xc * Rm_c[:, None]
     beta = np.nanmean(cov_im, axis=0) / var_m  # (N,)
 
     mu_period = rf + beta * (Er_m - rf)
@@ -416,16 +428,18 @@ def capm_mu(
     ann = float(per.per_year) if annualize else 1.0
     return mu_period * ann
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Black–Litterman prior μ (equilibrium)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def black_litterman_mu(
     data_or_names: pl.DataFrame | Sequence[str],
     *,
     Sigma: np.ndarray | None = None,
     market_weights: np.ndarray | None = None,
-    delta: float = 2.5,          # aversión al riesgo típica
+    delta: float = 2.5,  # aversión al riesgo típica
     annualize: bool = True,
     fill: Literal["drop", "mean", "none"] = "drop",
     cov_method: CovMethod = "oas",
@@ -474,9 +488,11 @@ def black_litterman_mu(
     ann = float(per.per_year) if annualize else 1.0
     return pi * ann
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # PCA factor covariance (Σ ≈ V_k Λ_k V_k^T + diag(specific))
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def pca_factor_cov(
     df_ret_wide: pl.DataFrame,
@@ -495,7 +511,9 @@ def pca_factor_cov(
     X, names = _wide_to_matrix(df_ret_wide, fill=fill)  # (T,N)
     T, N = X.shape if X.ndim == 2 else (0, 0)
     if T < 2 or N == 0:
-        mu, _ = expected_returns(df_ret_wide, method=mu_method, span=mu_span, annualize=annualize, fill=fill)
+        mu, _ = expected_returns(
+            df_ret_wide, method=mu_method, span=mu_span, annualize=annualize, fill=fill
+        )
         return mu, np.zeros((N, N)), names, {"eigvals": np.array([]), "explained": 0.0, "k": 0}
 
     mu, _ = expected_returns(
@@ -529,9 +547,11 @@ def pca_factor_cov(
     info = {"eigvals": eigvals, "explained": explained, "k": k}
     return mu, Sigma, names, info
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Diagnóstico / Métricas auxiliares
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def nan_policy_stats(
     df_ret_wide: pl.DataFrame,
@@ -629,6 +649,8 @@ def rolling_metrics(
             std_a = pl.col(a).rolling_std(window, ddof=1)
             std_b = pl.col(b).rolling_std(window, ddof=1)
             corr = (cov / (std_a * std_b)).alias("corr")
-            corr_df = lf.select(["date", a, b]).with_columns(corr).select(["date", "corr"]).collect()
+            corr_df = (
+                lf.select(["date", a, b]).with_columns(corr).select(["date", "corr"]).collect()
+            )
             out["corr"] = corr_df
     return out

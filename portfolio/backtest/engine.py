@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 from typing import Callable, Literal
+
 import numpy as np
 import pandas as pd
 import polars as pl
 
 from portfolio.core.compat import dataclass_compat as dataclass
-
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Types / dataclasses
@@ -15,41 +15,46 @@ from portfolio.core.compat import dataclass_compat as dataclass
 
 RebalanceFreq = Literal["D", "W", "M", "Q"]  # daily, weekly, monthly, quarterly (pandas resampling)
 
+
 @dataclass(frozen=True, slots=True)
 class BacktestConfig:
     start: str | None = None
     end: str | None = None
     rebalance: RebalanceFreq | str = "M"  # accepts "M"/"W"… or dynamic like "1mo"/"1w"/"3mo"
-    fees_bps: float = 0.0        # round-trip fees in bps
-    slippage_bps: float = 0.0    # slippage in bps (added to fees)
+    fees_bps: float = 0.0  # round-trip fees in bps
+    slippage_bps: float = 0.0  # slippage in bps (added to fees)
     initial_capital: float = 1.0
+
 
 @dataclass(frozen=True, slots=True)
 class BacktestResult:
-    equity: pl.DataFrame            # ["date","equity","ret"]
-    weights: pl.DataFrame           # long: ["date","ticker","weight"]
-    trades: pl.DataFrame            # long: ["date","ticker","d_weight","cost_bps"]
-    stats: dict                     # aggregated metrics (CAGR, Sharpe, MaxDD, …)
+    equity: pl.DataFrame  # ["date","equity","ret"]
+    weights: pl.DataFrame  # long: ["date","ticker","weight"]
+    trades: pl.DataFrame  # long: ["date","ticker","d_weight","cost_bps"]
+    stats: dict  # aggregated metrics (CAGR, Sharpe, MaxDD, …)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def _ensure_wide_prices(df_prices_long: pl.DataFrame) -> pl.DataFrame:
     """
     Convert long ["date","ticker","price"] to wide ["date", tickers...]
     """
     return (
-        df_prices_long
-        .select([
-            pl.col("date").alias("date"),
-            pl.col("ticker").cast(pl.Utf8).alias("ticker"),
-            pl.col("price").cast(pl.Float64).alias("price"),
-        ])
+        df_prices_long.select(
+            [
+                pl.col("date").alias("date"),
+                pl.col("ticker").cast(pl.Utf8).alias("ticker"),
+                pl.col("price").cast(pl.Float64).alias("price"),
+            ]
+        )
         .pivot(index="date", columns="ticker", values="price")
         .sort("date")
     )
+
 
 def _dates_to_rebalance_pandas(dates: pd.DatetimeIndex, freq: RebalanceFreq) -> pd.DatetimeIndex:
     """
@@ -61,6 +66,7 @@ def _dates_to_rebalance_pandas(dates: pd.DatetimeIndex, freq: RebalanceFreq) -> 
         ix = ix.insert(0, dates[0])
     return ix.intersection(dates)
 
+
 def _rebalance_dates_from_freq_polars(dates: pl.Series, freq: str = "1mo") -> pl.Series:
     """
     Dynamic-window rebalance using Polars (“1w”, “1mo”, “3mo”, …).
@@ -69,12 +75,13 @@ def _rebalance_dates_from_freq_polars(dates: pl.Series, freq: str = "1mo") -> pl
     df = pl.DataFrame({"date": dates})
     out = (
         df.lazy()
-          .group_by_dynamic("date", every=freq, closed="right", label="right")
-          .agg(pl.col("date").last().alias("rb_date"))
-          .select("rb_date")
-          .collect()["rb_date"]
+        .group_by_dynamic("date", every=freq, closed="right", label="right")
+        .agg(pl.col("date").last().alias("rb_date"))
+        .select("rb_date")
+        .collect()["rb_date"]
     )
     return out
+
 
 def _quick_stats_from_equity(equity_df: pl.DataFrame) -> dict:
     """
@@ -104,13 +111,16 @@ def _quick_stats_from_equity(equity_df: pl.DataFrame) -> dict:
 # 1) Classic engine (dict output) — compatible with current UI
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def backtest_rebalanced(
-    df_ret_wide: pl.DataFrame,                  # ['date', tickers...], sorted
+    df_ret_wide: pl.DataFrame,  # ['date', tickers...], sorted
     *,
     lookback: int = 252,
-    rebalance_freq: str = "1mo",               # “1w”, “1mo”, “3mo”, …
+    rebalance_freq: str = "1mo",  # “1w”, “1mo”, “3mo”, …
     cost_bps: float = 0.0,
-    allocator: Callable[[pl.DataFrame], np.ndarray],  # receives trailing window (lookback) → weights (N,)
+    allocator: Callable[
+        [pl.DataFrame], np.ndarray
+    ],  # receives trailing window (lookback) → weights (N,)
     bench_weights: np.ndarray | None = None,
 ) -> dict[str, object]:
     """
@@ -130,11 +140,11 @@ def backtest_rebalanced(
     rb = _rebalance_dates_from_freq_polars(dates, rebalance_freq)
     rb_set = set(rb.to_list())
 
-    W: list[np.ndarray] = []        # weights at each rebalance (rows align with RB_DATES)
-    TO: list[float] = []            # turnover at each rebalance
-    RB_DATES: list[object] = []     # dates of each rebalance (same length as TO and W)
-    equity: list[float] = []        # daily equity curve (from lookback onward)
-    te_series: list[float] = []     # daily TE proxy
+    W: list[np.ndarray] = []  # weights at each rebalance (rows align with RB_DATES)
+    TO: list[float] = []  # turnover at each rebalance
+    RB_DATES: list[object] = []  # dates of each rebalance (same length as TO and W)
+    equity: list[float] = []  # daily equity curve (from lookback onward)
+    te_series: list[float] = []  # daily TE proxy
 
     w_prev = np.full(N, 1.0 / max(N, 1))
     eq = 1.0
@@ -151,10 +161,7 @@ def backtest_rebalanced(
             w_new = np.asarray(w_new, dtype=float)
 
             s = float(np.sum(w_new))
-            if s > 1e-12:
-                w_new = w_new / s
-            else:
-                w_new = np.full(N, 1.0 / max(N, 1))
+            w_new = w_new / s if s > 1e-12 else np.full(N, 1.0 / max(N, 1))
 
             # turnover & cost (bps on absolute weight change)
             to = float(np.nansum(np.abs(w_new - w_prev)))
@@ -162,14 +169,14 @@ def backtest_rebalanced(
 
             TO.append(to)
             W.append(w_new.copy())
-            RB_DATES.append(d)         # <— store the actual rebalance date
+            RB_DATES.append(d)  # <— store the actual rebalance date
             w_prev = w_new.copy()
 
         # apply portfolio return for day i
         r = df.row(i, named=True)
         rets = np.array([r[t] for t in tickers], dtype=float)
         port_ret = float(np.nansum(w_prev * rets))
-        eq *= (1.0 + port_ret - cost)
+        eq *= 1.0 + port_ret - cost
         equity.append(eq)
 
         # daily TE proxy vs static benchmark (if provided)
@@ -180,14 +187,16 @@ def backtest_rebalanced(
             te_series.append(te_daily)
 
     out = {
-        "dates": dates[lookback:].to_list(),                                      # daily grid from lookback
-        "equity": np.array(equity, dtype=float),                                  # daily equity
-        "weights": np.array(W, dtype=float) if W else np.zeros((0, N), float),    # (n_rebalances, N)
-        "rebalance_dates": RB_DATES,                                              # <— NEW: list of rebalance dates
-        "turnover": pl.DataFrame({                                                # <— CHANGED: DF with ['date','turnover']
-            "date": RB_DATES,
-            "turnover": np.array(TO, dtype=float),
-        }),
+        "dates": dates[lookback:].to_list(),  # daily grid from lookback
+        "equity": np.array(equity, dtype=float),  # daily equity
+        "weights": np.array(W, dtype=float) if W else np.zeros((0, N), float),  # (n_rebalances, N)
+        "rebalance_dates": RB_DATES,  # <— NEW: list of rebalance dates
+        "turnover": pl.DataFrame(
+            {  # <— CHANGED: DF with ['date','turnover']
+                "date": RB_DATES,
+                "turnover": np.array(TO, dtype=float),
+            }
+        ),
         "te_daily_proxy": np.array(te_series, dtype=float) if te_series else None,
         "tickers": tickers,
     }
@@ -198,11 +207,12 @@ def backtest_rebalanced(
 # 2) Engines that return BacktestResult (equity/weights/trades/metrics)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def backtest_equal_weight_buy_hold(
     df_prices_long: pl.DataFrame,
     *,
     cfg: BacktestConfig = BacktestConfig(),
-    benchmark: str | None = None,   # optional benchmark ticker (not used in baseline)
+    benchmark: str | None = None,  # optional benchmark ticker (not used in baseline)
 ) -> BacktestResult:
     """
     Baseline: Buy & Hold equal-weight. Rebalances only at start (or per cfg.rebalance if you wish).
@@ -226,9 +236,13 @@ def backtest_equal_weight_buy_hold(
     # Rebalance dates via pandas or dynamic polars-style strings
     if isinstance(cfg.rebalance, str) and cfg.rebalance.lower().endswith(("w", "mo", "q", "d")):
         rb = _rebalance_dates_from_freq_polars(pl.Series(dates), str(cfg.rebalance))
-        rb_mask = pl.Series(values=dates.isin(pd.DatetimeIndex(rb.to_list())), name="is_rb").to_numpy()
+        rb_mask = pl.Series(
+            values=dates.isin(pd.DatetimeIndex(rb.to_list())), name="is_rb"
+        ).to_numpy()
     else:
-        rb_ix = _dates_to_rebalance_pandas(dates, cfg.rebalance if isinstance(cfg.rebalance, str) else "M")
+        rb_ix = _dates_to_rebalance_pandas(
+            dates, cfg.rebalance if isinstance(cfg.rebalance, str) else "M"
+        )
         rb_mask = dates.isin(rb_ix)
 
     fee_cost = (cfg.fees_bps + cfg.slippage_bps) / 1e4  # proportional cost
@@ -252,7 +266,7 @@ def backtest_equal_weight_buy_hold(
         asset_ret = np.ones_like(pt)
         asset_ret[valid] = pt[valid] / p0[valid]
         port_ret = float(np.nansum(prev_w * (asset_ret - 1.0)))
-        equity *= (1.0 + port_ret)
+        equity *= 1.0 + port_ret
         equity_curve.append(equity)
         rets.append(port_ret)
 
@@ -269,13 +283,18 @@ def backtest_equal_weight_buy_hold(
             d_w = w_target - prev_w
             turnover = float(np.nansum(np.abs(d_w)))
             if turnover > 0:
-                equity *= (1.0 - turnover * fee_cost)
+                equity *= 1.0 - turnover * fee_cost
 
             for i, tk in enumerate(tickers):
                 dw = float(d_w[i])
                 if np.isfinite(dw) and dw != 0.0:
                     trades_rows.append(
-                        {"date": dates[t], "ticker": tk, "d_weight": dw, "cost_bps": (cfg.fees_bps + cfg.slippage_bps)}
+                        {
+                            "date": dates[t],
+                            "ticker": tk,
+                            "d_weight": dw,
+                            "cost_bps": (cfg.fees_bps + cfg.slippage_bps),
+                        }
                     )
             prev_w = w_target
 
@@ -286,11 +305,15 @@ def backtest_equal_weight_buy_hold(
                 weights_rows.append({"date": dates[t], "ticker": tk, "weight": w_i})
 
     equity_df = pl.from_pandas(pd.DataFrame({"date": dates, "equity": equity_curve, "ret": rets}))
-    weights_df = pl.from_pandas(pd.DataFrame(weights_rows)) if weights_rows else pl.DataFrame(
-        {"date": [], "ticker": [], "weight": []}
+    weights_df = (
+        pl.from_pandas(pd.DataFrame(weights_rows))
+        if weights_rows
+        else pl.DataFrame({"date": [], "ticker": [], "weight": []})
     )
-    trades_df = pl.from_pandas(pd.DataFrame(trades_rows)) if trades_rows else pl.DataFrame(
-        {"date": [], "ticker": [], "d_weight": [], "cost_bps": []}
+    trades_df = (
+        pl.from_pandas(pd.DataFrame(trades_rows))
+        if trades_rows
+        else pl.DataFrame({"date": [], "ticker": [], "d_weight": [], "cost_bps": []})
     )
 
     stats = _quick_stats_from_equity(equity_df)
@@ -347,13 +370,19 @@ def backtest_from_returns_alloc(
                 for i, tk in enumerate(tickers):
                     dw = float(d_w[i])
                     if np.isfinite(dw) and dw != 0.0:
-                        trades_rows.append({"date": d, "ticker": tk, "d_weight": dw, "cost_bps": cost_bps})
+                        trades_rows.append(
+                            {"date": d, "ticker": tk, "d_weight": dw, "cost_bps": cost_bps}
+                        )
 
-    weights_df = pl.from_pandas(pd.DataFrame(weights_rows)) if weights_rows else pl.DataFrame(
-        {"date": [], "ticker": [], "weight": []}
+    weights_df = (
+        pl.from_pandas(pd.DataFrame(weights_rows))
+        if weights_rows
+        else pl.DataFrame({"date": [], "ticker": [], "weight": []})
     )
-    trades_df = pl.from_pandas(pd.DataFrame(trades_rows)) if trades_rows else pl.DataFrame(
-        {"date": [], "ticker": [], "d_weight": [], "cost_bps": []}
+    trades_df = (
+        pl.from_pandas(pd.DataFrame(trades_rows))
+        if trades_rows
+        else pl.DataFrame({"date": [], "ticker": [], "d_weight": [], "cost_bps": []})
     )
 
     stats = _quick_stats_from_equity(equity_df)

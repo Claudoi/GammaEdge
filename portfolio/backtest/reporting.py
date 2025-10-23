@@ -2,11 +2,12 @@
 # portfolio/backtest/reporting.py
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
 
 import numpy as np
-import polars as pl
 import plotly.graph_objects as go
+import polars as pl
 
 from portfolio.core.compat import dataclass_compat as dataclass
 
@@ -17,10 +18,10 @@ from .attribution import (
     contributions_by_group,
 )
 
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Plotly figures (robust versions)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def _ensure_same_length(x: Iterable, y: np.ndarray, name_x: str = "x", name_y: str = "y"):
     x_len = len(list(x)) if not isinstance(x, list) else len(x)
@@ -33,10 +34,15 @@ def fig_equity(dates: list, equity: np.ndarray, title: str = "Equity Curve") -> 
     _ensure_same_length(dates, eq, "dates", "equity")
     eq = np.where(np.isfinite(eq), eq, np.nan)
 
-    fig = go.Figure(go.Scatter(
-        x=dates, y=eq, mode="lines", name="Equity",
-        hovertemplate="%{x}<br>NAV: %{y:.4f}<extra></extra>"
-    ))
+    fig = go.Figure(
+        go.Scatter(
+            x=dates,
+            y=eq,
+            mode="lines",
+            name="Equity",
+            hovertemplate="%{x}<br>NAV: %{y:.4f}<extra></extra>",
+        )
+    )
     fig.update_layout(title=title, xaxis_title="Date", yaxis_title="NAV", template="plotly_white")
     return fig
 
@@ -51,18 +57,29 @@ def fig_drawdown(dates: list, equity: np.ndarray, title: str = "Drawdown") -> go
     base = np.where(np.isfinite(cummax) & (cummax > 0), cummax, np.nan)
     dd = (eq / base) - 1.0
 
-    fig = go.Figure(go.Scatter(
-        x=dates, y=dd, mode="lines", name="Drawdown", fill="tozeroy",
-        hovertemplate="%{x}<br>DD: %{y:.2%}<extra></extra>"
-    ))
+    fig = go.Figure(
+        go.Scatter(
+            x=dates,
+            y=dd,
+            mode="lines",
+            name="Drawdown",
+            fill="tozeroy",
+            hovertemplate="%{x}<br>DD: %{y:.2%}<extra></extra>",
+        )
+    )
     fig.update_layout(
-        title=title, xaxis_title="Date", yaxis_title="Drawdown (%)",
-        yaxis=dict(tickformat=".0%"), template="plotly_white"
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Drawdown (%)",
+        yaxis=dict(tickformat=".0%"),
+        template="plotly_white",
     )
     return fig
 
 
-def fig_weights_heatmap(dates: list, tickers: list[str], W: np.ndarray, title: str = "Weights") -> go.Figure:
+def fig_weights_heatmap(
+    dates: list, tickers: list[str], W: np.ndarray, title: str = "Weights"
+) -> go.Figure:
     W = np.asarray(W, dtype=float)
     T, N = W.shape
     if len(dates) != T:
@@ -82,7 +99,8 @@ def fig_weights_heatmap(dates: list, tickers: list[str], W: np.ndarray, title: s
             x=dates,
             y=tickers_ord,
             coloraxis="coloraxis",
-            zmin=0.0, zmax=1.0,  # weights assumed in [0,1]
+            zmin=0.0,
+            zmax=1.0,  # weights assumed in [0,1]
             hovertemplate="Ticker: %{y}<br>Date: %{x}<br>Weight: %{z:.2%}<extra></extra>",
         )
     )
@@ -92,12 +110,16 @@ def fig_weights_heatmap(dates: list, tickers: list[str], W: np.ndarray, title: s
 
 def fig_bar_contrib(df_top: pl.DataFrame, title: str = "Top Contributors") -> go.Figure:
     # expects ['ticker','contrib_total']
-    pdf = df_top.select(["ticker", "contrib_total"]).to_pandas().replace([np.inf, -np.inf], np.nan).dropna()
+    pdf = (
+        df_top.select(["ticker", "contrib_total"])
+        .to_pandas()
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna()
+    )
     pdf = pdf.sort_values("contrib_total", ascending=False)
     fig = go.Figure(go.Bar(x=pdf["ticker"], y=pdf["contrib_total"]))
     fig.update_layout(
-        title=title, xaxis_title="Ticker", yaxis_title="Total Contribution",
-        template="plotly_white"
+        title=title, xaxis_title="Ticker", yaxis_title="Total Contribution", template="plotly_white"
     )
     return fig
 
@@ -105,6 +127,7 @@ def fig_bar_contrib(df_top: pl.DataFrame, title: str = "Top Contributors") -> go
 # ──────────────────────────────────────────────────────────────────────────────
 # Report Builder (tables + figures)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True, slots=True)
 class BacktestReport:
@@ -114,12 +137,15 @@ class BacktestReport:
     - figures: dict of Plotly figures
     - meta: metadata dict
     """
+
     tables: dict[str, pl.DataFrame]
     figures: dict[str, go.Figure]
     meta: dict[str, Any]
 
 
-def _top_contributors_from_df(df_asset_contrib: pl.DataFrame, k: int = 10, sign: str = "both") -> pl.DataFrame:
+def _top_contributors_from_df(
+    df_asset_contrib: pl.DataFrame, k: int = 10, sign: str = "both"
+) -> pl.DataFrame:
     """
     Local top contributors aggregator compatible with this module.
     df_asset_contrib must contain ['ticker','contrib'].
@@ -132,7 +158,9 @@ def _top_contributors_from_df(df_asset_contrib: pl.DataFrame, k: int = 10, sign:
     if sign == "pos":
         return agg.filter(pl.col("contrib_total") > 0).head(k)
     if sign == "neg":
-        return agg.filter(pl.col("contrib_total") < 0).sort("contrib_total", descending=False).head(k)
+        return (
+            agg.filter(pl.col("contrib_total") < 0).sort("contrib_total", descending=False).head(k)
+        )
     # both
     pos = agg.filter(pl.col("contrib_total") > 0).head(k)
     neg = agg.filter(pl.col("contrib_total") < 0).sort("contrib_total", descending=False).head(k)
@@ -140,9 +168,9 @@ def _top_contributors_from_df(df_asset_contrib: pl.DataFrame, k: int = 10, sign:
 
 
 def build_backtest_report(
-    df_ret_wide: pl.DataFrame,             # ['date', tickers...]
-    daily_weights: np.ndarray,             # (T, N) daily weights
-    equity: np.ndarray,                    # (T,) equity on the same daily grid
+    df_ret_wide: pl.DataFrame,  # ['date', tickers...]
+    daily_weights: np.ndarray,  # (T, N) daily weights
+    equity: np.ndarray,  # (T,) equity on the same daily grid
     *,
     group_map: dict[str, str] | None = None,
     title: str = "Backtest Report",
@@ -205,14 +233,14 @@ def build_backtest_report(
 # HTML report (for Streamlit download button)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def _to_html_table(df_any) -> str:
     """Convert Polars/Pandas DataFrame to a compact HTML table string."""
-    if hasattr(df_any, "to_pandas"):
-        pdf = df_any.to_pandas()
-    else:
-        pdf = df_any
+    pdf = df_any.to_pandas() if hasattr(df_any, "to_pandas") else df_any
     # Simple styling; Streamlit will embed this HTML as-is.
-    return pdf.to_html(index=False, border=0).replace('class="dataframe"', 'class="dataframe" style="font-size:12px"')
+    return pdf.to_html(index=False, border=0).replace(
+        'class="dataframe"', 'class="dataframe" style="font-size:12px"'
+    )
 
 
 def render_html_report(bt: dict, df_metrics) -> str:
@@ -246,7 +274,9 @@ def render_html_report(bt: dict, df_metrics) -> str:
         w_html = "<p>No weights available.</p>"
 
     # Metrics table
-    metrics_html = _to_html_table(df_metrics.to_pandas() if hasattr(df_metrics, "to_pandas") else df_metrics)
+    metrics_html = _to_html_table(
+        df_metrics.to_pandas() if hasattr(df_metrics, "to_pandas") else df_metrics
+    )
 
     # Compose HTML
     html = f"""

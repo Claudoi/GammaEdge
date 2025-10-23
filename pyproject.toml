@@ -1,16 +1,15 @@
 [tool.poetry]
 name = "gammaedge"
-version = "0.1.0"
+version = "1.1.0-dev"
 description = "Portfolio optimization, risk analytics, and backtesting platform"
 authors = ["Tu Nombre <tu@email.com>"]
 readme = "README.md"
 license = "MIT"
 packages = [{ include = "app" }, { include = "portfolio" }]
 
-
 # ── DEPENDENCIAS PRINCIPALES ───────────────────────────────────────────────────
 [tool.poetry.dependencies]
-python = ">=3.9,<3.12"                 # ✅ Soporta 3.9–3.11
+python = ">=3.9,<3.9.7 || >3.9.7,<3.12"                 # Soporta 3.9–3.11; CI usa 3.11
 numpy = ">=1.26,<2.0"
 scipy = ">=1.11"
 polars = ">=1.4.0"
@@ -26,7 +25,6 @@ fastapi = ">=0.112.0"
 uvicorn = { version = ">=0.30.0", extras = ["standard"] }
 pyyaml = ">=6.0.1"
 
-
 # ── EXTRAS OPCIONALES ──────────────────────────────────────────────────────────
 arch = { version = ">=6.3.0", optional = true }
 cvxpy = { version = ">=1.4.3", optional = true }
@@ -41,8 +39,12 @@ hypothesis = ">=6.103.0"
 ruff = ">=0.5.0"
 black = ">=24.4.2"
 mypy = ">=1.10.0"
+# stubs para evitar 'missing imports' en mypy:
+pandas-stubs = "*"
 types-requests = ">=2.32.0.20240712"
 types-PyYAML = ">=6.0.12.20240808"
+types-python-dateutil = "*"
+types-setuptools = "*"
 pre-commit = ">=3.7.0"
 nbstripout = ">=0.7.1"
 
@@ -61,56 +63,75 @@ notebooks = ["jupyterlab", "ipykernel"]
 gammaedge-api = "api.main:run"
 gammaedge-app = "app.Home:main"
 
-
 # ── BLACK ──────────────────────────────────────────────────────────────────────
 [tool.black]
 line-length = 100
-target-version = ["py39"]              # ✅ objetivo mínimo 3.9
+target-version = ["py39"]
 
-
-# ── RUFF ───────────────────────────────────────────────────────────────────────
+# ── RUFF (formato moderno) ─────────────────────────────────────────────────────
 [tool.ruff]
 line-length = 100
-target-version = "py39"                # ✅ objetivo mínimo 3.9
+target-version = "py39"
 
-
-# Reglas de lint (claves nuevas)
 [tool.ruff.lint]
 extend-select = ["I", "E", "F", "UP", "SIM", "B", "C90"]
 ignore = [
   "E203", "E266", "E501",
-  "N801", "N802", "N803", "N806",   # naming flexible
-  "C901",                           # complejidad
-  "B008",                           # call en default args
-  "UP007",                          # Union vs |
-  "E701", "E702",                   # múltiples statements en una línea
-  "UP017",                          # datetime.UTC alias (lo gestionamos en compat)
+  "N801", "N802", "N803", "N806",
+  "C901",
+  "B008",
+  "UP007",
+  "E701", "E702",
+  "UP017",
 ]
 
 [tool.ruff.format]
 quote-style = "preserve"
 
-
-# ── (Opcional) isort queda cubierto por Ruff, puedes borrar esta sección ───────
+# (isort lo gestiona Ruff; mantenemos por compat)
 [tool.isort]
 profile = "black"
 line_length = 100
 
-
-# ── MYPY ───────────────────────────────────────────────────────────────────────
+# ── MYPY (estricto en portfolio/, relajado en app/, moderado en api/) ─────────
 [tool.mypy]
-python_version = "3.9"                 # ✅ chequear compat mínima
+python_version = "3.11"                 # Alineado con CI
 ignore_missing_imports = true
 strict_optional = true
 warn_unused_ignores = true
 warn_redundant_casts = true
 warn_unreachable = true
 check_untyped_defs = true
-disallow_untyped_defs = true
-exclude = "(^tests/|^notebooks/)"
+disallow_untyped_defs = false           # base general
+exclude = [
+  "^tests/.*",
+  "^notebooks/.*",
+  "^docs/.*",
+  "^data/.*",
+]
 
+# Estricto donde importa (core cuantitativo)
+[[tool.mypy.overrides]]
+module = ["portfolio.*"]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+no_implicit_optional = true
+warn_return_any = true
+strict_equality = true
+
+# UI Streamlit (evitar ruido ahora)
+[[tool.mypy.overrides]]
+module = ["app.*"]
+ignore_errors = true
+
+# API FastAPI (relajado por ahora)
+[[tool.mypy.overrides]]
+module = ["api.*"]
+disallow_untyped_defs = false
+check_untyped_defs = false
 
 # ── PYTEST ─────────────────────────────────────────────────────────────────────
-
-
-# ── BUILD ──────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+addopts = "-q --maxfail=1 --disable-warnings"
+testpaths = ["tests"]

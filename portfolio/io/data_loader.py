@@ -11,6 +11,7 @@ import polars as pl
 import yfinance as yf
 
 from portfolio.core.compat import dataclass_compat as dataclass
+
 from .cache import load_df, save_df
 
 logger = logging.getLogger(__name__)
@@ -36,20 +37,11 @@ class PriceLoadConfig:
             "schema": self.schema_version,
         }
 
-    def cache_key(self) -> dict[str, Any]:
-        # clave determinista para cache
-        return {
-            "tickers": ",".join(self.tickers),
-            "start": self.start,
-            "end": self.end,
-            "interval": self.interval,
-            "adjust": self.adjust,
-            "schema": self.schema_version,
-        }
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers internos
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def _normalize_tickers(tickers: Iterable[str]) -> tuple[str, ...]:
     tks = tuple(sorted({str(t).strip().upper() for t in tickers if str(t).strip()}))
@@ -83,14 +75,18 @@ def _to_polars_long_from_pandas_close(df_close: pd.DataFrame) -> pl.DataFrame:
     # melt → largo
     value_cols = [c for c in pl_df.columns if c != "date"]
     df_long = (
-        pl_df.melt(id_vars=["date"], value_vars=value_cols, variable_name="ticker", value_name="price")
-             .drop_nulls()
-             .with_columns([
-                 pl.col("date").cast(pl.Datetime),
-                 pl.col("ticker").cast(pl.Utf8),
-                 pl.col("price").cast(pl.Float64),
-             ])
-             .sort(["ticker", "date"])
+        pl_df.melt(
+            id_vars=["date"], value_vars=value_cols, variable_name="ticker", value_name="price"
+        )
+        .drop_nulls()
+        .with_columns(
+            [
+                pl.col("date").cast(pl.Datetime),
+                pl.col("ticker").cast(pl.Utf8),
+                pl.col("price").cast(pl.Float64),
+            ]
+        )
+        .sort(["ticker", "date"])
     )
     return df_long
 
@@ -157,12 +153,8 @@ def _validate_long_prices(df_long: pl.DataFrame) -> None:
     # Monotonicidad de fechas por ticker
     sample = (
         df_long.sort(["ticker", "date"])
-               .group_by("ticker")
-               .agg(
-                   (pl.col("date").diff().dt.total_milliseconds() < 0)
-                   .sum()
-                   .alias("backwards_steps")
-               )
+        .group_by("ticker")
+        .agg((pl.col("date").diff().dt.total_milliseconds() < 0).sum().alias("backwards_steps"))
     )
     backwards_total = int(sample["backwards_steps"].sum())
     if backwards_total > 0:
@@ -177,6 +169,7 @@ def _validate_long_prices(df_long: pl.DataFrame) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 # API pública
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def get_prices_long(
     tickers: Iterable[str],
@@ -278,7 +271,7 @@ def get_prices_wide(
         "force_refresh": force_refresh,
         "use_cache": use_cache,
     }"""
-    
+
     df_long = get_prices_long(
         tickers=tickers,
         start=start,

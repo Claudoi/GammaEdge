@@ -11,6 +11,7 @@ class JsonRunLogger:
     """
     Logger muy simple en formato JSONL (una línea por evento) para trazabilidad.
     """
+
     def __init__(self, log_dir: str = "logs", run_name: str = "run") -> None:
         os.makedirs(log_dir, exist_ok=True)
         ts = datetime.utcnow().strftime("%Y%m%d-%H%M%S")

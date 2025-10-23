@@ -1,16 +1,17 @@
 # app/pages/06_Scenarios.py
 from __future__ import annotations
 
+import inspect
+
 # --- stdlib ---
 import os
 import sys
-import inspect
-from typing import Callable, List, Dict, Any
+from typing import Any, Callable
 
 # --- third-party ---
 import numpy as np
-import polars as pl
 import pandas as pd
+import polars as pl
 import streamlit as st
 
 # ---------------------------------------------------------------------
@@ -19,33 +20,28 @@ import streamlit as st
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 # --- local modules ---
-from portfolio.backtest.engine import backtest_rebalanced
 from portfolio.backtest import metrics as bt_metrics
-
+from portfolio.backtest.engine import backtest_rebalanced
 from portfolio.backtest.scenarios import (
-    ShockSpec,
     ScenarioConfig,
-    run_scenarios,
+    ShockSpec,
     apply_shock_map_to_wide,
     historical_slice_returns,
+    run_scenarios,
 )
-
-from portfolio.core.utils import ensure_psd, project_to_box_simplex, hrp_safe
+from portfolio.core.utils import ensure_psd, hrp_safe, project_to_box_simplex
 from portfolio.optim.hrp import hrp_weights
-from portfolio.optim.risk_parity import risk_parity
 from portfolio.optim.mean_variance import pgd_box_simplex_l2
-
+from portfolio.optim.risk_parity import risk_parity
 from portfolio.viz.plot_utils import (
     equity_and_drawdown,
-    plot_equity,
-    plot_drawdown,
-    plot_weights_heatmap,
-    plot_turnover,
-    plot_tornado_sensitivity,
-    plot_equity_compare,
     plot_drawdown_compare,
+    plot_equity_compare,
     plot_metric_delta_bars,
+    plot_tornado_sensitivity,
+    plot_turnover,
     plot_weights_compare_heatmap,
+    plot_weights_heatmap,
 )
 
 # ─────────────────────────────────────────────────────────────────────
@@ -53,7 +49,10 @@ from portfolio.viz.plot_utils import (
 # ─────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Scenarios", layout="wide")
 st.title("🧪 Scenarios")
-st.caption("Stress-tests on the return matrix with robust turnover reconstruction and clean comparisons vs Baseline.")
+st.caption(
+    "Stress-tests on the return matrix with robust turnover reconstruction and clean comparisons vs Baseline."
+)
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Helpers (robust + NaN-safe)
@@ -64,6 +63,7 @@ def next_key(prefix: str = "plt") -> str:
     st.session_state["_auto_key_counter"] += 1
     return f"{prefix}-{st.session_state['_auto_key_counter']}"
 
+
 def _to_numpy_2d(x) -> np.ndarray:
     """Force 2D float array and sanitize NaNs/infs."""
     arr = np.asarray(x, dtype=float)
@@ -71,7 +71,8 @@ def _to_numpy_2d(x) -> np.ndarray:
         arr = arr.reshape(-1, 1)
     return np.nan_to_num(arr, nan=0.0, posinf=0.0, neginf=0.0)
 
-def _safe_metrics(bt_obj: Dict[str, Any]) -> pl.DataFrame:
+
+def _safe_metrics(bt_obj: dict[str, Any]) -> pl.DataFrame:
     """Compute metrics via repo metrics; fallback to equity-derived if needed."""
     try:
         return bt_metrics.compute_backtest_metrics(bt_obj)
@@ -83,9 +84,14 @@ def _safe_metrics(bt_obj: Dict[str, Any]) -> pl.DataFrame:
         cagr = (np.prod(1 + r)) ** (252 / max(len(r), 1)) - 1
         sharpe = (np.mean(r) / (np.std(r) + 1e-12)) * np.sqrt(252)
         mdd = 1 - (np.cumprod(1 + r) / np.maximum.accumulate(np.cumprod(1 + r))).min()
-        return pl.DataFrame({"CAGR": [float(cagr)], "Sharpe": [float(sharpe)], "MaxDD": [float(mdd)]})
+        return pl.DataFrame(
+            {"CAGR": [float(cagr)], "Sharpe": [float(sharpe)], "MaxDD": [float(mdd)]}
+        )
 
-def _extract_metric_scalar(dfm: pl.DataFrame | pd.DataFrame, name: str, default: float = np.nan) -> float:
+
+def _extract_metric_scalar(
+    dfm: pl.DataFrame | pd.DataFrame, name: str, default: float = np.nan
+) -> float:
     """Extract scalar metric by name from a 1-row frame; case-insensitive."""
     try:
         if isinstance(dfm, pl.DataFrame) and dfm.height > 0:
@@ -109,6 +115,7 @@ def _extract_metric_scalar(dfm: pl.DataFrame | pd.DataFrame, name: str, default:
         pass
     return float(default)
 
+
 def _ensure_turnover_with_drift(bt: dict, df_wide: pl.DataFrame) -> tuple[list, np.ndarray]:
     """
     If engine doesn't provide 'turnover', reconstruct it:
@@ -116,30 +123,39 @@ def _ensure_turnover_with_drift(bt: dict, df_wide: pl.DataFrame) -> tuple[list, 
     - Turnover_k = 0.5 * || w_target(k) - w_pre_trade(k) ||_1
     """
     # 1) Prefer engine-provided turnover if present
-    to_obj = bt.get("turnover", None)
+    to_obj = bt.get("turnover")
     if to_obj is not None:
         try:
             if isinstance(to_obj, pl.DataFrame) and "turnover" in to_obj.columns:
-                dates = (to_obj.get_column("date").to_list()
-                         if "date" in to_obj.columns else list(range(to_obj.height)))
+                dates = (
+                    to_obj.get_column("date").to_list()
+                    if "date" in to_obj.columns
+                    else list(range(to_obj.height))
+                )
                 vals = to_obj.get_column("turnover").to_numpy()
                 return dates, np.asarray(vals, float)
             if isinstance(to_obj, pd.DataFrame) and "turnover" in to_obj.columns:
-                dates = (to_obj["date"].tolist()
-                         if "date" in to_obj.columns else list(range(len(to_obj))))
+                dates = (
+                    to_obj["date"].tolist()
+                    if "date" in to_obj.columns
+                    else list(range(len(to_obj)))
+                )
                 return dates, np.asarray(to_obj["turnover"].values, float)
             arr = np.asarray(to_obj, float).ravel()
             if arr.size > 0:
-                rb_dates = bt.get("rebalance_dates", None)
-                dates = (list(rb_dates)[-arr.size:]
-                         if rb_dates is not None else list(bt["dates"][-arr.size:]))
+                rb_dates = bt.get("rebalance_dates")
+                dates = (
+                    list(rb_dates)[-arr.size :]
+                    if rb_dates is not None
+                    else list(bt["dates"][-arr.size :])
+                )
                 return dates, arr
         except Exception:
             pass
 
     # 2) Reconstruct via drift between rebalances
     rb_dates = list(bt.get("rebalance_dates", []))
-    W_reb = np.asarray(bt.get("weights", []), float)   # (K, N)
+    W_reb = np.asarray(bt.get("weights", []), float)  # (K, N)
     tick = list(bt.get("tickers", []))
     if W_reb.size == 0 or len(rb_dates) != W_reb.shape[0] or df_wide is None:
         return [], np.array([], float)
@@ -176,6 +192,7 @@ def _ensure_turnover_with_drift(bt: dict, df_wide: pl.DataFrame) -> tuple[list, 
         w_prev = w_new
 
     return out_dates, np.asarray(turns, float)
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Data handoff from previous pages
@@ -216,9 +233,11 @@ with st.sidebar:
         ["Equal-Weight", "Min-Var (L2 PGD)", "Risk Parity", "HRP", "Min-TE (to Bench)"],
         index=0,
     )
-    
+
     if alloc_kind == "Equal-Weight":
-        st.info("Equal-Weight is constant over time by design. Pick Risk Parity / HRP / Min-Var to see changing weights & turnover.")
+        st.info(
+            "Equal-Weight is constant over time by design. Pick Risk Parity / HRP / Min-Var to see changing weights & turnover."
+        )
 
     w_min = st.number_input("w_min", 0.0, 1.0, 0.0, 0.01)
     w_max = st.number_input("w_max", 0.0, 1.0, 0.2, 0.01)
@@ -230,6 +249,7 @@ with st.sidebar:
     st.caption("Covariance")
     cov_estimator = st.selectbox("Covariance estimator", ["Sample", "EWMA"], index=0)
     ewma_lambda = st.slider("EWMA λ", 0.80, 0.995, 0.97, 0.005)
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Allocator factory (no turnover budget here)
@@ -250,38 +270,42 @@ def _cov_ewma(R: np.ndarray, lam: float = 0.94) -> np.ndarray:
     S = np.nan_to_num(S, nan=0.0, posinf=0.0, neginf=0.0)
     return ensure_psd(S, eps=1e-10, clip=True)
 
-def _get_cov(win: pl.DataFrame, cols: List[str]) -> np.ndarray:
+
+def _get_cov(win: pl.DataFrame, cols: list[str]) -> np.ndarray:
     if not cols:
         return np.eye(0)
     R = win.select(cols).to_numpy()
     if R.size == 0:
         return np.eye(len(cols)) * 1e-4
-    if cov_estimator == "EWMA":
-        S = _cov_ewma(R, lam=float(ewma_lambda))
-    else:
-        S = np.cov(R, rowvar=False)
+    S = _cov_ewma(R, lam=float(ewma_lambda)) if cov_estimator == "EWMA" else np.cov(R, rowvar=False)
     S = np.nan_to_num(S, nan=0.0, posinf=0.0, neginf=0.0)
     return ensure_psd(S, eps=1e-10, clip=True)
+
 
 def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
     """Map a rolling window to weights under box+simplex constraints."""
     if kind == "Equal-Weight":
+
         def base_alloc(win: pl.DataFrame) -> np.ndarray:
             n = win.width - 1
             w = np.ones(n, dtype=float) / max(n, 1)
             return project_to_box_simplex(w, w_min, w_max)
 
     elif kind == "Min-Var (L2 PGD)":
+
         def base_alloc(win: pl.DataFrame) -> np.ndarray:
             cols = [c for c in win.columns if c != "date"]
             R = win.select(cols).to_numpy() if cols else np.zeros((0, 0), dtype=float)
             mu_w = np.nanmean(R, axis=0) if R.size else np.zeros(len(cols))
             mu_w = np.nan_to_num(mu_w, nan=0.0, posinf=0.0, neginf=0.0)
             Sigma_w = _get_cov(win, cols)
-            w = pgd_box_simplex_l2(mu_w, Sigma_w, gamma=100.0, w_min=w_min, w_max=w_max, lam_turnover=0.0)
+            w = pgd_box_simplex_l2(
+                mu_w, Sigma_w, gamma=100.0, w_min=w_min, w_max=w_max, lam_turnover=0.0
+            )
             return project_to_box_simplex(w, w_min, w_max)
 
     elif kind == "Risk Parity":
+
         def base_alloc(win: pl.DataFrame) -> np.ndarray:
             cols = [c for c in win.columns if c != "date"]
             Sigma_w = _get_cov(win, cols)
@@ -292,23 +316,34 @@ def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
             return project_to_box_simplex(w, w_min, w_max)
 
     elif kind == "HRP":
+
         def base_alloc(win: pl.DataFrame) -> np.ndarray:
             cols = [c for c in win.columns if c != "date"]
             Sigma_w = _get_cov(win, cols)
-            w = hrp_safe(hrp_func=hrp_weights, cov=Sigma_w, method="ward", optimal=True,
-                         w_min=w_min, w_max=w_max)
+            w = hrp_safe(
+                hrp_func=hrp_weights,
+                cov=Sigma_w,
+                method="ward",
+                optimal=True,
+                w_min=w_min,
+                w_max=w_max,
+            )
             return project_to_box_simplex(w, w_min, w_max)
 
     elif kind == "Min-TE (to Bench)":
+
         def base_alloc(win: pl.DataFrame) -> np.ndarray:
             cols = [c for c in win.columns if c != "date"]
             Sigma_w = _get_cov(win, cols)
             w_bench = np.full(len(cols), 1.0 / max(len(cols), 1))
             mu_eff = 2.0 * (Sigma_w @ w_bench)  # proxy for tracking-error min
-            w = pgd_box_simplex_l2(mu_eff, Sigma_w, gamma=1.0, w_min=w_min, w_max=w_max, lam_turnover=0.0)
+            w = pgd_box_simplex_l2(
+                mu_eff, Sigma_w, gamma=1.0, w_min=w_min, w_max=w_max, lam_turnover=0.0
+            )
             return project_to_box_simplex(w, w_min, w_max)
 
     else:
+
         def base_alloc(win: pl.DataFrame) -> np.ndarray:
             n = win.width - 1
             w = np.ones(n, dtype=float) / max(n, 1)
@@ -316,10 +351,11 @@ def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
 
     return base_alloc
 
+
 # ─────────────────────────────────────────────────────────────────────
 # Engine wrapper (auto-detects param names; attaches diagnostics)
 # ─────────────────────────────────────────────────────────────────────
-def _run_engine(df_wide: pl.DataFrame) -> Dict[str, Any]:
+def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
     """
     Call the engine with a recording allocator:
     - captures every window end-date and computed weights
@@ -357,7 +393,7 @@ def _run_engine(df_wide: pl.DataFrame) -> Dict[str, Any]:
             Nmax = max(len(w) for w in self.weights)
             W = np.zeros((len(self.weights), Nmax), float)
             for i, w in enumerate(self.weights):
-                W[i, :len(w)] = w
+                W[i, : len(w)] = w
             return W
 
     rec = _Recorder()
@@ -366,7 +402,7 @@ def _run_engine(df_wide: pl.DataFrame) -> Dict[str, Any]:
     bench_w = np.full(N, 1.0 / max(N, 1))
     df_arg = df_wide.select(["date", *tickers]).sort("date")
     sig = inspect.signature(backtest_rebalanced)
-    kw: Dict[str, Any] = {
+    kw: dict[str, Any] = {
         "lookback": int(lookback),
         "rebalance_freq": rebalance_freq,
         "cost_bps": float(cost_bps),
@@ -414,7 +450,9 @@ def _run_engine(df_wide: pl.DataFrame) -> Dict[str, Any]:
         return float(np.max(dif)) <= 1e-12
 
     # If engine didn’t store weights OR panel is constant but recorder shows variation → override
-    if (W_eng.ndim != 2 or W_eng.size == 0 or _is_constant_panel(W_eng)) and (W_rec.ndim == 2 and W_rec.size > 0 and not _is_constant_panel(W_rec)):
+    if (W_eng.ndim != 2 or W_eng.size == 0 or _is_constant_panel(W_eng)) and (
+        W_rec.ndim == 2 and W_rec.size > 0 and not _is_constant_panel(W_rec)
+    ):
         bt["weights"] = W_rec
         # adopt recorder dates as rebalance_dates if sensible
         if rec.dates and len(rec.dates) == W_rec.shape[0]:
@@ -458,7 +496,9 @@ st.dataframe(
 
 # Weights heatmap
 st.plotly_chart(
-    plot_weights_heatmap(base_bt["dates"], base_bt["tickers"], base_bt["weights"], title="Baseline · Weights"),
+    plot_weights_heatmap(
+        base_bt["dates"], base_bt["tickers"], base_bt["weights"], title="Baseline · Weights"
+    ),
     width="stretch",
     key=next_key("baseline-weights"),
 )
@@ -487,10 +527,14 @@ with st.expander("Rebalance diagnostics", expanded=False):
         st.write(f"Rebalances (K): {W.shape[0]}")
         st.write(f"Unique weight rows: {uniq_rows}")
         if diffs.size:
-            st.write(f"Max Δw per step — mean: {float(np.mean(diffs)):.8f}, max: {float(np.max(diffs)):.8f}")
+            st.write(
+                f"Max Δw per step — mean: {float(np.mean(diffs)):.8f}, max: {float(np.max(diffs)):.8f}"
+            )
         if diffs.size and 0 < float(np.max(diffs)) < 5e-3:
-            st.info("Weights move is very small (<0.5%). If the heatmap looks flat, "
-                    "try a tighter color clamp in the compare heatmap (zmax_abs≈0.01).")
+            st.info(
+                "Weights move is very small (<0.5%). If the heatmap looks flat, "
+                "try a tighter color clamp in the compare heatmap (zmax_abs≈0.01)."
+            )
     else:
         st.write("No weights captured from engine.")
 
@@ -537,20 +581,41 @@ with st.sidebar:
     st.markdown("---")
     st.header("Scenario settings")
 
-    B = st.number_input("Bootstrap paths (B)", 0, 500, 0, 1,
-                        help="If B=0: original chronology. If B>0: B synthetic paths via block bootstrap.")
+    B = st.number_input(
+        "Bootstrap paths (B)",
+        0,
+        500,
+        0,
+        1,
+        help="If B=0: original chronology. If B>0: B synthetic paths via block bootstrap.",
+    )
     block = st.number_input("Block length (days)", 2, 252, 10, 1)
     seed = st.number_input("Seed", 0, 100_000, 42, 1)
 
     st.caption("Shocks (applied to returns)")
-    mean_shift_bps = st.number_input("Mean shift (bps/day)", -1000.0, 1000.0, 0.0, 1.0,
-                                     help="Constant drift added to every asset per day.")
-    cov_scale = st.slider("Vol scale (cov_scale)", 0.10, 3.00, 1.00, 0.05,
-                          help="Scale cross-sectional deviations from mean (1.0 = no change).")
+    mean_shift_bps = st.number_input(
+        "Mean shift (bps/day)",
+        -1000.0,
+        1000.0,
+        0.0,
+        1.0,
+        help="Constant drift added to every asset per day.",
+    )
+    cov_scale = st.slider(
+        "Vol scale (cov_scale)",
+        0.10,
+        3.00,
+        1.00,
+        0.05,
+        help="Scale cross-sectional deviations from mean (1.0 = no change).",
+    )
     crash_enable = st.checkbox("One-day crash", value=False)
-    crash_day = st.number_input("Crash day index (0-based)", 0, max(1, df_ret_wide.height - 1), 0, 1)
-    crash_drop_bps = st.number_input("Crash size (bps)", -5000.0, 5000.0, -500.0, 10.0,
-                                     help="e.g., −500 bps = −5% one-day gap.")
+    crash_day = st.number_input(
+        "Crash day index (0-based)", 0, max(1, df_ret_wide.height - 1), 0, 1
+    )
+    crash_drop_bps = st.number_input(
+        "Crash size (bps)", -5000.0, 5000.0, -500.0, 10.0, help="e.g., −500 bps = −5% one-day gap."
+    )
 
 # Build scenario list only if there is a real shock/config difference
 cfgs: list[ScenarioConfig] = []
@@ -569,7 +634,10 @@ if has_changes:
         )
     )
 else:
-    st.info("No active shock parameters — Baseline already shown above. Adjust shocks to run scenarios.")
+    st.info(
+        "No active shock parameters — Baseline already shown above. Adjust shocks to run scenarios."
+    )
+
 
 # Helper to flatten 1-row metrics frames
 def _flatten_metrics_row(m: pl.DataFrame | pd.DataFrame) -> dict[str, float]:
@@ -613,6 +681,7 @@ def _flatten_metrics_row(m: pl.DataFrame | pd.DataFrame) -> dict[str, float]:
         pass
     return out
 
+
 # Run scenarios (only alternative vs baseline)
 if cfgs:
     st.markdown("---")
@@ -643,7 +712,9 @@ if cfgs:
         # ΔCAGR vs baseline, if present
         base_cagr = _extract_metric_scalar(base_m, "CAGR", default=np.nan)
         if np.isfinite(base_cagr) and "CAGR" in df_comp.columns:
-            fig_delta = plot_metric_delta_bars(df_comp.to_pandas(), baseline_value=base_cagr, metric_col="CAGR")
+            fig_delta = plot_metric_delta_bars(
+                df_comp.to_pandas(), baseline_value=base_cagr, metric_col="CAGR"
+            )
             st.plotly_chart(fig_delta, width="stretch", key=next_key("delta-cagr"))
 
     # Detailed charts per scenario
@@ -656,14 +727,24 @@ if cfgs:
 
         # Equity & drawdown comparisons
         st.plotly_chart(
-            plot_equity_compare(base_bt["dates"], base_bt["equity"], bt.get("equity", []),
-                                name_a="Baseline", name_b=sc_name),
+            plot_equity_compare(
+                base_bt["dates"],
+                base_bt["equity"],
+                bt.get("equity", []),
+                name_a="Baseline",
+                name_b=sc_name,
+            ),
             width="stretch",
             key=next_key(f"{sec_prefix}-equity-compare"),
         )
         st.plotly_chart(
-            plot_drawdown_compare(base_bt["dates"], base_bt["equity"], bt.get("equity", []),
-                                  name_a="Baseline", name_b=sc_name),
+            plot_drawdown_compare(
+                base_bt["dates"],
+                base_bt["equity"],
+                bt.get("equity", []),
+                name_a="Baseline",
+                name_b=sc_name,
+            ),
             width="stretch",
             key=next_key(f"{sec_prefix}-dd-compare"),
         )
@@ -699,7 +780,9 @@ with st.sidebar:
     use_beta = st.checkbox("Enable beta-correlated shock", value=False)
     idx_opts = [c for c in df_base.columns if c != "date"]
     index_col = st.selectbox("Index column", options=idx_opts, index=0, disabled=not use_beta)
-    index_move = st.number_input("Index move (e.g., -0.05)", -0.50, 0.50, -0.05, 0.01, disabled=not use_beta)
+    index_move = st.number_input(
+        "Index move (e.g., -0.05)", -0.50, 0.50, -0.05, 0.01, disabled=not use_beta
+    )
     beta_lb = st.number_input("Beta lookback (days)", 60, 1000, 252, 10, disabled=not use_beta)
 
     st.markdown("---")
@@ -714,9 +797,14 @@ with st.sidebar:
     st.markdown("---")
     st.header("Tornado sensitivity")
     do_tornado = st.checkbox("Compute tornado sensitivity (±δ per asset)", value=False)
-    delta = st.number_input("Shock per asset (daily return)", -0.20, 0.20, 0.02, 0.01, disabled=not do_tornado)
+    delta = st.number_input(
+        "Shock per asset (daily return)", -0.20, 0.20, 0.02, 0.01, disabled=not do_tornado
+    )
 
-def _rolling_beta_last_window(df_wide: pl.DataFrame, index_col: str, lookback: int) -> dict[str, float]:
+
+def _rolling_beta_last_window(
+    df_wide: pl.DataFrame, index_col: str, lookback: int
+) -> dict[str, float]:
     """CAPM betas in the last window vs chosen index; NaN-safe."""
     df = df_wide.sort("date")
     win = df if df.height <= lookback else df.tail(lookback)
@@ -737,6 +825,7 @@ def _rolling_beta_last_window(df_wide: pl.DataFrame, index_col: str, lookback: i
         betas[c] = cov_ij / var_idx
     return betas
 
+
 # Beta-correlated shock
 if use_beta:
     st.markdown("---")
@@ -747,8 +836,11 @@ if use_beta:
         df_beta = apply_shock_map_to_wide(df_base, shock_map)
         bt_beta = _run_engine(df_beta)
         st.plotly_chart(
-            equity_and_drawdown(bt_beta["dates"], bt_beta["equity"],
-                                title=f"Beta shock: {index_col} move {index_move:+.1%}"),
+            equity_and_drawdown(
+                bt_beta["dates"],
+                bt_beta["equity"],
+                title=f"Beta shock: {index_col} move {index_move:+.1%}",
+            ),
             width="stretch",
             key=next_key("beta-ed"),
         )
@@ -764,8 +856,11 @@ if use_hist:
         df_slice = historical_slice_returns(df_base, hist_start, hist_end, tickers=tickers)
         bt_slice = _run_engine(df_slice)
         st.plotly_chart(
-            equity_and_drawdown(bt_slice["dates"], bt_slice["equity"],
-                                title=f"Historical slice {hist_start} → {hist_end}"),
+            equity_and_drawdown(
+                bt_slice["dates"],
+                bt_slice["equity"],
+                title=f"Historical slice {hist_start} → {hist_end}",
+            ),
             width="stretch",
             key=next_key("hist-ed"),
         )
@@ -777,6 +872,7 @@ if use_hist:
 # Tornado sensitivity — engine-first; equal-weight fallback (always renders)
 # ─────────────────────────────────────────────────────────────────────
 
+
 def _cagr_from_portfolio_returns(rp: np.ndarray) -> float:
     """Compute CAGR from a daily return series."""
     rp = np.asarray(rp, dtype=float)
@@ -784,6 +880,7 @@ def _cagr_from_portfolio_returns(rp: np.ndarray) -> float:
         return float("nan")
     gross = float(np.prod(1.0 + rp))
     return gross ** (252 / max(rp.size, 1)) - 1.0
+
 
 def _cagr_equal_weight(df_wide: pl.DataFrame) -> float:
     """Equal-weight portfolio metric; independent from engine."""
@@ -793,6 +890,7 @@ def _cagr_equal_weight(df_wide: pl.DataFrame) -> float:
     X = np.nan_to_num(df_wide.select(cols).to_numpy(), nan=0.0, posinf=0.0, neginf=0.0)
     rp = X.mean(axis=1)
     return _cagr_from_portfolio_returns(rp)
+
 
 def _try_engine_cagr(df_wide: pl.DataFrame) -> float:
     """Attempt CAGR via engine; return NaN if unusable (to enable fallback)."""
@@ -805,6 +903,7 @@ def _try_engine_cagr(df_wide: pl.DataFrame) -> float:
     except Exception:
         pass
     return float("nan")
+
 
 if do_tornado:
     st.markdown("---")
@@ -837,13 +936,15 @@ if do_tornado:
             else:
                 engine_effective = True
 
-            sens_rows.append({
-                "asset": tk,
-                "metric": "CAGR",
-                "base": base_cagr,
-                "down": met_down,
-                "up": met_up,
-            })
+            sens_rows.append(
+                {
+                    "asset": tk,
+                    "metric": "CAGR",
+                    "base": base_cagr,
+                    "down": met_down,
+                    "up": met_up,
+                }
+            )
 
         df_sens = pd.DataFrame(sens_rows)
         fig_tornado = plot_tornado_sensitivity(

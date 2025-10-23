@@ -2,26 +2,26 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Sequence
-from portfolio.core.compat import dataclass_compat as dataclass
-from typing import Iterable, Optional, Sequence, Union, Dict, Literal
-
+from typing import Literal, Union
 
 import numpy as np
+import pandas as pd
+import plotly.express as px
 import plotly.graph_objects as go
 import polars as pl
-import plotly.express as px
-import pandas as pd
 from scipy.cluster.hierarchy import dendrogram, leaves_list, linkage, optimal_leaf_ordering
 from scipy.spatial.distance import squareform
 
+from portfolio.core.compat import dataclass_compat as dataclass
 
-DataFrameLike = Union[pd.DataFrame, "pl.DataFrame"] 
+DataFrameLike = Union[pd.DataFrame, "pl.DataFrame"]
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers numéricos
 # ──────────────────────────────────────────────────────────────────────────────
 
 ArrayLike = Union[np.ndarray, Sequence[float]]
+
 
 @dataclass(frozen=True, slots=True)
 class HeatmapOrder:
@@ -37,6 +37,7 @@ def _to_numpy_matrix(x: np.ndarray | pl.DataFrame) -> np.ndarray:
         return x.to_numpy()
     raise TypeError("Expected np.ndarray or polars.DataFrame")
 
+
 def _safe_corr_from_cov(Sigma: np.ndarray, eps: float = 1e-16) -> np.ndarray:
     if Sigma.ndim != 2 or Sigma.shape[0] != Sigma.shape[1]:
         raise ValueError("Sigma must be a square matrix")
@@ -46,6 +47,7 @@ def _safe_corr_from_cov(Sigma: np.ndarray, eps: float = 1e-16) -> np.ndarray:
     R = np.clip(R, -1.0, 1.0)
     # simetriza por estabilidad numérica
     return 0.5 * (R + R.T)
+
 
 def _hierarchical_order(Corr: np.ndarray, order_cfg: HeatmapOrder) -> np.ndarray:
     # distancia "correlation distance": sqrt(0.5*(1-ρ))
@@ -58,13 +60,16 @@ def _hierarchical_order(Corr: np.ndarray, order_cfg: HeatmapOrder) -> np.ndarray
     order = leaves_list(Z)
     return order
 
+
 def _apply_order(mat: np.ndarray, order: np.ndarray) -> np.ndarray:
     return mat[np.ix_(order, order)]
+
 
 def _to_pandas(df: DataFrameLike) -> pd.DataFrame:
     """Convert Polars DataFrame to Pandas if needed."""
     try:
         import polars as pl  # type: ignore
+
         if isinstance(df, pl.DataFrame):
             return df.to_pandas()
     except Exception:
@@ -77,6 +82,7 @@ def _to_pandas(df: DataFrameLike) -> pd.DataFrame:
 # ──────────────────────────────────────────────────────────────────────────────
 # 1) Correlation Heatmap (clustered)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def corr_heatmap(
     Sigma_or_Corr: np.ndarray | pl.DataFrame,
@@ -132,7 +138,7 @@ def corr_heatmap(
 
 # Optional SciPy import with safe fallback
 try:
-    from scipy.cluster.hierarchy import linkage, dendrogram
+    from scipy.cluster.hierarchy import dendrogram, linkage
     from scipy.spatial.distance import squareform
 except Exception:
     linkage = None
@@ -165,7 +171,11 @@ def corr_dendrogram(
         Plot title.
     """
     # ---- Sanitize input matrix ----
-    M = Sigma_or_Corr.to_numpy() if hasattr(Sigma_or_Corr, "to_numpy") else np.asarray(Sigma_or_Corr, dtype=float)
+    M = (
+        Sigma_or_Corr.to_numpy()
+        if hasattr(Sigma_or_Corr, "to_numpy")
+        else np.asarray(Sigma_or_Corr, dtype=float)
+    )
     M = np.asarray(M, dtype=float)
     if M.ndim != 2 or M.shape[0] != M.shape[1]:
         raise ValueError("corr_dendrogram: input must be a square matrix (NxN).")
@@ -259,6 +269,7 @@ def corr_dendrogram(
 # 3) Covariance Spectrum (eigenvalues)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def covariance_spectrum(
     Sigma: np.ndarray | pl.DataFrame,
     *,
@@ -297,15 +308,23 @@ def covariance_spectrum(
 # Small internal helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def _placeholder_figure(title: str, subtitle: str = "No data available") -> go.Figure:
     """Return a minimal placeholder figure instead of raising exceptions."""
     fig = go.Figure()
     fig.add_annotation(
         text=subtitle,
-        xref="paper", yref="paper", x=0.5, y=0.5, showarrow=False, align="center", font=dict(size=14)
+        xref="paper",
+        yref="paper",
+        x=0.5,
+        y=0.5,
+        showarrow=False,
+        align="center",
+        font=dict(size=14),
     )
     fig.update_layout(title=title, margin=dict(l=60, r=20, t=60, b=60), showlegend=False)
     return fig
+
 
 def _to_1d_float(x) -> np.ndarray:
     """Coerce input to a 1-D float array; on failure return an empty array."""
@@ -326,6 +345,7 @@ def _to_1d_float(x) -> np.ndarray:
 # 4) Efficient Frontier
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def efficient_frontier(
     *args,
     mu: np.ndarray | None = None,
@@ -335,9 +355,9 @@ def efficient_frontier(
     rets_closed: Iterable[float] | None = None,
     risks_box: Iterable[float] | None = None,
     rets_box: Iterable[float] | None = None,
-    msr_point: Tuple[float, float] | None = None,
-    minvar_point: Tuple[float, float] | None = None,
-    custom_points: dict[str, Tuple[float, float]] | None = None,
+    msr_point: tuple[float, float] | None = None,
+    minvar_point: tuple[float, float] | None = None,
+    custom_points: dict[str, tuple[float, float]] | None = None,
     title: str = "Efficient Frontier",
     **kwargs,
 ) -> go.Figure:
@@ -351,7 +371,7 @@ def efficient_frontier(
     # Backward compatibility: efficient_frontier(risks, rets)
     if len(args) == 2 and risks_closed is None and rets_closed is None:
         risks_closed = args[0]
-        rets_closed  = args[1]
+        rets_closed = args[1]
 
     def _clean_and_sort(x_raw, y_raw):
         x = _to_1d_float(x_raw)
@@ -369,7 +389,7 @@ def efficient_frontier(
 
     # Clean/ordered series
     x_c, y_c = _clean_and_sort(risks_closed, rets_closed)
-    x_b, y_b = _clean_and_sort(risks_box,   rets_box)
+    x_b, y_b = _clean_and_sort(risks_box, rets_box)
 
     # Optional shaded gap between the two frontiers over common σ domain
     def _add_constraint_gap_fill(fig: go.Figure, x1, y1, x2, y2):
@@ -378,20 +398,22 @@ def efficient_frontier(
                 xmin = max(x1.min(), x2.min())
                 xmax = min(x1.max(), x2.max())
                 if np.isfinite([xmin, xmax]).all() and xmax > xmin:
-                    xs  = np.linspace(xmin, xmax, 200)
+                    xs = np.linspace(xmin, xmax, 200)
                     y1i = np.interp(xs, x1, y1)
                     y2i = np.interp(xs, x2, y2)
-                    fig.add_trace(go.Scatter(
-                        x=np.concatenate([xs, xs[::-1]]),
-                        y=np.concatenate([y1i, y2i[::-1]]),
-                        fill="toself",
-                        mode="lines",
-                        line=dict(width=0),
-                        fillcolor="rgba(99,110,250,0.15)",
-                        name="Constraint gap",
-                        hoverinfo="skip",
-                        showlegend=True,
-                    ))
+                    fig.add_trace(
+                        go.Scatter(
+                            x=np.concatenate([xs, xs[::-1]]),
+                            y=np.concatenate([y1i, y2i[::-1]]),
+                            fill="toself",
+                            mode="lines",
+                            line=dict(width=0),
+                            fillcolor="rgba(99,110,250,0.15)",
+                            name="Constraint gap",
+                            hoverinfo="skip",
+                            showlegend=True,
+                        )
+                    )
         except Exception:
             # Never fail on cosmetic fill
             pass
@@ -401,49 +423,73 @@ def efficient_frontier(
 
     # Closed-form curve
     if x_c.size:
-        fig.add_trace(go.Scatter(
-            x=x_c, y=y_c, mode="lines", name="Closed-form (no box)",
-            line=dict(width=2),
-            hovertemplate="σ=%{x:.4f}<br>μ=%{y:.4f}<extra>Closed-form</extra>",
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=x_c,
+                y=y_c,
+                mode="lines",
+                name="Closed-form (no box)",
+                line=dict(width=2),
+                hovertemplate="σ=%{x:.4f}<br>μ=%{y:.4f}<extra>Closed-form</extra>",
+            )
+        )
 
     # Box-projected curve
     if x_b.size:
-        fig.add_trace(go.Scatter(
-            x=x_b, y=y_b, mode="lines", name="Box-projected",
-            line=dict(width=2, dash="dash"),
-            hovertemplate="σ=%{x:.4f}<br>μ=%{y:.4f}<extra>Box-projected</extra>",
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=x_b,
+                y=y_b,
+                mode="lines",
+                name="Box-projected",
+                line=dict(width=2, dash="dash"),
+                hovertemplate="σ=%{x:.4f}<br>μ=%{y:.4f}<extra>Box-projected</extra>",
+            )
+        )
 
     # Key points (MinVar & MSR)
     if isinstance(minvar_point, (tuple, list)) and len(minvar_point) == 2:
         sx, ry = float(minvar_point[0]), float(minvar_point[1])
         if np.isfinite(sx) and np.isfinite(ry):
-            fig.add_trace(go.Scatter(
-                x=[sx], y=[ry], mode="markers", name="MinVar",
-                marker=dict(size=10, symbol="diamond"),
-                hovertemplate="MinVar<br>σ=%{x:.4f}<br>μ=%{y:.4f}<extra></extra>",
-            ))
+            fig.add_trace(
+                go.Scatter(
+                    x=[sx],
+                    y=[ry],
+                    mode="markers",
+                    name="MinVar",
+                    marker=dict(size=10, symbol="diamond"),
+                    hovertemplate="MinVar<br>σ=%{x:.4f}<br>μ=%{y:.4f}<extra></extra>",
+                )
+            )
 
     title_suffix = ""
     if isinstance(msr_point, (tuple, list)) and len(msr_point) == 2:
         sx, ry = float(msr_point[0]), float(msr_point[1])
         if np.isfinite(sx) and np.isfinite(ry):
-            fig.add_trace(go.Scatter(
-                x=[sx], y=[ry], mode="markers", name="Max Sharpe",
-                marker=dict(size=11, symbol="star"),
-                hovertemplate="Max Sharpe<br>σ=%{x:.4f}<br>μ=%{y:.4f}<extra></extra>",
-            ))
+            fig.add_trace(
+                go.Scatter(
+                    x=[sx],
+                    y=[ry],
+                    mode="markers",
+                    name="Max Sharpe",
+                    marker=dict(size=11, symbol="star"),
+                    hovertemplate="Max Sharpe<br>σ=%{x:.4f}<br>μ=%{y:.4f}<extra></extra>",
+                )
+            )
             # CAL (if rf is provided)
             if np.isfinite(rf) and sx > 1e-12:
                 sharpe = (ry - rf) / sx
                 title_suffix = f" · Sharpe*={sharpe:.2f}"
-                fig.add_trace(go.Scatter(
-                    x=[0.0, sx], y=[rf, ry],
-                    mode="lines", name="CAL",
-                    line=dict(width=1, dash="dot"),
-                    hovertemplate="CAL<extra></extra>",
-                ))
+                fig.add_trace(
+                    go.Scatter(
+                        x=[0.0, sx],
+                        y=[rf, ry],
+                        mode="lines",
+                        name="CAL",
+                        line=dict(width=1, dash="dot"),
+                        hovertemplate="CAL<extra></extra>",
+                    )
+                )
 
     # Custom points
     if isinstance(custom_points, dict) and custom_points:
@@ -451,26 +497,35 @@ def efficient_frontier(
             if isinstance(pt, (tuple, list)) and len(pt) == 2:
                 sx, ry = float(pt[0]), float(pt[1])
                 if np.isfinite(sx) and np.isfinite(ry):
-                    fig.add_trace(go.Scatter(
-                        x=[sx], y=[ry], mode="markers+text",
-                        name=str(label),
-                        text=[str(label)], textposition="top center",
-                        marker=dict(size=8),
-                        hovertemplate=f"{label}<br>σ=%{{x:.4f}}<br>μ=%{{y:.4f}}<extra></extra>",
-                    ))
+                    fig.add_trace(
+                        go.Scatter(
+                            x=[sx],
+                            y=[ry],
+                            mode="markers+text",
+                            name=str(label),
+                            text=[str(label)],
+                            textposition="top center",
+                            marker=dict(size=8),
+                            hovertemplate=f"{label}<br>σ=%{{x:.4f}}<br>μ=%{{y:.4f}}<extra></extra>",
+                        )
+                    )
 
     # Auto ranges (do not crash if everything is empty)
     candidates_x = []
     candidates_y = []
-    if x_c.size: candidates_x.append(x_c.max())
-    if x_b.size: candidates_x.append(x_b.max())
+    if x_c.size:
+        candidates_x.append(x_c.max())
+    if x_b.size:
+        candidates_x.append(x_b.max())
     if isinstance(msr_point, (tuple, list)) and len(msr_point) == 2:
         candidates_x.append(float(msr_point[0]))
         candidates_y.append(float(msr_point[1]))
     if isinstance(minvar_point, (tuple, list)) and len(minvar_point) == 2:
         candidates_y.append(float(minvar_point[1]))
-    if y_c.size: candidates_y.append(y_c.max())
-    if y_b.size: candidates_y.append(y_b.max())
+    if y_c.size:
+        candidates_y.append(y_c.max())
+    if y_b.size:
+        candidates_y.append(y_b.max())
 
     x_max = np.nanmax(candidates_x) if candidates_x else np.nan
     y_max = np.nanmax(candidates_y) if candidates_y else np.nan
@@ -481,14 +536,17 @@ def efficient_frontier(
     fig.update_layout(
         title=title + title_suffix,
         xaxis=dict(
-            title="Risk (σ)", rangemode="tozero",
+            title="Risk (σ)",
+            rangemode="tozero",
             range=[0, x_max * 1.05] if np.isfinite(x_max) and x_max > 0 else None,
-            showgrid=True, zeroline=True,
+            showgrid=True,
+            zeroline=True,
         ),
         yaxis=dict(
             title="Return (μ)",
             range=[None, y_max * 1.06] if np.isfinite(y_max) and y_max > 0 else None,
-            showgrid=True, zeroline=True,
+            showgrid=True,
+            zeroline=True,
         ),
         margin=dict(l=60, r=20, t=60, b=60),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
@@ -500,6 +558,7 @@ def efficient_frontier(
 # ──────────────────────────────────────────────────────────────────────────────
 # 5) Weights Barplot
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def weights_bar(
     weights,
@@ -538,20 +597,18 @@ def weights_bar(
     l_plot = [lab[i] for i in idx]
 
     if horizontal:
-        fig = go.Figure(go.Bar(
-            x=w_plot, y=l_plot, orientation="h",
-            hovertemplate="%{y}: %{x:.2%}<extra></extra>"
-        ))
+        fig = go.Figure(
+            go.Bar(
+                x=w_plot, y=l_plot, orientation="h", hovertemplate="%{y}: %{x:.2%}<extra></extra>"
+            )
+        )
         fig.update_layout(
             xaxis_tickformat=".0%",
             title=title,
             margin=dict(l=90, r=20, t=60, b=40),
         )
     else:
-        fig = go.Figure(go.Bar(
-            x=l_plot, y=w_plot,
-            hovertemplate="%{x}: %{y:.2%}<extra></extra>"
-        ))
+        fig = go.Figure(go.Bar(x=l_plot, y=w_plot, hovertemplate="%{x}: %{y:.2%}<extra></extra>"))
         fig.update_layout(
             yaxis_tickformat=".0%",
             title=title,
@@ -563,6 +620,7 @@ def weights_bar(
 # ──────────────────────────────────────────────────────────────────────────────
 # 6) Weights Heatmap (scenarios)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def weights_heatmap(
     W: np.ndarray,
@@ -585,7 +643,9 @@ def weights_heatmap(
     assets = list(asset_labels)[:N] if asset_labels is not None else [f"A{i}" for i in range(N)]
     if len(assets) != N:
         assets = [f"A{i}" for i in range(N)]
-    scenarios = list(scenario_labels)[:S] if scenario_labels is not None else [f"S{i}" for i in range(S)]
+    scenarios = (
+        list(scenario_labels)[:S] if scenario_labels is not None else [f"S{i}" for i in range(S)]
+    )
     if len(scenarios) != S:
         scenarios = [f"S{i}" for i in range(S)]
 
@@ -593,8 +653,10 @@ def weights_heatmap(
     W_plot = np.where(np.isfinite(W), W, 0.0)
     zmin = np.nanmin(W_plot) if np.isfinite(W_plot).any() else 0.0
     zmax = np.nanmax(W_plot) if np.isfinite(W_plot).any() else 0.0
-    if not np.isfinite(zmin): zmin = 0.0
-    if not np.isfinite(zmax): zmax = 0.0
+    if not np.isfinite(zmin):
+        zmin = 0.0
+    if not np.isfinite(zmax):
+        zmax = 0.0
     if zmax == zmin:
         # Avoid a flat colorbar; widen slightly
         zmax = zmin + (abs(zmin) + 1e-6)
@@ -618,20 +680,13 @@ def weights_heatmap(
     return fig
 
 
-
-
-
 ArrayLike = np.ndarray  # simple alias here; adjust if you have a typed alias elsewhere
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # 1) Equity Curve + Drawdown
 # ──────────────────────────────────────────────────────────────────────────────
-def equity_and_drawdown(
-    dates: Sequence,
-    equity,
-    *,
-    title: str = "Equity & Drawdown"
-) -> go.Figure:
+def equity_and_drawdown(dates: Sequence, equity, *, title: str = "Equity & Drawdown") -> go.Figure:
     """
     Equity curve (level) and drawdown (as a ratio, formatted as %) on a secondary y-axis.
     """
@@ -653,25 +708,31 @@ def equity_and_drawdown(
                 dd[i] = (v / peak) - 1.0
 
     fig = go.Figure()
-    fig.add_trace(go.Scatter(
-        x=dates, y=eq, mode="lines", name="Equity",
-        hovertemplate="%{x}<br>%{y:.4f}<extra></extra>"
-    ))
-    fig.add_trace(go.Scatter(
-        x=dates, y=dd, mode="lines", name="Drawdown",
-        yaxis="y2", fill="tozeroy",
-        hovertemplate="%{x}<br>%{y:.2%}<extra></extra>"
-    ))
+    fig.add_trace(
+        go.Scatter(
+            x=dates,
+            y=eq,
+            mode="lines",
+            name="Equity",
+            hovertemplate="%{x}<br>%{y:.4f}<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=dates,
+            y=dd,
+            mode="lines",
+            name="Drawdown",
+            yaxis="y2",
+            fill="tozeroy",
+            hovertemplate="%{x}<br>%{y:.2%}<extra></extra>",
+        )
+    )
     fig.update_layout(
         title=title,
         xaxis=dict(title="Date"),
         yaxis=dict(title="Equity"),
-        yaxis2=dict(
-            title="Drawdown (%)",
-            overlaying="y",
-            side="right",
-            tickformat=".0%"
-        ),
+        yaxis2=dict(title="Drawdown (%)", overlaying="y", side="right", tickformat=".0%"),
         margin=dict(l=60, r=60, t=60, b=60),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
     )
@@ -697,22 +758,26 @@ def loss_distribution(
     x.sort()
 
     fig = go.Figure()
-    fig.add_trace(go.Histogram(x=x, nbinsx=bins, name="Losses", opacity=0.75, histnorm="probability"))
+    fig.add_trace(
+        go.Histogram(x=x, nbinsx=bins, name="Losses", opacity=0.75, histnorm="probability")
+    )
 
     for a in alphas:
         q = np.quantile(x, a)
         tail = x[x >= q]
         es = float(tail.mean()) if tail.size else np.nan
         fig.add_vline(
-            x=q, line_dash="dash",
+            x=q,
+            line_dash="dash",
             annotation_text=f"VaR {int(a*100)}%: {q:.2f}",
-            annotation_position="top"
+            annotation_position="top",
         )
         if np.isfinite(es):
             fig.add_vline(
-                x=es, line_dash="dot",
+                x=es,
+                line_dash="dot",
                 annotation_text=f"ES {int(a*100)}%: {es:.2f}",
-                annotation_position="top"
+                annotation_position="top",
             )
 
     fig.update_layout(
@@ -750,11 +815,16 @@ def scree_plot(
 
     fig = go.Figure()
     fig.add_trace(go.Bar(x=np.arange(1, len(exp) + 1), y=exp, name="Explained"))
-    fig.add_trace(go.Scatter(
-        x=np.arange(1, len(cum) + 1), y=cum, mode="lines+markers",
-        name="Cumulative", yaxis="y2",
-        hovertemplate="k=%{x}<br>cum=%{y:.1%}<extra></extra>"
-    ))
+    fig.add_trace(
+        go.Scatter(
+            x=np.arange(1, len(cum) + 1),
+            y=cum,
+            mode="lines+markers",
+            name="Cumulative",
+            yaxis="y2",
+            hovertemplate="k=%{x}<br>cum=%{y:.1%}<extra></extra>",
+        )
+    )
     fig.update_layout(
         title=title,
         xaxis_title="Component (k)",
@@ -775,7 +845,7 @@ def network_corr_graph(
     labels: Sequence[str] | None = None,
     *,
     is_cov: bool = True,
-    threshold: float = 0.3,        # draw edges with |ρ| >= threshold
+    threshold: float = 0.3,  # draw edges with |ρ| >= threshold
     title: str = "Correlation Network Graph",
 ) -> go.Figure:
     """
@@ -788,48 +858,73 @@ def network_corr_graph(
     if labels is None:
         labels = [f"A{i}" for i in range(n)]
 
-    theta = np.linspace(0, 2*np.pi, n, endpoint=False)
+    theta = np.linspace(0, 2 * np.pi, n, endpoint=False)
     xs = np.cos(theta)
     ys = np.sin(theta)
 
     pos_x, pos_y, pos_w = [], [], []
     neg_x, neg_y, neg_w = [], [], []
     for i in range(n):
-        for j in range(i+1, n):
+        for j in range(i + 1, n):
             rho = float(Corr[i, j])
             if np.isnan(rho) or abs(rho) < threshold:
                 continue
             segx = [xs[i], xs[j], None]
             segy = [ys[i], ys[j], None]
-            width = 1.0 + 3.0*abs(rho)
+            width = 1.0 + 3.0 * abs(rho)
             if rho >= 0:
-                pos_x += segx; pos_y += segy; pos_w.append(width)
+                pos_x += segx
+                pos_y += segy
+                pos_w.append(width)
             else:
-                neg_x += segx; neg_y += segy; neg_w.append(width)
+                neg_x += segx
+                neg_y += segy
+                neg_w.append(width)
 
     fig = go.Figure()
     if pos_x:
-        fig.add_trace(go.Scatter(
-            x=pos_x, y=pos_y, mode="lines", name="ρ ≥ 0",
-            line=dict(width=np.mean(pos_w) if pos_w else 1.5, color="rgba(0,120,255,0.5)"),
-            hoverinfo="none"
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=pos_x,
+                y=pos_y,
+                mode="lines",
+                name="ρ ≥ 0",
+                line=dict(width=np.mean(pos_w) if pos_w else 1.5, color="rgba(0,120,255,0.5)"),
+                hoverinfo="none",
+            )
+        )
     if neg_x:
-        fig.add_trace(go.Scatter(
-            x=neg_x, y=neg_y, mode="lines", name="ρ < 0",
-            line=dict(width=np.mean(neg_w) if neg_w else 1.5, color="rgba(255,80,80,0.5)"),
-            hoverinfo="none"
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=neg_x,
+                y=neg_y,
+                mode="lines",
+                name="ρ < 0",
+                line=dict(width=np.mean(neg_w) if neg_w else 1.5, color="rgba(255,80,80,0.5)"),
+                hoverinfo="none",
+            )
+        )
     deg = (np.abs(Corr) >= threshold).sum(axis=0) - 1
-    node_size = 10 + 3*np.clip(deg, 0, None)
-    fig.add_trace(go.Scatter(
-        x=xs, y=ys, mode="markers+text", text=list(labels), textposition="top center",
-        marker=dict(size=node_size, line=dict(width=1, color="#333")),
-        hovertemplate="%{text}<extra></extra>", name="assets"
-    ))
+    node_size = 10 + 3 * np.clip(deg, 0, None)
+    fig.add_trace(
+        go.Scatter(
+            x=xs,
+            y=ys,
+            mode="markers+text",
+            text=list(labels),
+            textposition="top center",
+            marker=dict(size=node_size, line=dict(width=1, color="#333")),
+            hovertemplate="%{text}<extra></extra>",
+            name="assets",
+        )
+    )
     fig.update_layout(
-        title=title, xaxis=dict(visible=False), yaxis=dict(visible=False),
-        showlegend=True, margin=dict(l=20, r=20, t=60, b=20), height=600
+        title=title,
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        showlegend=True,
+        margin=dict(l=20, r=20, t=60, b=20),
+        height=600,
     )
     return fig
 
@@ -858,11 +953,11 @@ def risk_contributions_bar(
         idx = idx[-topn:]
     v_plot = v[idx]
     l_plot = [labels[i] for i in idx]
-    fig = go.Figure(go.Bar(x=v_plot, y=l_plot, orientation="h",
-                           hovertemplate="%{y}: %{x:.4f}<extra></extra>"))
+    fig = go.Figure(
+        go.Bar(x=v_plot, y=l_plot, orientation="h", hovertemplate="%{y}: %{x:.4f}<extra></extra>")
+    )
     fig.update_layout(
-        title=title, margin=dict(l=80, r=20, t=60, b=40),
-        xaxis_title="Contribution", yaxis_title=""
+        title=title, margin=dict(l=80, r=20, t=60, b=40), xaxis_title="Contribution", yaxis_title=""
     )
     return fig
 
@@ -882,10 +977,15 @@ def rolling_lines(
     fig = go.Figure()
     for name, arr in series_dict.items():
         y = np.asarray(arr, dtype=float)
-        fig.add_trace(go.Scatter(
-            x=dates, y=y, mode="lines", name=name,
-            hovertemplate="%{x}<br>%{y:.4f}<extra></extra>"
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=dates,
+                y=y,
+                mode="lines",
+                name=name,
+                hovertemplate="%{x}<br>%{y:.4f}<extra></extra>",
+            )
+        )
     fig.update_layout(
         title=title,
         xaxis_title="Date",
@@ -904,7 +1004,7 @@ def corr_heatmap_gl(
     labels: Sequence[str] | None = None,
     *,
     is_cov: bool = True,
-    order: "HeatmapOrder" = None,   # keep your real type if available
+    order: HeatmapOrder = None,  # keep your real type if available
     zlim: tuple[float, float] = (-1.0, 1.0),
     title: str = "Correlation Heatmap (WebGL)",
 ) -> go.Figure:
@@ -930,8 +1030,11 @@ def corr_heatmap_gl(
 
     fig = go.Figure(
         data=go.Heatmapgl(
-            z=Corr_ord, x=labels_ord, y=labels_ord,
-            zmin=zlim[0], zmax=zlim[1],
+            z=Corr_ord,
+            x=labels_ord,
+            y=labels_ord,
+            zmin=zlim[0],
+            zmax=zlim[1],
             colorbar=dict(title="ρ"),
             hovertemplate="x=%{x}<br>y=%{y}<br>ρ=%{z:.3f}<extra></extra>",
         )
@@ -949,8 +1052,12 @@ def corr_heatmap_gl(
 # 8) Weights path vs γ
 # ──────────────────────────────────────────────────────────────────────────────
 def weights_path_gammas(
-    Ws: np.ndarray, gammas: Sequence[float], labels: Sequence[str], *, topn: int = 20,
-    title: str = "Weights path vs γ (top names)"
+    Ws: np.ndarray,
+    gammas: Sequence[float],
+    labels: Sequence[str],
+    *,
+    topn: int = 20,
+    title: str = "Weights path vs γ (top names)",
 ) -> go.Figure:
     """
     Each row of `Ws` corresponds to a γ. Plot trajectories of weights against log10(γ)
@@ -962,20 +1069,26 @@ def weights_path_gammas(
     g = np.asarray(gammas, dtype=float)
     x = np.log10(g)
     peak = np.max(Ws, axis=0)
-    idx = np.argsort(peak)[::-1][:min(topn, N)]
+    idx = np.argsort(peak)[::-1][: min(topn, N)]
     fig = go.Figure()
     for i in idx:
-        fig.add_trace(go.Scatter(
-            x=x, y=Ws[:, i], mode="lines", name=labels[i],
-            hovertemplate="log10 γ=%{x:.2f}<br>w=%{y:.2%}<extra></extra>"
-        ))
-    fig.update_layout(title=title, xaxis_title="log10(γ)", yaxis_title="Weight", yaxis_tickformat=".0%")
+        fig.add_trace(
+            go.Scatter(
+                x=x,
+                y=Ws[:, i],
+                mode="lines",
+                name=labels[i],
+                hovertemplate="log10 γ=%{x:.2f}<br>w=%{y:.2%}<extra></extra>",
+            )
+        )
+    fig.update_layout(
+        title=title, xaxis_title="log10(γ)", yaxis_title="Weight", yaxis_tickformat=".0%"
+    )
     return fig
 
 
 def turnover_vs_gamma(
-    Ws: np.ndarray, w_ref: np.ndarray, gammas: Sequence[float], *,
-    title: str = "Turnover vs γ"
+    Ws: np.ndarray, w_ref: np.ndarray, gammas: Sequence[float], *, title: str = "Turnover vs γ"
 ) -> go.Figure:
     """
     L1/L2 turnover vs γ using `Ws` (n_gamma x N) and a reference portfolio `w_ref`.
@@ -991,8 +1104,14 @@ def turnover_vs_gamma(
 
 
 def te_frontier(
-    mu: np.ndarray, Sigma: np.ndarray, w_bench: np.ndarray, Ws: np.ndarray, *,
-    title: str = "Tracking-Error Frontier", annualize: bool = False, periods_per_year: int = 252
+    mu: np.ndarray,
+    Sigma: np.ndarray,
+    w_bench: np.ndarray,
+    Ws: np.ndarray,
+    *,
+    title: str = "Tracking-Error Frontier",
+    annualize: bool = False,
+    periods_per_year: int = 252,
 ) -> go.Figure:
     """
     TE frontier: plot per-period (or annualized) expected return vs tracking error for a set of portfolios.
@@ -1016,14 +1135,21 @@ def te_frontier(
         mu_p = (1 + mu_p) ** periods_per_year - 1.0
         te = te * np.sqrt(periods_per_year)
 
-    fig = go.Figure(go.Scatter(
-        x=te, y=mu_p, mode="markers+lines", name="Portfolios",
-        hovertemplate="TE: %{x:.2%}<br>μ: %{y:.2%}<extra></extra>"
-    ))
+    fig = go.Figure(
+        go.Scatter(
+            x=te,
+            y=mu_p,
+            mode="markers+lines",
+            name="Portfolios",
+            hovertemplate="TE: %{x:.2%}<br>μ: %{y:.2%}<extra></extra>",
+        )
+    )
     fig.update_layout(
         title=title,
         xaxis_title=("Tracking Error (annualized)" if annualize else "Tracking Error (per period)"),
-        yaxis_title=("Expected Return (annualized)" if annualize else "Expected Return (per period)"),
+        yaxis_title=(
+            "Expected Return (annualized)" if annualize else "Expected Return (per period)"
+        ),
     )
     fig.update_xaxes(tickformat=".2%")
     fig.update_yaxes(tickformat=".2%")
@@ -1043,11 +1169,15 @@ def plot_drawdown(dates: list, equity: np.ndarray, title: str = "Drawdown") -> g
     cummax = np.maximum.accumulate(equity)
     dd = (equity / np.maximum(cummax, 1e-12)) - 1.0
     fig = go.Figure(go.Scatter(x=dates, y=dd, mode="lines", name="Drawdown"))
-    fig.update_layout(title=title, xaxis_title="Date", yaxis_title="Drawdown", template="plotly_white")
+    fig.update_layout(
+        title=title, xaxis_title="Date", yaxis_title="Drawdown", template="plotly_white"
+    )
     return fig
 
 
-def plot_weights_heatmap(dates: list, tickers: list[str], W: np.ndarray, title="Weights") -> go.Figure:
+def plot_weights_heatmap(
+    dates: list, tickers: list[str], W: np.ndarray, title="Weights"
+) -> go.Figure:
     avg_w = np.asarray(W, dtype=float).mean(axis=0)
     order = np.argsort(-avg_w)
     tickers_ord = [tickers[i] for i in order]
@@ -1092,12 +1222,15 @@ def plot_turnover(dates_or_df, turnover=None, title: str = "Turnover") -> go.Fig
 
     y = np.where(np.isfinite(y), y, np.nan)
     y = np.clip(y, 0.0, None)
-    fig = go.Figure(go.Scatter(
-        x=x, y=y, mode="lines", name="Turnover",
-        hovertemplate="%{x}<br>%{y:.1%}<extra></extra>"
-    ))
+    fig = go.Figure(
+        go.Scatter(
+            x=x, y=y, mode="lines", name="Turnover", hovertemplate="%{x}<br>%{y:.1%}<extra></extra>"
+        )
+    )
     fig.update_layout(
-        title=title, xaxis_title="Date", yaxis_title="Turnover (%)",
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Turnover (%)",
         yaxis=dict(tickformat=".0%"),
         margin=dict(l=60, r=40, t=60, b=60),
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
@@ -1106,18 +1239,28 @@ def plot_turnover(dates_or_df, turnover=None, title: str = "Turnover") -> go.Fig
     return fig
 
 
-def plot_tracking_error(dates: list, te: np.ndarray, title="Tracking Error (daily proxy)") -> go.Figure:
+def plot_tracking_error(
+    dates: list, te: np.ndarray, title="Tracking Error (daily proxy)"
+) -> go.Figure:
     te = np.asarray(te, dtype=float)
     if len(dates) != len(te):
         raise ValueError("`dates` and `te` must have the same length.")
     te = np.where(np.isfinite(te), te, np.nan)
-    fig = go.Figure(go.Scatter(
-        x=dates, y=te, mode="lines", name="TE",
-        hovertemplate="%{x}<br>TE: %{y:.2%}<extra></extra>"
-    ))
+    fig = go.Figure(
+        go.Scatter(
+            x=dates,
+            y=te,
+            mode="lines",
+            name="TE",
+            hovertemplate="%{x}<br>TE: %{y:.2%}<extra></extra>",
+        )
+    )
     fig.update_layout(
-        title=title, xaxis_title="Date", yaxis_title="TE (%)",
-        yaxis=dict(tickformat=".2%"), template="plotly_white"
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="TE (%)",
+        yaxis=dict(tickformat=".2%"),
+        template="plotly_white",
     )
     return fig
 
@@ -1127,7 +1270,9 @@ def plot_top_contributors(df_top: pl.DataFrame, title="Top Contributors") -> go.
     pdf = pdf.replace([np.inf, -np.inf], np.nan).dropna()
     pdf = pdf.sort_values("contrib_total", ascending=False)
     fig = go.Figure(go.Bar(x=pdf["ticker"], y=pdf["contrib_total"]))
-    fig.update_layout(title=title, xaxis_title="Ticker", yaxis_title="Total Contribution", template="plotly_white")
+    fig.update_layout(
+        title=title, xaxis_title="Ticker", yaxis_title="Total Contribution", template="plotly_white"
+    )
     return fig
 
 
@@ -1136,7 +1281,9 @@ def plot_group_contrib(df_group_total: pl.DataFrame, title="Group Contributions"
     pdf = pdf.replace([np.inf, -np.inf], np.nan).dropna()
     pdf = pdf.sort_values("contrib_total", ascending=False)
     fig = go.Figure(go.Bar(x=pdf["group"], y=pdf["contrib_total"]))
-    fig.update_layout(title=title, xaxis_title="Group", yaxis_title="Total Contribution", template="plotly_white")
+    fig.update_layout(
+        title=title, xaxis_title="Group", yaxis_title="Total Contribution", template="plotly_white"
+    )
     return fig
 
 
@@ -1146,35 +1293,51 @@ def plot_group_contrib_area(df: pl.DataFrame, title="Group Contributions Over Ti
         raise ValueError(f"Missing columns: {req}")
     pdf = (
         df.to_pandas()
-          .replace([np.inf, -np.inf], np.nan)
-          .dropna(subset=["date", "group", "contrib"])
-          .sort_values("date")
+        .replace([np.inf, -np.inf], np.nan)
+        .dropna(subset=["date", "group", "contrib"])
+        .sort_values("date")
     )
-    fig = px.area(pdf, x="date", y="contrib", color="group", title=title, labels={"contrib": "Contribution"})
+    fig = px.area(
+        pdf, x="date", y="contrib", color="group", title=title, labels={"contrib": "Contribution"}
+    )
     fig.update_layout(
-        template="plotly_white", xaxis_title="Date", yaxis_title="Contribution",
-        yaxis_tickformat=".2%", legend_title="Group",
-        margin=dict(l=60, r=40, t=60, b=60)
+        template="plotly_white",
+        xaxis_title="Date",
+        yaxis_title="Contribution",
+        yaxis_tickformat=".2%",
+        legend_title="Group",
+        margin=dict(l=60, r=40, t=60, b=60),
     )
     return fig
 
 
-def plot_brinson_cumulative(df_brinson: pl.DataFrame, title="Brinson-Fachler Attribution") -> go.Figure:
+def plot_brinson_cumulative(
+    df_brinson: pl.DataFrame, title="Brinson-Fachler Attribution"
+) -> go.Figure:
     cols = {"date", "alloc", "select", "interact", "total"}
     if not cols.issubset(set(df_brinson.columns)):
         raise ValueError(f"Missing columns in df_brinson. Expected: {cols}")
     pdf = df_brinson.to_pandas().replace([np.inf, -np.inf], np.nan).dropna()
     fig = go.Figure()
     for col in ["alloc", "select", "interact", "total"]:
-        fig.add_trace(go.Scatter(
-            x=pdf["date"], y=pdf[col], mode="lines", name=col.capitalize(),
-            hovertemplate="%{x}<br>%{y:.2%}<extra></extra>"
-        ))
+        fig.add_trace(
+            go.Scatter(
+                x=pdf["date"],
+                y=pdf[col],
+                mode="lines",
+                name=col.capitalize(),
+                hovertemplate="%{x}<br>%{y:.2%}<extra></extra>",
+            )
+        )
     fig.update_layout(
-        title=title, xaxis_title="Date", yaxis_title="Attribution (%)",
-        yaxis=dict(tickformat=".0%"), template="plotly_white"
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Attribution (%)",
+        yaxis=dict(tickformat=".0%"),
+        template="plotly_white",
     )
     return fig
+
 
 # =========================
 # Advanced attribution plots (non-breaking additions)
@@ -1237,13 +1400,19 @@ def plot_cumulative_contrib_curves_adv(
     )
     keep = set(totals["ticker"].to_list())
     df_top = (
-        df_asset_daily
-        .filter(pl.col("ticker").is_in(keep))
+        df_asset_daily.filter(pl.col("ticker").is_in(keep))
         .sort(["ticker", "date"])
         .with_columns(pl.col("contrib").cum_sum().over("ticker").alias("cum_contrib"))
     )
     pdf = df_top.select(["date", "ticker", "cum_contrib"]).to_pandas()
-    fig = px.line(pdf, x="date", y="cum_contrib", color="ticker", title=title, labels={"cum_contrib": "Cumulative"})
+    fig = px.line(
+        pdf,
+        x="date",
+        y="cum_contrib",
+        color="ticker",
+        title=title,
+        labels={"cum_contrib": "Cumulative"},
+    )
     fig.update_layout(template="plotly_white")
     fig.update_yaxes(tickformat=".2%")
     return fig
@@ -1259,11 +1428,15 @@ def plot_brinson_components_bar_adv(
     needed = {"date", "alloc", "select", "interact", "total"}
     if not needed.issubset(set(df_brinson.columns)):
         raise ValueError("df_brinson must contain 'date','alloc','select','interact','total'")
-    last = df_brinson.sort("date").tail(1).select(["alloc", "select", "interact", "total"]).to_pandas()
+    last = (
+        df_brinson.sort("date").tail(1).select(["alloc", "select", "interact", "total"]).to_pandas()
+    )
     last = last.replace([np.inf, -np.inf], np.nan).dropna()
     vals = last.iloc[0].values if len(last) else [0, 0, 0, 0]
     fig = go.Figure(go.Bar(x=["Allocation", "Selection", "Interaction", "Total"], y=vals))
-    fig.update_layout(title=title, template="plotly_white", xaxis_title="", yaxis_title="Attribution")
+    fig.update_layout(
+        title=title, template="plotly_white", xaxis_title="", yaxis_title="Attribution"
+    )
     if as_percent:
         fig.update_yaxes(tickformat=".2%")
     return fig
@@ -1287,18 +1460,19 @@ def plot_brinson_components_area_adv(
         .sort_values("date")
     )
     pdf_m = pdf.melt(id_vars="date", var_name="component", value_name="value")
-    fig = px.area(pdf_m, x="date", y="value", color="component", title=title, labels={"value": "Attribution"})
+    fig = px.area(
+        pdf_m, x="date", y="value", color="component", title=title, labels={"value": "Attribution"}
+    )
     fig.update_layout(template="plotly_white", legend_title="Component")
     if as_percent:
         fig.update_yaxes(tickformat=".0%")
     return fig
 
 
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Extra attribution plots
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def plot_contrib_heatmap_daily(
     df_asset_daily: pl.DataFrame,
@@ -1316,8 +1490,7 @@ def plot_contrib_heatmap_daily(
         raise ValueError("df_asset_daily must include 'date','ticker','contrib'.")
 
     pdf = (
-        df_asset_daily
-        .select(["date", "ticker", "contrib"])
+        df_asset_daily.select(["date", "ticker", "contrib"])
         .to_pandas()
         .replace([np.inf, -np.inf], np.nan)
         .dropna(subset=["date", "ticker", "contrib"])
@@ -1326,7 +1499,9 @@ def plot_contrib_heatmap_daily(
     if tickers_order:
         cat = pd.Categorical(pdf["ticker"], categories=tickers_order, ordered=True)
         pdf = pdf.assign(ticker=cat).sort_values(["ticker", "date"])
-    pivot = pdf.pivot_table(index="ticker", columns="date", values="contrib", aggfunc="sum", fill_value=0.0)
+    pivot = pdf.pivot_table(
+        index="ticker", columns="date", values="contrib", aggfunc="sum", fill_value=0.0
+    )
     # Ensure increasing date order on columns
     pivot = pivot.reindex(sorted(pivot.columns), axis=1)
 
@@ -1410,8 +1585,7 @@ def plot_group_share_area_from_share(
         raise ValueError("df_share must include 'date','group','share'.")
 
     pdf = (
-        df_share
-        .select(["date", "group", "share"])
+        df_share.select(["date", "group", "share"])
         .to_pandas()
         .replace([np.inf, -np.inf], np.nan)
         .dropna(subset=["date", "group", "share"])
@@ -1446,14 +1620,15 @@ def plot_brinson_by_group_area(
 
     req = {"date", "group_id", "alloc", "select", "interact", "total"}
     if not req.issubset(set(df_brinson_g.columns)):
-        raise ValueError("df_brinson_g must come from brinson_fachler_timeseries(..., by_group=True).")
+        raise ValueError(
+            "df_brinson_g must come from brinson_fachler_timeseries(..., by_group=True)."
+        )
 
     if component not in {"alloc", "select", "interact", "total"}:
         raise ValueError("component must be one of {'alloc','select','interact','total'}.")
 
     pdf = (
-        df_brinson_g
-        .select(["date", "group_id", component])
+        df_brinson_g.select(["date", "group_id", component])
         .to_pandas()
         .replace([np.inf, -np.inf], np.nan)
         .dropna()
@@ -1481,6 +1656,7 @@ def plot_brinson_by_group_area(
     )
     return fig
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Brinson – extras (safe add-ons)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1496,17 +1672,15 @@ def plot_brinson_cumulative_components(
     if not need.issubset(set(df_brinson.columns)):
         raise ValueError(f"Missing columns in df_brinson: {need}")
 
-    df_cum = df_brinson.with_columns([
-        pl.col("alloc").cum_sum().alias("alloc_cum"),
-        pl.col("select").cum_sum().alias("select_cum"),
-        pl.col("interact").cum_sum().alias("interact_cum"),
-        pl.col("total").cum_sum().alias("total_cum"),
-    ])
-    pdf = (
-        df_cum.to_pandas()
-        .replace([np.inf, -np.inf], np.nan)
-        .dropna(subset=["date"])
+    df_cum = df_brinson.with_columns(
+        [
+            pl.col("alloc").cum_sum().alias("alloc_cum"),
+            pl.col("select").cum_sum().alias("select_cum"),
+            pl.col("interact").cum_sum().alias("interact_cum"),
+            pl.col("total").cum_sum().alias("total_cum"),
+        ]
     )
+    pdf = df_cum.to_pandas().replace([np.inf, -np.inf], np.nan).dropna(subset=["date"])
 
     fig = go.Figure()
     for col in ["alloc_cum", "select_cum", "interact_cum", "total_cum"]:
@@ -1571,59 +1745,6 @@ def plot_brinson_final_bar(
     return fig
 
 
-def plot_brinson_by_group_area(
-    df_brinson_group: pl.DataFrame,
-    component: str = "total",
-    title: str = "Brinson by Group – Total (Cumulative)",
-) -> go.Figure:
-    """
-    Area chart by group for a chosen cumulative component.
-    Expects columns: ['date','group','alloc','select','interact','total'].
-    """
-    need = {"date", "group", "alloc", "select", "interact", "total"}
-    if not need.issubset(set(df_brinson_group.columns)):
-        raise ValueError(f"Missing columns in df_brinson_group: {need}")
-    if component not in {"alloc", "select", "interact", "total"}:
-        raise ValueError("component must be one of: alloc, select, interact, total")
-
-    pdf = (
-        df_brinson_group
-        .select(["date", "group", component])
-        .to_pandas()
-        .replace([np.inf, -np.inf], np.nan)
-        .dropna(subset=["date", "group"])
-        .sort_values("date")
-    )
-
-    # stack area by group (each group's cumulative series is already in df)
-    fig = go.Figure()
-    for g, gp in pdf.groupby("group"):
-        fig.add_trace(
-            go.Scatter(
-                x=gp["date"],
-                y=gp[component],
-                stackgroup="one",
-                mode="lines",
-                name=str(g),
-                hovertemplate="%{x}<br>%{y:.2%}<extra>"+str(g)+"</extra>",
-            )
-        )
-    fig.update_layout(
-        title=title,
-        xaxis_title="Date",
-        yaxis_title="Total",
-        yaxis_tickformat=".2%",
-        template="plotly_white",
-        margin=dict(l=60, r=40, t=60, b=60),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="left", x=0),
-    )
-    return fig
-
-
-
-
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Brinson – extras (safe add-ons)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -1636,19 +1757,36 @@ def plot_scenario_equity_panel(results: list, title: str = "Scenario Equity Pane
         dates = r.bt.get("dates", [])
         eq = r.bt.get("equity", [])
         fig.add_trace(go.Scatter(x=dates, y=eq, mode="lines", name=r.name))
-    fig.update_layout(title=title, xaxis_title="Date", yaxis_title="Equity", template="plotly_white")
+    fig.update_layout(
+        title=title, xaxis_title="Date", yaxis_title="Equity", template="plotly_white"
+    )
     return fig
 
-def plot_scenario_metrics_bars(df_metrics: pl.DataFrame, title: str = "Scenario Metrics") -> go.Figure:
+
+def plot_scenario_metrics_bars(
+    df_metrics: pl.DataFrame, title: str = "Scenario Metrics"
+) -> go.Figure:
 
     pdf = df_metrics.to_pandas()
     pdf = pdf.replace([np.inf, -np.inf], np.nan).dropna()
-    fig = px.bar(pdf.melt(id_vars="scenario"), x="scenario", y="value", color="variable", barmode="group", title=title)
+    fig = px.bar(
+        pdf.melt(id_vars="scenario"),
+        x="scenario",
+        y="value",
+        color="variable",
+        barmode="group",
+        title=title,
+    )
     fig.update_layout(template="plotly_white", xaxis_tickangle=-20)
     return fig
 
-def plot_weights_delta_heatmap(tickers: list[str], W_base: np.ndarray, W_scn: np.ndarray,
-                               title: str = "Δ Weights (Scenario - Baseline)") -> go.Figure:
+
+def plot_weights_delta_heatmap(
+    tickers: list[str],
+    W_base: np.ndarray,
+    W_scn: np.ndarray,
+    title: str = "Δ Weights (Scenario - Baseline)",
+) -> go.Figure:
 
     base = (W_base[-1] if W_base.ndim == 2 else W_base).astype(float)
     scn = (W_scn[-1] if W_scn.ndim == 2 else W_scn).astype(float)
@@ -1665,10 +1803,10 @@ def plot_weights_delta_heatmap(tickers: list[str], W_base: np.ndarray, W_scn: np
     return fig
 
 
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Scenarios
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def plot_tornado_sensitivity(
     df_sens: DataFrameLike,
@@ -1722,7 +1860,7 @@ def plot_equity_compare(
     equity_b: Sequence[float],
     name_a: str = "Baseline",
     name_b: str = "Scenario",
-    title: Optional[str] = None,
+    title: str | None = None,
 ) -> go.Figure:
 
     title = title or f"Equity Comparison — {name_a} vs {name_b}"
@@ -1745,9 +1883,10 @@ def plot_drawdown_compare(
     equity_b: Sequence[float],
     name_a: str = "Baseline",
     name_b: str = "Scenario",
-    title: Optional[str] = None,
+    title: str | None = None,
 ) -> go.Figure:
     """Compare drawdowns (%) between two equity curves."""
+
     def _dd_curve(eq: Sequence[float]) -> np.ndarray:
         eq = np.asarray(eq, dtype=float)
         if eq.size == 0:
@@ -1778,7 +1917,7 @@ def plot_metric_delta_bars(
     baseline_value: float,
     metric_col: str = "CAGR",
     scenario_name_col: str = "Scenario",
-    title: Optional[str] = None,
+    title: str | None = None,
 ) -> go.Figure:
 
     pdf = _to_pandas(df_metrics).copy()
@@ -1807,15 +1946,15 @@ def plot_metric_delta_bars(
 def plot_weights_compare_heatmap(
     dates: Sequence,
     tickers: Sequence[str],
-    weights_a: Union[np.ndarray, Sequence[Sequence[float]]],
-    weights_b: Union[np.ndarray, Sequence[Sequence[float]]],
+    weights_a: np.ndarray | Sequence[Sequence[float]],
+    weights_b: np.ndarray | Sequence[Sequence[float]],
     name_a: str = "Baseline",
     name_b: str = "Scenario",
     mode: str = "delta",  # {"delta", "absolute"}
-    title: Optional[str] = None,
-    zmax_abs: Optional[float] = None,
+    title: str | None = None,
+    zmax_abs: float | None = None,
 ) -> go.Figure:
-    
+
     # Coerce to numpy arrays
     A = np.asarray(weights_a, dtype=float)
     B = np.asarray(weights_b, dtype=float)

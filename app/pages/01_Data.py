@@ -9,7 +9,6 @@ import sys
 import time
 from datetime import date, datetime
 
-
 import numpy as np
 import plotly.express as px
 import polars as pl
@@ -17,6 +16,7 @@ import streamlit as st
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+from portfolio.core.compat import UTC
 from portfolio.features.returns import (
     compute_returns_from_prices_long,
     long_to_wide,
@@ -27,7 +27,7 @@ from portfolio.features.returns import (
 )
 from portfolio.io.cache import age_seconds, cache_path, invalidate, load_pl, save_json, save_pl
 from portfolio.io.data_loader import get_prices_long
-from portfolio.core.compat import UTC
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers (internos de esta página)
@@ -38,9 +38,12 @@ def _fmt_age(sec: float | None) -> str:
     m, s = divmod(int(sec), 60)
     h, m = divmod(m, 60)
     d, h = divmod(h, 24)
-    if d: return f"{d}d {h}h"
-    if h: return f"{h}h {m}m"
-    if m: return f"{m}m"
+    if d:
+        return f"{d}d {h}h"
+    if h:
+        return f"{h}h {m}m"
+    if m:
+        return f"{m}m"
     return f"{s}s"
 
 
@@ -51,13 +54,23 @@ def gaps_report(df_long: pl.DataFrame, threshold_days: int = 3) -> pl.DataFrame:
     )
     out = (
         df.group_by("ticker")
-          .agg([
-              pl.col("gap_days").max().fill_null(0).alias("max_gap_days"),
-              (pl.col("gap_days") > threshold_days).cast(pl.Int64).sum().alias("n_gaps_gt_thr"),
-              pl.when(pl.col("gap_days") > threshold_days).then(pl.col("date")).otherwise(None).min().alias("first_gap"),
-              pl.when(pl.col("gap_days") > threshold_days).then(pl.col("date")).otherwise(None).max().alias("last_gap"),
-          ])
-          .sort(["max_gap_days", "n_gaps_gt_thr"], descending=[True, True])
+        .agg(
+            [
+                pl.col("gap_days").max().fill_null(0).alias("max_gap_days"),
+                (pl.col("gap_days") > threshold_days).cast(pl.Int64).sum().alias("n_gaps_gt_thr"),
+                pl.when(pl.col("gap_days") > threshold_days)
+                .then(pl.col("date"))
+                .otherwise(None)
+                .min()
+                .alias("first_gap"),
+                pl.when(pl.col("gap_days") > threshold_days)
+                .then(pl.col("date"))
+                .otherwise(None)
+                .max()
+                .alias("last_gap"),
+            ]
+        )
+        .sort(["max_gap_days", "n_gaps_gt_thr"], descending=[True, True])
     )
     return out
 
@@ -65,11 +78,13 @@ def gaps_report(df_long: pl.DataFrame, threshold_days: int = 3) -> pl.DataFrame:
 def top_abs_moves(df_ret_long: pl.DataFrame, k: int = 5) -> pl.DataFrame:
     """Top-k movimientos absolutos por ticker (pre-winsor)."""
     df = df_ret_long.with_columns(pl.col("ret").abs().alias("abs_ret"))
-    df = df.with_columns(pl.col("abs_ret").rank(method="dense", descending=True).over("ticker").alias("rank"))
+    df = df.with_columns(
+        pl.col("abs_ret").rank(method="dense", descending=True).over("ticker").alias("rank")
+    )
     out = (
         df.filter(pl.col("rank") <= k)
-          .select(["ticker", "date", "ret", "abs_ret", "rank"])
-          .sort(["ticker", "rank", "date"])
+        .select(["ticker", "date", "ret", "abs_ret", "rank"])
+        .sort(["ticker", "rank", "date"])
     )
     return out
 
@@ -97,7 +112,7 @@ def _fingerprint(obj: dict) -> str:
         obj,
         sort_keys=True,
         separators=(",", ":"),
-        default=_json_default,   # serializador seguro
+        default=_json_default,  # serializador seguro
     ).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:16]
 
@@ -129,34 +144,42 @@ def _run_data_pipeline(
             invalidate("prices_long", price_cfg)
 
     # 1) Fetch precios (con caché)
-    df_prices = None if not force_refresh else None   # (igual que tenías)
+    df_prices = None if not force_refresh else None  # (igual que tenías)
     if df_prices is None:
         cached = load_pl("prices_long", price_cfg)
         df_prices = cached if (cached is not None and not force_refresh) else None
     if df_prices is None:
         df_prices = get_prices_long(
-            tickers=tickers, start=str(start), end=str(end),
-            interval="1d", adjust=True,
-            force_refresh=force_refresh, use_cache=True,
+            tickers=tickers,
+            start=str(start),
+            end=str(end),
+            interval="1d",
+            adjust=True,
+            force_refresh=force_refresh,
+            use_cache=True,
         )
         save_pl("prices_long", price_cfg, df_prices)
 
     # Normaliza dtypes/orden
-    df_prices = df_prices.with_columns([
-        pl.col("date").cast(pl.Datetime),
-        pl.col("ticker").cast(pl.Utf8),
-        pl.col("price").cast(pl.Float64),
-    ]).sort(["ticker","date"])
+    df_prices = df_prices.with_columns(
+        [
+            pl.col("date").cast(pl.Datetime),
+            pl.col("ticker").cast(pl.Utf8),
+            pl.col("price").cast(pl.Float64),
+        ]
+    ).sort(["ticker", "date"])
 
     # —— cobertura mínima por ticker ——
     price_coverage = (
         df_prices.group_by("ticker")
-        .agg([
-            pl.len().alias("n_rows"),
-            pl.col("price").is_null().sum().alias("n_na"),
-            pl.col("date").min().alias("start_eff"),
-            pl.col("date").max().alias("end_eff"),
-        ])
+        .agg(
+            [
+                pl.len().alias("n_rows"),
+                pl.col("price").is_null().sum().alias("n_na"),
+                pl.col("date").min().alias("start_eff"),
+                pl.col("date").max().alias("end_eff"),
+            ]
+        )
         .with_columns((pl.col("n_rows") - pl.col("n_na")).alias("n_valid"))
         .sort("ticker")
     )
@@ -168,7 +191,9 @@ def _run_data_pipeline(
         alive_set = set(alive["ticker"].to_list())
         df_prices = df_prices.filter(pl.col("ticker").is_in(list(alive_set)))
 
-    dropped_tickers_prices = dropped_prices_df["ticker"].to_list() if dropped_prices_df.height else []
+    dropped_tickers_prices = (
+        dropped_prices_df["ticker"].to_list() if dropped_prices_df.height else []
+    )
 
     # Si no queda ningún ticker, construye payload mínimo y sal
     if df_prices.select(pl.col("ticker").n_unique()).item() == 0:
@@ -176,10 +201,15 @@ def _run_data_pipeline(
             "provider": "Yahoo Finance",
             "generated_at_utc": datetime.now(UTC).isoformat(),
             "params": {
-                "tickers": tickers, "start": str(start), "end": str(end),
-                "interval": "1d", "adjust": True,
-                "ret_kind": ret_kind, "freq_prices": freq_prices,
-                "winsor_p": float(winsor_p), "freq_returns": freq_returns,
+                "tickers": tickers,
+                "start": str(start),
+                "end": str(end),
+                "interval": "1d",
+                "adjust": True,
+                "ret_kind": ret_kind,
+                "freq_prices": freq_prices,
+                "winsor_p": float(winsor_p),
+                "freq_returns": freq_returns,
             },
             "data_quality": {
                 "requested_period": {"start": str(start), "end": str(end)},
@@ -209,7 +239,7 @@ def _run_data_pipeline(
     df_ret_raw_long = compute_returns_from_prices_long(
         df_prices, freq=freq_prices, kind=ret_kind, drop_first=True
     ).collect()
-    df_ret_w   = winsorize_long(df_ret_raw_long, ret_col="ret", q=float(winsor_p))
+    df_ret_w = winsorize_long(df_ret_raw_long, ret_col="ret", q=float(winsor_p))
     df_ret_wide = long_to_wide(df_ret_w, value_col="ret_w")
     if freq_returns != freq_prices:
         df_ret_wide = returns_to_frequency_wide(df_ret_wide, freq=freq_returns, kind=ret_kind)
@@ -220,16 +250,18 @@ def _run_data_pipeline(
 
     cov_exprs = []
     for c in value_cols:
-        cov_exprs.extend([
-            pl.col(c).is_not_null().sum().alias(f"{c}__n_obs"),
-            pl.col(c).is_null().sum().alias(f"{c}__n_na"),
-        ])
+        cov_exprs.extend(
+            [
+                pl.col(c).is_not_null().sum().alias(f"{c}__n_obs"),
+                pl.col(c).is_null().sum().alias(f"{c}__n_na"),
+            ]
+        )
     tmp = df_ret_wide.select(cov_exprs)
 
     rows = []
     for c in value_cols:
         n_obs = int(tmp.select(f"{c}__n_obs").item() or 0)
-        n_na  = int(tmp.select(f"{c}__n_na").item() or 0)
+        n_na = int(tmp.select(f"{c}__n_na").item() or 0)
         cov_pct = (100.0 * n_obs / total_dates) if total_dates else 0.0
         rows.append((c, n_obs, n_na, total_dates, cov_pct))
 
@@ -247,11 +279,11 @@ def _run_data_pipeline(
 
     if total_dates > 0:
         first_row = df_ret_wide.head(1)
-        last_row  = df_ret_wide.tail(1)
+        last_row = df_ret_wide.tail(1)
         flags = []
         for c in value_cols:
             first_missing = bool(first_row.select(pl.col(c).is_null()).item())
-            last_missing  = bool(last_row.select(pl.col(c).is_null()).item())
+            last_missing = bool(last_row.select(pl.col(c).is_null()).item())
             flags.append((c, first_missing, last_missing))
 
         flags_df = pl.DataFrame(
@@ -264,7 +296,8 @@ def _run_data_pipeline(
 
     dropped_tickers_returns = (
         ret_coverage.filter(pl.col("n_obs") < 2)["ticker"].to_list()
-        if total_dates > 0 else value_cols
+        if total_dates > 0
+        else value_cols
     )
 
     if dropped_tickers_returns:
@@ -272,19 +305,17 @@ def _run_data_pipeline(
         df_ret_wide = df_ret_wide.select(keep)
 
     # Cobertura completa para UI/meta
-    coverage_full = (
-        ret_coverage.join(
-            price_coverage.select(["ticker", "start_eff", "end_eff"]),
-            on="ticker",
-            how="left",
-        )
+    coverage_full = ret_coverage.join(
+        price_coverage.select(["ticker", "start_eff", "end_eff"]),
+        on="ticker",
+        how="left",
     )
 
     # Excluidos finales
     dropped_tickers = sorted(set(dropped_tickers_prices) | set(dropped_tickers_returns))
 
     # 3) Salud/diagnóstico
-    mr   = missing_report_wide(df_ret_wide)
+    mr = missing_report_wide(df_ret_wide)
     gaps = gaps_report(df_prices, threshold_days=int(gap_thr))
     out_top = top_abs_moves(df_ret_raw_long, k=int(topk_out))
     stats = summary_stats(df_ret_wide, risk_free=0.0)
@@ -292,25 +323,34 @@ def _run_data_pipeline(
     # 4) Metadata reproducible
     eff = (
         df_prices.group_by("ticker")
-                 .agg([pl.col("date").min().alias("start_eff"),
-                       pl.col("date").max().alias("end_eff"),
-                       pl.len().alias("n_rows")])
-                 .sort("ticker")
+        .agg(
+            [
+                pl.col("date").min().alias("start_eff"),
+                pl.col("date").max().alias("end_eff"),
+                pl.len().alias("n_rows"),
+            ]
+        )
+        .sort("ticker")
     )
-    eff_json = (
-        eff.with_columns([
+    eff_json = eff.with_columns(
+        [
             pl.col("start_eff").dt.to_string().alias("start_eff"),
             pl.col("end_eff").dt.to_string().alias("end_eff"),
-        ]).to_dicts()
-    )
+        ]
+    ).to_dicts()
     meta = {
         "provider": "Yahoo Finance",
         "generated_at_utc": datetime.now(UTC).isoformat(),  # 👈 sin `UTC` de 3.11
         "params": {
-            "tickers": tickers, "start": str(start), "end": str(end),
-            "interval": "1d", "adjust": True,
-            "ret_kind": ret_kind, "freq_prices": freq_prices,
-            "winsor_p": float(winsor_p), "freq_returns": freq_returns,
+            "tickers": tickers,
+            "start": str(start),
+            "end": str(end),
+            "interval": "1d",
+            "adjust": True,
+            "ret_kind": ret_kind,
+            "freq_prices": freq_prices,
+            "winsor_p": float(winsor_p),
+            "freq_returns": freq_returns,
         },
         "stats": {
             "n_rows_prices": int(df_prices.height),
@@ -323,10 +363,12 @@ def _run_data_pipeline(
             "requested_period": {"start": str(start), "end": str(end)},
             "dropped_tickers": dropped_tickers,
         },
-        "coverage_table": coverage_full.with_columns([
-            pl.col("start_eff").dt.to_string(),
-            pl.col("end_eff").dt.to_string(),
-        ]).to_dicts(),
+        "coverage_table": coverage_full.with_columns(
+            [
+                pl.col("start_eff").dt.to_string(),
+                pl.col("end_eff").dt.to_string(),
+            ]
+        ).to_dicts(),
         "cache": {
             "file": str(cache_path("prices_long", price_cfg)),
             "age_seconds": float(age_seconds("prices_long", price_cfg) or 0.0),
@@ -339,14 +381,17 @@ def _run_data_pipeline(
         "df_prices": df_prices,
         "df_ret_raw_long": df_ret_raw_long,
         "df_ret_wide": df_ret_wide,
-        "mr": mr, "gaps": gaps, "out_top": out_top,
-        "stats": stats, "eff": eff, "meta": meta,
+        "mr": mr,
+        "gaps": gaps,
+        "out_top": out_top,
+        "stats": stats,
+        "eff": eff,
+        "meta": meta,
         # 👇 ANTES referenciabas meta_partial/empty_df (no existen aquí)
         "coverage": coverage_full,
         "dropped_tickers": dropped_tickers,
         "t_elapsed": time.perf_counter() - t0,
     }
-
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -418,7 +463,9 @@ with st.expander("Options", expanded=False):
     with colF:
         invalidate_old = st.checkbox("Invalidate cache > 24h", value=True)
     with colG:
-        gap_thr = st.number_input("Gap threshold (days)", min_value=1, max_value=30, value=3, step=1)
+        gap_thr = st.number_input(
+            "Gap threshold (days)", min_value=1, max_value=30, value=3, step=1
+        )
     with colH:
         topk_out = st.number_input("Top-K outliers", min_value=3, max_value=20, value=5, step=1)
 
@@ -445,11 +492,17 @@ if st.button("Load & Preview", type="primary"):
 
     payload = _run_data_pipeline(
         tickers=tickers,
-        start=start, end=end,
-        freq_prices=freq_prices, ret_kind=ret_kind,
-        winsor_p=winsor_p, freq_returns=freq_returns,
-        force_refresh=force_refresh, invalidate_old=invalidate_old,
-        price_cfg=price_cfg, gap_thr=int(gap_thr), topk_out=int(topk_out),
+        start=start,
+        end=end,
+        freq_prices=freq_prices,
+        ret_kind=ret_kind,
+        winsor_p=winsor_p,
+        freq_returns=freq_returns,
+        force_refresh=force_refresh,
+        invalidate_old=invalidate_old,
+        price_cfg=price_cfg,
+        gap_thr=int(gap_thr),
+        topk_out=int(topk_out),
     )
     st.session_state["data_payload"] = payload
     st.session_state["data_ready"] = True
@@ -461,9 +514,8 @@ if st.session_state.get("data_ready"):
     p = st.session_state["data_payload"]
 
     # Guard: si el pipeline devolvió retornos vacíos → aviso + stop
-    if (
-        p["df_ret_wide"] is None
-        or (isinstance(p["df_ret_wide"], pl.DataFrame) and p["df_ret_wide"].height == 0)
+    if p["df_ret_wide"] is None or (
+        isinstance(p["df_ret_wide"], pl.DataFrame) and p["df_ret_wide"].height == 0
     ):
         dropped = p.get("dropped_tickers", [])
         if dropped:
@@ -478,42 +530,40 @@ if st.session_state.get("data_ready"):
         cov = p.get("coverage")
         if isinstance(cov, pl.DataFrame) and cov.height > 0:
             with st.expander("Cobertura por ticker", expanded=False):
-                st.dataframe(cov.to_pandas(), use_container_width=True)
+                st.dataframe(cov.to_pandas(), width="stretch")
 
         st.stop()
 
     # Si llegamos aquí, hay datos → seguimos con asignaciones
-    df_prices       = p["df_prices"]
+    df_prices = p["df_prices"]
     df_ret_raw_long = p["df_ret_raw_long"]
-    df_ret_wide     = p["df_ret_wide"]
-    mr              = p["mr"]
-    gaps            = p["gaps"]
-    out_top         = p["out_top"]
-    stats           = p["stats"]
-    eff             = p["eff"]
-    meta            = p["meta"]
+    df_ret_wide = p["df_ret_wide"]
+    mr = p["mr"]
+    gaps = p["gaps"]
+    out_top = p["out_top"]
+    stats = p["stats"]
+    eff = p["eff"]
+    meta = p["meta"]
 
     # Aviso de tickers excluidos (si no se vació del todo)
     dropped_tickers = p.get("dropped_tickers", [])
     if dropped_tickers:
         st.warning(
-            "Excluidos por falta de datos en el periodo seleccionado: "
-            + ", ".join(dropped_tickers)
+            "Excluidos por falta de datos en el periodo seleccionado: " + ", ".join(dropped_tickers)
         )
         with st.expander("Cobertura por ticker", expanded=False):
-            st.dataframe(p["coverage"].to_pandas(), use_container_width=True)
-
+            st.dataframe(p["coverage"].to_pandas(), width="stretch")
 
     # Previews
     st.subheader("Prices (tail)")
     with st.container(border=True):
         st.caption(f"Rows: {df_prices.height:,}")
-        st.dataframe(df_prices.tail(10).to_pandas(), use_container_width=True)
+        st.dataframe(df_prices.tail(10).to_pandas(), width="stretch")
 
     st.subheader("Returns (tail)")
     with st.container(border=True):
         st.caption(f"Returns shape: {df_ret_wide.shape[0]} x {df_ret_wide.shape[1]-1}")
-        st.dataframe(df_ret_wide.tail(10).to_pandas().round(6), use_container_width=True)
+        st.dataframe(df_ret_wide.tail(10).to_pandas().round(6), width="stretch")
 
     # Data Health
     st.subheader("🩺 Data Health")
@@ -530,44 +580,41 @@ if st.session_state.get("data_ready"):
     c5.metric("Data age", _fmt_age(data_age))
 
     # Universe snapshot
-    uni = (
-        df_prices.group_by("ticker").agg(pl.len().alias("n_obs"))
-                 .sort("n_obs", descending=True)
-    )
+    uni = df_prices.group_by("ticker").agg(pl.len().alias("n_obs")).sort("n_obs", descending=True)
     st.write("Universe snapshot (observations per ticker)")
     fig_uni = px.bar(uni.to_pandas(), x="n_obs", y="ticker", orientation="h")
-    st.plotly_chart(fig_uni, use_container_width=True)
+    st.plotly_chart(fig_uni, width="stretch")
 
     # Missing report (returns, wide)
     st.write("Missing report (returns, wide)")
-    st.dataframe(mr.sort("missing_pct", descending=True).to_pandas(), use_container_width=True)
+    st.dataframe(mr.sort("missing_pct", descending=True).to_pandas(), width="stretch")
 
     # Gaps & Calendar
     st.subheader("🧩 Gaps & Calendar")
-    st.dataframe(gaps.to_pandas(), use_container_width=True)
+    st.dataframe(gaps.to_pandas(), width="stretch")
 
     # Outliers (pre-winsor)
     st.subheader("⚠️ Outliers (pre-winsor)")
-    col_prev, col_k = st.columns([3,1])
+    col_prev, col_k = st.columns([3, 1])
     with col_k:
         st.caption(f"Top-{int(topk_out)} por ticker")
-    st.dataframe(out_top.to_pandas().round(6), use_container_width=True)
+    st.dataframe(out_top.to_pandas().round(6), width="stretch")
     with col_prev:
         if st.checkbox("Preview non-winsorized returns (wide)", value=False, key="prev_nowinsor"):
             prev_wide = long_to_wide(df_ret_raw_long, value_col="ret")
-            st.dataframe(prev_wide.tail(10).to_pandas().round(6), use_container_width=True)
+            st.dataframe(prev_wide.tail(10).to_pandas().round(6), width="stretch")
 
     # Summary stats (per asset)
     if st.checkbox("Show summary stats", value=True, key="show_stats"):
         st.subheader("Summary stats (per asset, periodic)")
         st.dataframe(
             stats.sort("sharpe", nulls_last=True, descending=True).to_pandas(),
-            use_container_width=True,
+            width="stretch",
         )
 
     # Metadata
     st.subheader("🔖 Metadata")
-    st.dataframe(eff.to_pandas(), use_container_width=True)
+    st.dataframe(eff.to_pandas(), width="stretch")
 
     # Export
     st.subheader("📤 Export")
@@ -580,7 +627,7 @@ if st.session_state.get("data_ready"):
             data=buf_p.getvalue(),
             file_name="prices_long.parquet",
             mime="application/octet-stream",
-            use_container_width=True,
+            width="stretch",
         )
     with colR:
         buf_r = io.BytesIO()
@@ -590,15 +637,17 @@ if st.session_state.get("data_ready"):
             data=buf_r.getvalue(),
             file_name="returns_wide.parquet",
             mime="application/octet-stream",
-            use_container_width=True,
+            width="stretch",
         )
     with colJ:
         st.download_button(
             "Download data_config.json",
-            data=json.dumps(meta, ensure_ascii=False, indent=2, sort_keys=True, default=_json_default).encode("utf-8"),
+            data=json.dumps(
+                meta, ensure_ascii=False, indent=2, sort_keys=True, default=_json_default
+            ).encode("utf-8"),
             file_name="data_config.json",
             mime="application/json",
-            use_container_width=True,
+            width="stretch",
         )
 
     st.success(f"Data loaded in {p['t_elapsed']:.2f}s and stored in session_state.")

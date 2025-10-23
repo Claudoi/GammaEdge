@@ -1,7 +1,9 @@
 # portfolio/backtest/metrics.py
 from __future__ import annotations
 
-from typing import Any, Iterable
+from collections.abc import Iterable
+from typing import Any
+
 import numpy as np
 import pandas as pd
 import polars as pl
@@ -34,6 +36,7 @@ def _to_numpy_1d(x, prefer_col: str | None = None) -> np.ndarray:
     # Polars
     try:
         import polars as pl  # type: ignore
+
         if isinstance(x, pl.Series):
             arr = x.to_numpy().astype(float, copy=False).ravel()
             return _np.nan_to_num(arr, nan=_np.nan, posinf=_np.nan, neginf=_np.nan)
@@ -58,6 +61,7 @@ def _to_numpy_1d(x, prefer_col: str | None = None) -> np.ndarray:
     # Pandas
     try:
         import pandas as pd  # type: ignore
+
         if isinstance(x, pd.Series):
             arr = x.to_numpy(dtype=float).ravel()
             return _np.nan_to_num(arr, nan=_np.nan, posinf=_np.nan, neginf=_np.nan)
@@ -162,8 +166,16 @@ def compute_backtest_metrics(bt: Any) -> pl.DataFrame:
             raise ValueError("dict de backtest debe contener 'equity' y 'dates'.")
         equity = _to_numpy_1d(bt["equity"])
         dates_pd = pd.DatetimeIndex(bt["dates"])
-        turnover = _to_numpy_1d(bt["turnover"], prefer_col="turnover") if "turnover" in bt and bt["turnover"] is not None else None
-        te_daily = _to_numpy_1d(bt["te_daily_proxy"]) if "te_daily_proxy" in bt and bt["te_daily_proxy"] is not None else None
+        turnover = (
+            _to_numpy_1d(bt["turnover"], prefer_col="turnover")
+            if "turnover" in bt and bt["turnover"] is not None
+            else None
+        )
+        te_daily = (
+            _to_numpy_1d(bt["te_daily_proxy"])
+            if "te_daily_proxy" in bt and bt["te_daily_proxy"] is not None
+            else None
+        )
     else:
         raise TypeError("Tipo de backtest no soportado para métricas.")
 
@@ -179,10 +191,18 @@ def compute_backtest_metrics(bt: Any) -> pl.DataFrame:
     sortino = _sortino(ret, ann)
 
     # Turnover medio por rebalance (si viene)
-    to_mean = float(np.nanmean(turnover)) if isinstance(turnover, np.ndarray) and turnover.size else np.nan
+    to_mean = (
+        float(np.nanmean(turnover))
+        if isinstance(turnover, np.ndarray) and turnover.size
+        else np.nan
+    )
 
     # TE anualizado (proxy) si viene (std diario * sqrt(ann))
-    te_ann = float(np.nanstd(te_daily, ddof=1) * np.sqrt(ann)) if isinstance(te_daily, np.ndarray) and te_daily.size > 1 else np.nan
+    te_ann = (
+        float(np.nanstd(te_daily, ddof=1) * np.sqrt(ann))
+        if isinstance(te_daily, np.ndarray) and te_daily.size > 1
+        else np.nan
+    )
 
     rows = [
         MetricRow("CAGR", cagr),

@@ -14,7 +14,12 @@ def _corr_from_cov(S: np.ndarray) -> np.ndarray:
     R = (S / d[:, None]) / d[None, :]
     return np.clip(0.5 * (R + R.T), -1.0, 1.0)
 
-def _seriation_order(Sigma: np.ndarray, method: Literal["single","complete","average","ward"] = "ward", optimal: bool = True) -> np.ndarray:
+
+def _seriation_order(
+    Sigma: np.ndarray,
+    method: Literal["single", "complete", "average", "ward"] = "ward",
+    optimal: bool = True,
+) -> np.ndarray:
     Corr = _corr_from_cov(Sigma)
     dist = np.sqrt(np.maximum(0.0, 0.5 * (1.0 - Corr)))
     Z = linkage(squareform(dist, checks=False), method=method)
@@ -22,10 +27,11 @@ def _seriation_order(Sigma: np.ndarray, method: Literal["single","complete","ave
         Z = optimal_leaf_ordering(Z, squareform(dist, checks=False))
     return leaves_list(Z)
 
+
 def hrp_weights(
     Sigma: np.ndarray,
     *,
-    method: Literal["single","complete","average","ward"] = "ward",
+    method: Literal["single", "complete", "average", "ward"] = "ward",
     optimal: bool = True,
     w_min: float = 0.0,
     w_max: float = 1.0,
@@ -46,7 +52,8 @@ def hrp_weights(
         if len(idx) == 1:
             return np.array([1.0])
         k = len(idx) // 2
-        left = idx[:k]; right = idx[k:]
+        left = idx[:k]
+        right = idx[k:]
         w_left = _split_allocation(Ss[np.ix_(left, left)], left)
         w_right = _split_allocation(Ss[np.ix_(right, right)], right)
         v_left = _cluster_var(Ss[np.ix_(left, left)])

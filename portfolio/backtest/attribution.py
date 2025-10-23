@@ -2,16 +2,17 @@
 # portfolio/backtest/attribution.py
 from __future__ import annotations
 
-from portfolio.core.compat import dataclass_compat as dataclass
-from typing import Iterable, Tuple
+from collections.abc import Iterable
 
 import numpy as np
 import polars as pl
 
+from portfolio.core.compat import dataclass_compat as dataclass
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Types
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 @dataclass(frozen=True, slots=True)
 class DailyAlignment:
@@ -25,9 +26,10 @@ class DailyAlignment:
 # Alignment helpers
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def align_returns_and_weights(
-    df_ret_wide: pl.DataFrame,                  # ['date', T1, T2, ...] sorted
-    daily_weights: np.ndarray,                  # (T, N) daily weights
+    df_ret_wide: pl.DataFrame,  # ['date', T1, T2, ...] sorted
+    daily_weights: np.ndarray,  # (T, N) daily weights
 ) -> DailyAlignment:
     """
     Align wide daily returns with already-expanded daily weights.
@@ -57,9 +59,9 @@ def align_returns_and_weights(
 
 
 def expand_rebalance_weights(
-    dates: Iterable,                 # full daily dates
-    rb_dates: Iterable,              # rebalance dates
-    W_reb: np.ndarray,               # (n_reb, N) weights at each rebalance
+    dates: Iterable,  # full daily dates
+    rb_dates: Iterable,  # rebalance dates
+    W_reb: np.ndarray,  # (n_reb, N) weights at each rebalance
 ) -> np.ndarray:
     """
     Expand stepwise rebalance weights to daily frequency (forward-fill until next rebalance).
@@ -91,6 +93,7 @@ def expand_rebalance_weights(
 # ──────────────────────────────────────────────────────────────────────────────
 # Contributions by asset and by group
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def contributions_by_asset(aln: DailyAlignment) -> pl.DataFrame:
     """
@@ -151,11 +154,14 @@ def contributions_by_group(
 # Brinson–Fachler (basic)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def brinson_fachler_period(
-    w_p: np.ndarray, r_p: np.ndarray,     # portfolio
-    w_b: np.ndarray, r_b: np.ndarray,     # benchmark
-    groups: list[int],                    # asset→group indices [0..G-1]
-) -> Tuple[float, float, float]:
+    w_p: np.ndarray,
+    r_p: np.ndarray,  # portfolio
+    w_b: np.ndarray,
+    r_b: np.ndarray,  # benchmark
+    groups: list[int],  # asset→group indices [0..G-1]
+) -> tuple[float, float, float]:
     """
     Single-period Brinson–Fachler:
     - Allocation:  Σ_g (w_p_g - w_b_g) * r_b_g
@@ -165,27 +171,27 @@ def brinson_fachler_period(
     """
     groups = np.asarray(groups, dtype=int)
     G = int(groups.max()) + 1 if len(groups) else 0
-    A = S = I = 0.0
+    A = S = interaction = 0.0
     for g in range(G):
-        idx = (groups == g)
+        idx = groups == g
         wp_g = float(np.sum(w_p[idx]))
         wb_g = float(np.sum(w_b[idx]))
         # weighted average returns inside the group (guard against zero weight)
         rb_g = float(np.sum(w_b[idx] * r_b[idx])) / wb_g if wb_g > 1e-16 else 0.0
         rp_g = float(np.sum(w_p[idx] * r_p[idx])) / wp_g if wp_g > 1e-16 else 0.0
 
-        diff_w = (wp_g - wb_g)
-        diff_r = (rp_g - rb_g)
+        diff_w = wp_g - wb_g
+        diff_r = rp_g - rb_g
         A += diff_w * rb_g
         S += wb_g * diff_r
-        I += diff_w * diff_r
-    return A, S, I
+        interaction += diff_w * diff_r
+    return A, S, interaction
 
 
 def brinson_fachler_cumulative(
     aln: DailyAlignment,
-    bench_weights_daily: np.ndarray,   # (T, N)
-    groups_idx: list[int],             # asset→group indices [0..G-1]
+    bench_weights_daily: np.ndarray,  # (T, N)
+    groups_idx: list[int],  # asset→group indices [0..G-1]
 ) -> pl.DataFrame:
     """
     Sum single-period Brinson–Fachler components over time (arithmetic sum).
@@ -208,6 +214,7 @@ def brinson_fachler_cumulative(
 # Summaries & high-level API (used by the UI)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def _daily_alignment_from_bt(bt: dict, df_ret_wide: pl.DataFrame) -> DailyAlignment:
     """
     Build DailyAlignment from the backtest dict:
@@ -216,18 +223,13 @@ def _daily_alignment_from_bt(bt: dict, df_ret_wide: pl.DataFrame) -> DailyAlignm
     """
     dates = bt["dates"]
     tickers = bt["tickers"]
-    W_reb = np.asarray(bt["weights"], dtype=float)            # (n_reb, N)
+    W_reb = np.asarray(bt["weights"], dtype=float)  # (n_reb, N)
     rb_dates = bt.get("rebalance_dates", [])
     if W_reb.size == 0 or len(rb_dates) != W_reb.shape[0]:
         raise ValueError("Invalid 'weights'/'rebalance_dates' in bt.")
 
     # Ensure returns are filtered and ordered to match 'dates' and 'tickers'
-    df = (
-        df_ret_wide
-        .filter(pl.col("date").is_in(dates))
-        .sort("date")
-        .select(["date", *tickers])
-    )
+    df = df_ret_wide.filter(pl.col("date").is_in(dates)).sort("date").select(["date", *tickers])
 
     W_daily = expand_rebalance_weights(dates, rb_dates, W_reb)  # (T, N)
     return align_returns_and_weights(df, W_daily)
@@ -262,9 +264,7 @@ def top_contributors(
     # both: top positive and top negative
     pos = agg.filter(pl.col("contrib_total") > 0).head(top_n)
     neg = (
-        agg.filter(pl.col("contrib_total") < 0)
-        .sort("contrib_total", descending=False)
-        .head(top_n)
+        agg.filter(pl.col("contrib_total") < 0).sort("contrib_total", descending=False).head(top_n)
     )
     return pl.concat([pos, neg])
 
@@ -287,21 +287,21 @@ def group_contrib(
 
     df_total = (
         df_daily.group_by("group")
-        .agg([
-            pl.col("contrib").sum().alias("contrib_total"),
-            pl.col("weight").mean().alias("weight_avg"),
-        ])
+        .agg(
+            [
+                pl.col("contrib").sum().alias("contrib_total"),
+                pl.col("weight").mean().alias("weight_avg"),
+            ]
+        )
         .sort("contrib_total", descending=True)
     )
     return df_total, df_daily
 
 
-
-
-
 # ──────────────────────────────────────────────────────────────────────────────
 # Advanced helpers (safe additions; do not replace existing functions)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def align_with_ipo_mask(aln: DailyAlignment) -> DailyAlignment:
     """
@@ -327,11 +327,11 @@ def align_with_ipo_mask(aln: DailyAlignment) -> DailyAlignment:
     # Zero weight before inception for each asset
     for j in range(N):
         if t0[j] > 0:
-            W[:t0[j], j] = 0.0
+            W[: t0[j], j] = 0.0
 
     # Row-wise renormalization; EW across available assets when a row sums ~0
     row_sum = W.sum(axis=1, keepdims=True)
-    available = (np.arange(T)[:, None] >= t0[None, :])
+    available = np.arange(T)[:, None] >= t0[None, :]
     n_avail = available.sum(axis=1, keepdims=True).astype(float)
 
     zero_rows = (np.abs(row_sum) < 1e-15).ravel()
@@ -451,15 +451,13 @@ def top_contributors_from_asset(
     if sign == "neg":
         return (
             agg.filter(pl.col("contrib_total") < 0)
-               .sort("contrib_total", descending=False)
-               .head(top_n)
+            .sort("contrib_total", descending=False)
+            .head(top_n)
         )
     # both
     pos = agg.filter(pl.col("contrib_total") > 0).head(top_n)
     neg = (
-        agg.filter(pl.col("contrib_total") < 0)
-           .sort("contrib_total", descending=False)
-           .head(top_n)
+        agg.filter(pl.col("contrib_total") < 0).sort("contrib_total", descending=False).head(top_n)
     )
     return pl.concat([pos, neg])
 
@@ -477,7 +475,12 @@ def contributions_share_by_group(df_group_daily: pl.DataFrame) -> pl.DataFrame:
     total = df_group_daily.group_by("date").agg(pl.col("contrib").sum().alias("tot"))
     out = (
         df_group_daily.join(total, on="date", how="left")
-        .with_columns((pl.col("contrib") / pl.when(pl.abs(pl.col("tot")) > 1e-15).then(pl.col("tot")).otherwise(1.0)).alias("share"))
+        .with_columns(
+            (
+                pl.col("contrib")
+                / pl.when(pl.abs(pl.col("tot")) > 1e-15).then(pl.col("tot")).otherwise(1.0)
+            ).alias("share")
+        )
         .select(["date", "group", "share"])
         .sort(["date", "group"])
     )
@@ -523,14 +526,14 @@ def brinson_fachler_timeseries(
     rows = []
 
     for t in range(Wp.shape[0]):
-        wp = Wp[t]        # (N,)
-        wb = Wb[t]        # (N,)
-        rp = R[t]         # (N,)
-        rb = R[t]         # (N,)
+        wp = Wp[t]  # (N,)
+        wb = Wb[t]  # (N,)
+        rp = R[t]  # (N,)
+        rb = R[t]  # (N,)
 
         # group weights
-        wp_g = H.T @ wp    # (G,)
-        wb_g = H.T @ wb    # (G,)
+        wp_g = H.T @ wp  # (G,)
+        wb_g = H.T @ wb  # (G,)
 
         # group returns (guard zeros)
         rb_g = np.divide(H.T @ (wb * rb), np.clip(wb_g, 1e-16, None), where=wb_g > 1e-16)
@@ -548,10 +551,20 @@ def brinson_fachler_timeseries(
             for g in range(G):
                 rows.append((dates[t], int(g), alloc[g], select[g], inter[g], total[g]))
         else:
-            rows.append((dates[t], float(alloc.sum()), float(select.sum()), float(inter.sum()), float(total.sum())))
+            rows.append(
+                (
+                    dates[t],
+                    float(alloc.sum()),
+                    float(select.sum()),
+                    float(inter.sum()),
+                    float(total.sum()),
+                )
+            )
 
     if by_group:
-        out = pl.DataFrame(rows, schema=["date", "group_id", "alloc", "select", "interact", "total"]).sort("date")
+        out = pl.DataFrame(
+            rows, schema=["date", "group_id", "alloc", "select", "interact", "total"]
+        ).sort("date")
         # Attach readable labels via group_id if needed outside; keep numeric id here to avoid expensive joins
         if cumulative:
             out = out.with_columns(
@@ -562,7 +575,9 @@ def brinson_fachler_timeseries(
             )
         return out
     else:
-        out = pl.DataFrame(rows, schema=["date", "alloc", "select", "interact", "total"]).sort("date")
+        out = pl.DataFrame(rows, schema=["date", "alloc", "select", "interact", "total"]).sort(
+            "date"
+        )
         if cumulative:
             out = out.with_columns(
                 pl.col("alloc").cum_sum(),

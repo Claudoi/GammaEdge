@@ -1,11 +1,12 @@
 # app/pages/04_Backtest.py
 from __future__ import annotations
 
+import contextlib
+
 # --- stdlib ---
 import os
 import sys
-from typing import Callable, Dict, Any, Tuple, List
-import inspect
+from typing import Any, Callable
 
 # --- third-party ---
 import numpy as np
@@ -19,31 +20,30 @@ import streamlit as st
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 # --- backtest core ---
-from portfolio.backtest.engine import backtest_rebalanced
-from portfolio.backtest import metrics as bt_metrics
 from portfolio.backtest import attribution as bt_attr
-from portfolio.backtest import reporting as bt_report
+from portfolio.backtest import metrics as bt_metrics
+from portfolio.backtest.engine import backtest_rebalanced
 
 # --- optim helpers (for allocators) ---
-from portfolio.core.utils import ensure_psd, project_to_box_simplex
+from portfolio.core.utils import ensure_psd, hrp_safe, project_to_box_simplex
 from portfolio.optim.hrp import hrp_weights
-from portfolio.core.utils import hrp_safe
-from portfolio.optim.risk_parity import risk_parity
 from portfolio.optim.mean_variance import pgd_box_simplex_l2
+from portfolio.optim.risk_parity import risk_parity
 
 # --- visualization ---
 from portfolio.viz.plot_utils import (
     equity_and_drawdown,
-    plot_equity,
+    plot_brinson_cumulative,
     plot_drawdown,
-    plot_turnover,
-    plot_weights_heatmap,
-    plot_tracking_error,
-    plot_top_contributors,
+    plot_equity,
     plot_group_contrib,
     plot_group_contrib_area,
-    plot_brinson_cumulative,
+    plot_top_contributors,
+    plot_tracking_error,
+    plot_turnover,
+    plot_weights_heatmap,
 )
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Utility functions
@@ -54,6 +54,7 @@ def _to_pandas(df: Any):
         return df.to_pandas()
     except Exception:
         return df
+
 
 def cov_ewma(R: np.ndarray, lam: float = 0.94) -> np.ndarray:
     """Compute EWMA covariance matrix (robust, PSD-enforced)."""
@@ -71,9 +72,15 @@ def cov_ewma(R: np.ndarray, lam: float = 0.94) -> np.ndarray:
     S = np.nan_to_num(S, nan=0.0, posinf=0.0, neginf=0.0)
     return ensure_psd(S, eps=1e-10, clip=True)
 
-def enforce_turnover(prev_w: np.ndarray | None, new_w: np.ndarray,
-                     max_to: float = 0.10, band: float = 0.01,
-                     w_min: float = 0.0, w_max: float = 1.0) -> np.ndarray:
+
+def enforce_turnover(
+    prev_w: np.ndarray | None,
+    new_w: np.ndarray,
+    max_to: float = 0.10,
+    band: float = 0.01,
+    w_min: float = 0.0,
+    w_max: float = 1.0,
+) -> np.ndarray:
     """
     Enforce turnover and rebalancing rules.
     - Ignores small median weight changes (band threshold).
@@ -93,8 +100,10 @@ def enforce_turnover(prev_w: np.ndarray | None, new_w: np.ndarray,
     w_lim = prev_w + lam * (new_w - prev_w)
     return project_to_box_simplex(w_lim, w_min, w_max)
 
-def min_te_to_bench(Sigma: np.ndarray, w_bench: np.ndarray,
-                    w_min: float, w_max: float) -> np.ndarray:
+
+def min_te_to_bench(
+    Sigma: np.ndarray, w_bench: np.ndarray, w_min: float, w_max: float
+) -> np.ndarray:
     """
     Minimize Tracking Error vs benchmark:
         min (w - w_b)' Σ (w - w_b)
@@ -107,7 +116,10 @@ def min_te_to_bench(Sigma: np.ndarray, w_bench: np.ndarray,
     w = pgd_box_simplex_l2(mu_eff, Sigma, gamma=1.0, w_min=w_min, w_max=w_max, lam_turnover=0.0)
     return project_to_box_simplex(w, w_min, w_max)
 
-def metrics_bootstrap(bt: Dict[str, Any], B: int = 200, block: int = 10, seed: int = 42) -> Tuple[pl.DataFrame, pl.DataFrame]:
+
+def metrics_bootstrap(
+    bt: dict[str, Any], B: int = 200, block: int = 10, seed: int = 42
+) -> tuple[pl.DataFrame, pl.DataFrame]:
     """
     Bootstrap (block-based) on daily returns to compute CI for metrics.
     Requires 'equity' or 'equity_returns' in the backtest dictionary.
@@ -133,12 +145,15 @@ def metrics_bootstrap(bt: Dict[str, Any], B: int = 200, block: int = 10, seed: i
         mdd = 1 - (eqb / np.maximum.accumulate(eqb)).min()
         rows.append((cagr, sharpe, mdd))
     dfb = pl.DataFrame(rows, schema=["CAGR", "Sharpe", "MaxDD"])
-    q = dfb.select([
-        pl.col("CAGR").quantile([0.05, 0.5, 0.95]).alias("CAGR_q"),
-        pl.col("Sharpe").quantile([0.05, 0.5, 0.95]).alias("Sharpe_q"),
-        pl.col("MaxDD").quantile([0.05, 0.5, 0.95]).alias("MaxDD_q"),
-    ])
+    q = dfb.select(
+        [
+            pl.col("CAGR").quantile([0.05, 0.5, 0.95]).alias("CAGR_q"),
+            pl.col("Sharpe").quantile([0.05, 0.5, 0.95]).alias("Sharpe_q"),
+            pl.col("MaxDD").quantile([0.05, 0.5, 0.95]).alias("MaxDD_q"),
+        ]
+    )
     return dfb, q
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Page configuration
@@ -167,8 +182,12 @@ with st.sidebar:
     st.header("⚙️ Parameters")
 
     rebalance_freq = st.selectbox("Rebalance frequency", ["1mo", "1w", "3mo", "6mo"], index=0)
-    lookback = st.number_input("Lookback (periods)", min_value=30, max_value=2000, value=252, step=10)
-    cost_bps = st.number_input("Transaction cost (bps per turnover)", min_value=0.0, max_value=100.0, value=2.0, step=0.5)
+    lookback = st.number_input(
+        "Lookback (periods)", min_value=30, max_value=2000, value=252, step=10
+    )
+    cost_bps = st.number_input(
+        "Transaction cost (bps per turnover)", min_value=0.0, max_value=100.0, value=2.0, step=0.5
+    )
 
     st.markdown("---")
     st.subheader("Allocator")
@@ -205,6 +224,7 @@ with st.sidebar:
     grid_lookbacks = st.text_input("Lookback values", "126,252")
     grid_costs = st.text_input("Transaction costs (bps)", "0,2,5")
 
+
 # ─────────────────────────────────────────────────────────────────────
 # Allocator factory (window -> weights)
 # ─────────────────────────────────────────────────────────────────────
@@ -215,7 +235,7 @@ def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
     """
     prev = {"w": None}  # persistent state for turnover constraint
 
-    def get_cov(win: pl.DataFrame, cols: List[str]) -> np.ndarray:
+    def get_cov(win: pl.DataFrame, cols: list[str]) -> np.ndarray:
         if not cols:
             return np.eye(0)
         R = win.select(cols).to_numpy()
@@ -230,6 +250,7 @@ def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
 
     # Define base allocator per strategy
     if kind == "Equal-Weight":
+
         def base_alloc(win: pl.DataFrame) -> np.ndarray:
             n = win.width - 1
             if n <= 0:
@@ -238,16 +259,20 @@ def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
             return project_to_box_simplex(w, w_min, w_max)
 
     elif kind == "Min-Var (L2 PGD)":
+
         def base_alloc(win: pl.DataFrame) -> np.ndarray:
             cols = [c for c in win.columns if c != "date"]
             R = win.select(cols).to_numpy() if cols else np.zeros((0, 0), dtype=float)
             mu_w = np.nanmean(R, axis=0) if R.size else np.zeros(len(cols))
             mu_w = np.nan_to_num(mu_w, nan=0.0, posinf=0.0, neginf=0.0)
             Sigma_w = get_cov(win, cols)
-            w = pgd_box_simplex_l2(mu_w, Sigma_w, gamma=100.0, w_min=w_min, w_max=w_max, lam_turnover=0.0)
+            w = pgd_box_simplex_l2(
+                mu_w, Sigma_w, gamma=100.0, w_min=w_min, w_max=w_max, lam_turnover=0.0
+            )
             return project_to_box_simplex(w, w_min, w_max)
 
     elif kind == "Risk Parity":
+
         def base_alloc(win: pl.DataFrame) -> np.ndarray:
             cols = [c for c in win.columns if c != "date"]
             Sigma_w = get_cov(win, cols)
@@ -258,13 +283,22 @@ def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
             return project_to_box_simplex(w, w_min, w_max)
 
     elif kind == "HRP":
+
         def base_alloc(win: pl.DataFrame) -> np.ndarray:
             cols = [c for c in win.columns if c != "date"]
             Sigma_w = get_cov(win, cols)
-            w = hrp_safe(hrp_func=hrp_weights, cov=Sigma_w, method="ward", optimal=True, w_min=w_min, w_max=w_max)
+            w = hrp_safe(
+                hrp_func=hrp_weights,
+                cov=Sigma_w,
+                method="ward",
+                optimal=True,
+                w_min=w_min,
+                w_max=w_max,
+            )
             return project_to_box_simplex(w, w_min, w_max)
 
     elif kind == "Min-TE (to Bench)":
+
         def base_alloc(win: pl.DataFrame) -> np.ndarray:
             cols = [c for c in win.columns if c != "date"]
             Sigma_w = get_cov(win, cols)
@@ -273,6 +307,7 @@ def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
             return project_to_box_simplex(w, w_min, w_max)
 
     else:
+
         def base_alloc(win: pl.DataFrame) -> np.ndarray:
             n = win.width - 1
             w = np.ones(n, dtype=float) / max(n, 1)
@@ -282,8 +317,14 @@ def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
     def alloc(win: pl.DataFrame) -> np.ndarray:
         w_new = base_alloc(win)
         if use_to_budget:
-            w_final = enforce_turnover(prev["w"], w_new, max_to=float(max_turnover),
-                                       band=float(band_eps), w_min=w_min, w_max=w_max)
+            w_final = enforce_turnover(
+                prev["w"],
+                w_new,
+                max_to=float(max_turnover),
+                band=float(band_eps),
+                w_min=w_min,
+                w_max=w_max,
+            )
         else:
             w_final = w_new
         prev["w"] = w_final
@@ -291,14 +332,28 @@ def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
 
     return alloc
 
+
 allocator = make_allocator(alloc_kind)
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Cached backtest execution
 # ─────────────────────────────────────────────────────────────────────
 @st.cache_data(show_spinner=False)
-def cached_backtest(df_ret_wide, lookback, rebalance_freq, cost_bps, alloc_kind, w_min, w_max,
-                    cov_estimator, ewma_lambda, use_to_budget, max_turnover, band_eps):
+def cached_backtest(
+    df_ret_wide,
+    lookback,
+    rebalance_freq,
+    cost_bps,
+    alloc_kind,
+    w_min,
+    w_max,
+    cov_estimator,
+    ewma_lambda,
+    use_to_budget,
+    max_turnover,
+    band_eps,
+):
     alloc = make_allocator(alloc_kind)
     # compute local number of assets (exclude 'date')
     n_cols = len([c for c in df_ret_wide.columns if c != "date"])
@@ -311,13 +366,24 @@ def cached_backtest(df_ret_wide, lookback, rebalance_freq, cost_bps, alloc_kind,
         bench_weights=np.full(n_cols, 1.0 / max(n_cols, 1)),
     )
 
+
 # Run backtest or grid depending on user setting
 bt = None
 if not do_grid:
     with st.spinner("Running backtest..."):
         bt = cached_backtest(
-            df_ret_wide, int(lookback), rebalance_freq, float(cost_bps), alloc_kind, w_min, w_max,
-            cov_estimator, float(ewma_lambda), use_to_budget, float(max_turnover), float(band_eps)
+            df_ret_wide,
+            int(lookback),
+            rebalance_freq,
+            float(cost_bps),
+            alloc_kind,
+            w_min,
+            w_max,
+            cov_estimator,
+            float(ewma_lambda),
+            use_to_budget,
+            float(max_turnover),
+            float(band_eps),
         )
     st.success("✅ Backtest executed.")
 
@@ -341,10 +407,8 @@ if not do_grid:
         st.session_state["df_ret_wide"] = df_pl
         # keep a generic copy as well (so 05 can fallback)
         st.session_state["returns_wide"] = df_pl
-        try:
+        with contextlib.suppress(Exception):
             st.toast("Artifacts saved for 05_Attribution.", icon="💾")
-        except Exception:
-            pass  # older Streamlit versions may not have toast
 
     # auto-export now that bt exists
     _export_to_05(bt, st.session_state.get("returns_wide", df_ret_wide))
@@ -379,18 +443,20 @@ if do_grid:
             )
             m = bt_metrics.compute_backtest_metrics(bt_)
             mp = _to_pandas(m)
-            rows.append({
-                "lookback": int(L),
-                "cost_bps": float(C),
-                "CAGR": float(mp.loc[0, "CAGR"]) if "CAGR" in mp.columns else np.nan,
-                "Sharpe": float(mp.loc[0, "Sharpe"]) if "Sharpe" in mp.columns else np.nan,
-                "MaxDD": float(mp.loc[0, "MaxDD"]) if "MaxDD" in mp.columns else np.nan,
-            })
+            rows.append(
+                {
+                    "lookback": int(L),
+                    "cost_bps": float(C),
+                    "CAGR": float(mp.loc[0, "CAGR"]) if "CAGR" in mp.columns else np.nan,
+                    "Sharpe": float(mp.loc[0, "Sharpe"]) if "Sharpe" in mp.columns else np.nan,
+                    "MaxDD": float(mp.loc[0, "MaxDD"]) if "MaxDD" in mp.columns else np.nan,
+                }
+            )
             k += 1
             prog.progress(k / total)
     df_grid = pl.DataFrame(rows)
     st.subheader("🔎 Grid results")
-    st.dataframe(_to_pandas(df_grid.sort("Sharpe", descending=True)), use_container_width=True)
+    st.dataframe(_to_pandas(df_grid.sort("Sharpe", descending=True)), width="stretch")
 
 # ─────────────────────────────────────────────────────────────────────
 # Metrics + Bootstrap CI (if not running grid)
@@ -400,32 +466,37 @@ if not do_grid:
     dfm = bt_metrics.compute_backtest_metrics(bt)
     tab1, tab2 = st.tabs(["Overview", "Bootstrap CI"])
     with tab1:
-        st.dataframe(_to_pandas(dfm), use_container_width=True)
+        st.dataframe(_to_pandas(dfm), width="stretch")
     with tab2:
         run_bs = st.checkbox("Run Bootstrap (200 reps)", value=False)
         if run_bs:
             with st.spinner("Bootstrapping metrics…"):
                 dfb, q = metrics_bootstrap(bt, B=200, block=10, seed=42)
             st.write("Quantiles (5%, 50%, 95%)")
-            st.dataframe(_to_pandas(q), use_container_width=True)
+            st.dataframe(_to_pandas(q), width="stretch")
 
 # ─────────────────────────────────────────────────────────────────────
 # Main plots
 # ─────────────────────────────────────────────────────────────────────
 if not do_grid:
     st.subheader("📉 Equity & Drawdown")
-    st.plotly_chart(equity_and_drawdown(bt["dates"], bt["equity"], title="Equity & Drawdown"), use_container_width=True)
+    st.plotly_chart(
+        equity_and_drawdown(bt["dates"], bt["equity"], title="Equity & Drawdown"),
+        width="stretch",
+    )
 
     col1, col2 = st.columns(2)
     with col1:
-        st.plotly_chart(plot_equity(bt["dates"], bt["equity"], title="Equity"), use_container_width=True)
+        st.plotly_chart(plot_equity(bt["dates"], bt["equity"], title="Equity"), width="stretch")
     with col2:
-        st.plotly_chart(plot_drawdown(bt["dates"], bt["equity"], title="Drawdown"), use_container_width=True)
+        st.plotly_chart(plot_drawdown(bt["dates"], bt["equity"], title="Drawdown"), width="stretch")
 
     st.subheader("⚖️ Weights & Turnover")
     st.plotly_chart(
-        plot_weights_heatmap(bt["dates"], bt["tickers"], bt["weights"], title="Weights (rebalance steps)"),
-        use_container_width=True,
+        plot_weights_heatmap(
+            bt["dates"], bt["tickers"], bt["weights"], title="Weights (rebalance steps)"
+        ),
+        width="stretch",
     )
     # Turnover plot (per rebalance step)
     dates_w = bt.get("rebalance_dates", None)
@@ -444,7 +515,7 @@ if not do_grid:
     if bt.get("te_daily_proxy") is not None:
         st.plotly_chart(
             plot_tracking_error(bt["dates"], bt["te_daily_proxy"], title="Daily TE (proxy)"),
-            use_container_width=True,
+            width="stretch",
         )
 
 # ─────────────────────────────────────────────────────────────────────
@@ -469,7 +540,7 @@ if not do_grid and bt is not None:
         rb_dates = list(bt.get("rebalance_dates", []))
         if W_reb.size == 0 or len(rb_dates) != W_reb.shape[0]:
             K = W_reb.shape[0]
-            rb_dates = dates_bt[:: max(1, len(dates_bt)//max(1, K))][:K]
+            rb_dates = dates_bt[:: max(1, len(dates_bt) // max(1, K))][:K]
 
         daily_W = bt_attr.expand_rebalance_weights(
             dates=df_ret_bt.get_column("date").to_list(),
@@ -490,7 +561,9 @@ if not do_grid and bt is not None:
             .sort("contrib_total")
             .head(10)
         )
-        st.plotly_chart(plot_top_contributors(df_bottom, title="Bottom Contributors"), width="stretch")
+        st.plotly_chart(
+            plot_top_contributors(df_bottom, title="Bottom Contributors"), width="stretch"
+        )
 
     except Exception as e:
         st.info(f"Basic attribution not available: {e}")
@@ -503,10 +576,12 @@ if not do_grid and bt is not None:
         df_group_daily = bt_attr.contributions_by_group(aln, groups_map)
         df_group_total = (
             df_group_daily.group_by("group")
-            .agg([
-                pl.col("contrib").sum().alias("contrib_total"),
-                pl.col("weight").mean().alias("avg_weight"),
-            ])
+            .agg(
+                [
+                    pl.col("contrib").sum().alias("contrib_total"),
+                    pl.col("weight").mean().alias("avg_weight"),
+                ]
+            )
             .sort("contrib_total", descending=True)
         )
         st.plotly_chart(plot_group_contrib(df_group_total), width="stretch")

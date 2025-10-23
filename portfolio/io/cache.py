@@ -25,7 +25,7 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 SCHEMA_VERSION = "v1"
 
 # Compresión por defecto para Parquet (rápida y con buen ratio)
-ParquetCompression = Literal["lz4","uncompressed","snappy","gzip","lzo","brotli","zstd"]
+ParquetCompression = Literal["lz4", "uncompressed", "snappy", "gzip", "lzo", "brotli", "zstd"]
 PARQUET_COMPRESSION: ParquetCompression = "zstd"
 
 
@@ -35,6 +35,7 @@ PARQUET_COMPRESSION: ParquetCompression = "zstd"
 
 # portfolio/io/cache.py
 
+
 def _normalize_for_hash(obj: Any) -> Any:
     """
     Convierte objetos no serializables en representaciones estables.
@@ -43,8 +44,7 @@ def _normalize_for_hash(obj: Any) -> Any:
     """
     if isinstance(obj, Mapping):
         return {
-            str(k): _normalize_for_hash(v)
-            for k, v in sorted(obj.items(), key=lambda x: str(x[0]))
+            str(k): _normalize_for_hash(v) for k, v in sorted(obj.items(), key=lambda x: str(x[0]))
         }
     # 👇 En Py3.9 usa la tupla de tipos, no `list | tuple | set`
     if isinstance(obj, (list, tuple, set)):  # noqa: UP038
@@ -127,6 +127,7 @@ def invalidate(kind: str, cfg: Mapping[str, Any], ext: str = "parquet") -> None:
 # Pandas API (retro-compat)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def save_df(kind: str, cfg: Mapping[str, Any], df: pd.DataFrame) -> Path:
     """
     Guarda pandas.DataFrame a parquet (pyarrow) con compresión Zstd usando escritura atómica.
@@ -158,7 +159,13 @@ def load_df(kind: str, cfg: Mapping[str, Any]) -> pd.DataFrame | None:
 # Polars API (nativa y rápida)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def save_pl(kind: str, cfg: Mapping[str, Any], df: pl.DataFrame, compression: ParquetCompression = PARQUET_COMPRESSION) -> Path:
+
+def save_pl(
+    kind: str,
+    cfg: Mapping[str, Any],
+    df: pl.DataFrame,
+    compression: ParquetCompression = PARQUET_COMPRESSION,
+) -> Path:
     p = cache_path(kind, cfg, ext="parquet")
     lock = p.with_suffix(p.suffix + ".lock")
     with _file_lock(lock):
@@ -179,6 +186,7 @@ def load_pl(kind: str, cfg: Mapping[str, Any]) -> pl.DataFrame | None:
 # ──────────────────────────────────────────────────────────────────────────────
 # NumPy matrices/arrays (ideal para Σ, fronteras, etc.)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def save_np(kind: str, cfg: Mapping[str, Any], arr: np.ndarray, compressed: bool = True) -> Path:
     ext = "npz" if compressed else "npy"
@@ -210,10 +218,13 @@ def load_np(kind: str, cfg: Mapping[str, Any]) -> np.ndarray | None:
 # JSON (metadatos ligeros)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def save_json(kind: str, cfg: Mapping[str, Any], obj: Mapping[str, Any]) -> Path:
     p = cache_path(kind, cfg, ext="json")
     lock = p.with_suffix(p.suffix + ".lock")
-    data = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    data = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
     with _file_lock(lock):
         _atomic_write_bytes(p, data)
     return p

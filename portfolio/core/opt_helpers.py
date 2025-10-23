@@ -40,7 +40,6 @@ def stack_Ws(Ws_list: list[np.ndarray], N: int) -> np.ndarray:
     return np.vstack(good)
 
 
-
 def solve_cvar_with_fallback(
     R: np.ndarray,
     cols_used: Sequence[str],
@@ -61,7 +60,9 @@ def solve_cvar_with_fallback(
     """
     N = len(names)
     if R.size == 0 or R.shape[0] < 2 or len(cols_used) < 2:
-        w_mv = pgd_box_simplex_l2(mu, Sigma, gamma=mv_gamma, w_min=w_min, w_max=w_max, lam_turnover=0.0, w_ref=w_bench)
+        w_mv = pgd_box_simplex_l2(
+            mu, Sigma, gamma=mv_gamma, w_min=w_min, w_max=w_max, lam_turnover=0.0, w_ref=w_bench
+        )
         return project_to_box_simplex(w_mv, w_min, w_max)
 
     idx = [names.index(c) for c in cols_used]
@@ -71,11 +72,24 @@ def solve_cvar_with_fallback(
 
     try:
         w_sub = cvar_minimization(
-            R, alpha=alpha, w_min=w_min, w_max=w_max, budget=1.0,
-            lam_l1_turnover=lam_l1, w_ref=w_ref_sub
+            R,
+            alpha=alpha,
+            w_min=w_min,
+            w_max=w_max,
+            budget=1.0,
+            lam_l1_turnover=lam_l1,
+            w_ref=w_ref_sub,
         )
     except Exception:
-        w_sub = pgd_box_simplex_l2(mu_sub, S_sub, gamma=mv_gamma, w_min=w_min, w_max=w_max, lam_turnover=0.0, w_ref=np.full(len(idx), 1.0/len(idx)))
+        w_sub = pgd_box_simplex_l2(
+            mu_sub,
+            S_sub,
+            gamma=mv_gamma,
+            w_min=w_min,
+            w_max=w_max,
+            lam_turnover=0.0,
+            w_ref=np.full(len(idx), 1.0 / len(idx)),
+        )
 
     # map back
     w_full = np.zeros(N, dtype=float)

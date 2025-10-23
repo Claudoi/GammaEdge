@@ -136,7 +136,9 @@ def clean_returns_matrix(returns_wide: pl.DataFrame) -> pl.DataFrame:
         n_null = df.select(pl.col(c).is_null().sum()).item()
         if n_null < df.height:
             keep.append(c)
-    df = df.select([c for c in keep if c in returns_wide.columns] + ([] if "date" not in df.columns else []))
+    df = df.select(
+        [c for c in keep if c in returns_wide.columns] + ([] if "date" not in df.columns else [])
+    )
 
     # Filtro filas con finitos en todas las series numéricas
     numeric_cols = [c for c in df.columns if c != "date"]
