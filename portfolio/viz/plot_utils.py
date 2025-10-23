@@ -1350,7 +1350,6 @@ def plot_asset_contrib_heatmap_adv(
     topk_by_abs_total: int = 30,
     title: str = "Asset Daily Contribution Heatmap",
 ) -> go.Figure:
-
     req = {"date", "ticker", "contrib"}
     if not req.issubset(set(df_asset_daily.columns)):
         raise ValueError("df_asset_daily must contain 'date','ticker','contrib'")
@@ -1387,7 +1386,6 @@ def plot_cumulative_contrib_curves_adv(
     topk_by_abs_total: int = 10,
     title: str = "Cumulative Contribution (Top-k assets)",
 ) -> go.Figure:
-
     req = {"date", "ticker", "contrib"}
     if not req.issubset(set(df_asset_daily.columns)):
         raise ValueError("df_asset_daily must contain 'date','ticker','contrib'")
@@ -1424,7 +1422,6 @@ def plot_brinson_components_bar_adv(
     title: str = "Brinson Components (final snapshot)",
     as_percent: bool = True,
 ) -> go.Figure:
-
     needed = {"date", "alloc", "select", "interact", "total"}
     if not needed.issubset(set(df_brinson.columns)):
         raise ValueError("df_brinson must contain 'date','alloc','select','interact','total'")
@@ -1448,7 +1445,6 @@ def plot_brinson_components_area_adv(
     title: str = "Brinson Components Over Time",
     as_percent: bool = True,
 ) -> go.Figure:
-
     need = {"date", "alloc", "select", "interact"}
     if not need.issubset(set(df_brinson.columns)):
         raise ValueError("df_brinson must contain 'date','alloc','select','interact'")
@@ -1531,7 +1527,6 @@ def plot_top_contributors_waterfall(
     orientation: str = "v",
     title: str = "Cumulative Contribution (Waterfall)",
 ) -> go.Figure:
-
     req = {"ticker", "contrib_total"}
     if not req.issubset(set(df_cum.columns)):
         raise ValueError("df_cum must include 'ticker','contrib_total'.")
@@ -1579,7 +1574,6 @@ def plot_group_share_area_from_share(
     *,
     title: str = "Group Share of Total Contribution",
 ) -> go.Figure:
-
     req = {"date", "group", "share"}
     if not req.issubset(set(df_share.columns)):
         raise ValueError("df_share must include 'date','group','share'.")
@@ -1617,7 +1611,6 @@ def plot_brinson_by_group_area(
     component: str = "total",  # "alloc" | "select" | "interact" | "total"
     title: str | None = None,
 ) -> go.Figure:
-
     req = {"date", "group_id", "alloc", "select", "interact", "total"}
     if not req.issubset(set(df_brinson_g.columns)):
         raise ValueError(
@@ -1751,7 +1744,6 @@ def plot_brinson_final_bar(
 
 
 def plot_scenario_equity_panel(results: list, title: str = "Scenario Equity Panel") -> go.Figure:
-
     fig = go.Figure()
     for r in results:
         dates = r.bt.get("dates", [])
@@ -1766,7 +1758,6 @@ def plot_scenario_equity_panel(results: list, title: str = "Scenario Equity Pane
 def plot_scenario_metrics_bars(
     df_metrics: pl.DataFrame, title: str = "Scenario Metrics"
 ) -> go.Figure:
-
     pdf = df_metrics.to_pandas()
     pdf = pdf.replace([np.inf, -np.inf], np.nan).dropna()
     fig = px.bar(
@@ -1787,7 +1778,6 @@ def plot_weights_delta_heatmap(
     W_scn: np.ndarray,
     title: str = "Δ Weights (Scenario - Baseline)",
 ) -> go.Figure:
-
     base = (W_base[-1] if W_base.ndim == 2 else W_base).astype(float)
     scn = (W_scn[-1] if W_scn.ndim == 2 else W_scn).astype(float)
     d = scn - base
@@ -1815,7 +1805,6 @@ def plot_tornado_sensitivity(
     up_label: str = "Up",
     sort_by: str = "min_delta",
 ) -> go.Figure:
-
     pdf = _to_pandas(df_sens).copy()
 
     # Normalize naming
@@ -1862,7 +1851,6 @@ def plot_equity_compare(
     name_b: str = "Scenario",
     title: str | None = None,
 ) -> go.Figure:
-
     title = title or f"Equity Comparison — {name_a} vs {name_b}"
     fig = go.Figure()
     fig.add_trace(go.Scatter(x=list(dates), y=list(equity_a), mode="lines", name=name_a))
@@ -1919,7 +1907,6 @@ def plot_metric_delta_bars(
     scenario_name_col: str = "Scenario",
     title: str | None = None,
 ) -> go.Figure:
-
     pdf = _to_pandas(df_metrics).copy()
     for c in [metric_col]:
         pdf[c] = pd.to_numeric(pdf[c], errors="coerce")
@@ -1954,7 +1941,6 @@ def plot_weights_compare_heatmap(
     title: str | None = None,
     zmax_abs: float | None = None,
 ) -> go.Figure:
-
     # Coerce to numpy arrays
     A = np.asarray(weights_a, dtype=float)
     B = np.asarray(weights_b, dtype=float)

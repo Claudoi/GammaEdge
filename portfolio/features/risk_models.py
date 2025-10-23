@@ -220,6 +220,7 @@ def covariance(
     annualize: bool = True,
     fill: Literal["drop", "mean", "none"] = "drop",
     psd: bool = True,
+    as_frame: bool = True,
 ) -> tuple[np.ndarray, list[str]]:
     """
     Estimate covariance matrix Σ. Returns (Sigma, tickers).
@@ -264,7 +265,12 @@ def covariance(
     if psd:
         Sigma = _ensure_psd(Sigma)
 
-    return Sigma * ann, names
+    Sigma = Sigma * ann
+    if as_frame:
+        import pandas as pd  # import local para no forzar dependencia dura
+
+        return pd.DataFrame(Sigma, index=names, columns=names)
+    return Sigma, names
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -334,7 +340,6 @@ def compute_mu_sigma(
     fill: Literal["drop", "mean", "none"] = "drop",
     psd: bool = True,
 ) -> tuple[np.ndarray, np.ndarray, list[str]]:
-
     mu_series = expected_returns(
         df_ret_wide,
         method=mu_method,
@@ -361,6 +366,7 @@ def compute_mu_sigma(
         annualize=annualize,
         fill=fill,
         psd=psd,
+        as_frame=False,
     )
     if names != names2:
         raise RuntimeError("Ticker order mismatch between μ and Σ.")
