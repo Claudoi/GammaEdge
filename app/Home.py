@@ -18,6 +18,7 @@ _DEPRECATED_CFG_KEYS = {
 # para no spamear logs, recuerde ya avisados por (file:line)
 _notified_callers = set()
 
+
 def _plotly_chart_compat(fig, *args, **kwargs):
     """
     Acepta usos antiguos y los migra a config={...} sin romper nada.
@@ -70,6 +71,7 @@ def _plotly_chart_compat(fig, *args, **kwargs):
     if cfg:
         kwargs["config"] = cfg
     return _ORIG_PLOTLY_CHART(fig, **kwargs)
+
 
 # Activar parche global
 st.plotly_chart = _plotly_chart_compat  # type: ignore
