@@ -1,4 +1,5 @@
 import inspect
+
 import streamlit as st
 
 # --- Monkey patch: compat Plotly config ---
