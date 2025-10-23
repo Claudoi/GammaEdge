@@ -43,7 +43,6 @@ def stack_Ws(Ws_list: Sequence[np.ndarray | None], N: int) -> np.ndarray:
         raise ValueError("No valid weight vectors to stack (after filtering).")
     return np.vstack(good).astype(float, copy=False)
 
-
 def solve_cvar_with_fallback(
     R: np.ndarray,
     cols_used: Sequence[str],

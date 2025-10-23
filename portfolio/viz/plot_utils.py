@@ -38,6 +38,7 @@ pd.set_option("future.no_silent_downcasting", True)
 DataFrameLike = Union[pd.DataFrame, pl.DataFrame]
 ArrayLike = Union[NDArray[np.float64], Sequence[float]]
 
+from portfolio.core.compat import dataclass_compat as dataclass
 
 # ============================================================================
 # Plotly rendering helpers (centralized config, no deprecations)
@@ -104,6 +105,7 @@ def fig_to_html(
 # ============================================================================
 
 
+
 @dataclass(frozen=True, slots=True)
 class HeatmapOrder:
     clustered: bool = True
@@ -152,6 +154,7 @@ def _apply_order(mat: np.ndarray, order: np.ndarray) -> NDArray[np.float64]:
     M = np.asarray(mat, dtype=np.float64)
     idx = np.asarray(order, dtype=np.int64)
     return np.asarray(M[np.ix_(idx, idx)], dtype=np.float64)
+
 
 
 def _to_pandas(df: DataFrameLike) -> pd.DataFrame:
@@ -211,6 +214,7 @@ def _to_1d_float(x: Any) -> NDArray[np.float64]:
 # ============================================================================
 # 1) Correlation Heatmap (clustered)
 # ============================================================================
+
 
 
 def corr_heatmap(
@@ -356,6 +360,7 @@ def _eigvalsh_safe(S: np.ndarray) -> NDArray[np.float64]:
             return np.linalg.eigvalsh(S + 1e-12 * np.eye(S.shape[0]))
 
 
+
 def covariance_spectrum(
     Sigma: np.ndarray | pl.DataFrame,
     *,
@@ -390,6 +395,7 @@ def covariance_spectrum(
 # ============================================================================
 # 4) Efficient Frontier
 # ============================================================================
+
 
 
 def efficient_frontier(
@@ -617,6 +623,7 @@ def efficient_frontier(
 # ============================================================================
 
 
+
 def weights_bar(
     weights: ArrayLike,
     labels: Sequence[str],
@@ -673,6 +680,7 @@ def weights_bar(
 # ============================================================================
 # 6) Weights Heatmap (scenarios)
 # ============================================================================
+
 
 
 def weights_heatmap(
@@ -1988,6 +1996,7 @@ def plot_weights_delta_heatmap(
 # ============================================================================
 # 21) Tornado de sensibilidad (down/up vs base)
 # ============================================================================
+
 
 
 def plot_tornado_sensitivity(

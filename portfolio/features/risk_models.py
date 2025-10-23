@@ -189,6 +189,7 @@ def apply_ridge(Sigma: np.ndarray, eps: float) -> np.ndarray:
     return np.asarray(ridge, dtype=np.float64)
 
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Expected returns (μ)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -346,6 +347,7 @@ def correlation_from_cov(Sigma: np.ndarray) -> np.ndarray:
     return np.asarray(Corr_sym, dtype=np.float64)
 
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Black-Litterman (posterior μ) — forma canónica
 # ──────────────────────────────────────────────────────────────────────────────
@@ -373,6 +375,7 @@ def black_litterman(
     middle = Sigma_tau @ P.T @ inv_term
     mu_post = mu_prior + middle @ (Q - P @ mu_prior)
     return np.asarray(mu_post, dtype=np.float64)
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -475,6 +478,7 @@ def capm_mu(
     return np.asarray(mu_period * ann, dtype=np.float64)
 
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Black–Litterman prior μ (equilibrium)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -530,6 +534,7 @@ def black_litterman_mu(
     per = _infer_periodicity(df_ret_wide)
     ann = float(per.per_year) if annualize else 1.0
     return np.asarray(pi * ann, dtype=np.float64)
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
