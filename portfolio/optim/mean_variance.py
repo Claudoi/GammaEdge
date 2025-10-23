@@ -189,10 +189,12 @@ def project_to_box_simplex(v: np.ndarray, w_min: float, w_max: float) -> np.ndar
     return out
 
 
+
 def soft_threshold(u: np.ndarray, t: float) -> np.ndarray:
     """Component-wise soft-thresholding operator."""
     result = np.sign(u) * np.maximum(np.abs(u) - t, 0.0)
     return np.asarray(result, dtype=np.float64)
+
 
 
 def sparsify_topk_and_project(w: np.ndarray, k: int, w_min: float, w_max: float) -> np.ndarray:
@@ -249,6 +251,7 @@ def project_with_group_caps(
     return np.asarray(w, dtype=np.float64)
 
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # PGD con penalizaciones de turnover (L2 y L1)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -293,6 +296,7 @@ def pgd_box_simplex_l2(
     return np.asarray(w, dtype=np.float64)
 
 
+
 def pgd_box_simplex_l1(
     mu: np.ndarray,
     Sigma: np.ndarray,
@@ -332,6 +336,7 @@ def pgd_box_simplex_l1(
         if groups is not None and group_max:
             w = project_with_group_caps(w, groups, group_max, w_min, w_max)
     return np.asarray(w, dtype=np.float64)
+
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -404,6 +409,7 @@ def mean_te_tradeoff_pgd(
     return np.asarray(w, dtype=np.float64)
 
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Métricas y frontera proyectada (para pintar con caja)
 # ──────────────────────────────────────────────────────────────────────────────
@@ -456,6 +462,7 @@ def frontier_box_projected(
         rets[i] = float(w @ mu)
         risks[i] = np.sqrt(max(float(w @ Sigma @ w), 0.0))
     return np.asarray(risks, dtype=np.float64), np.asarray(rets, dtype=np.float64)
+
 
 
 __all__ = [

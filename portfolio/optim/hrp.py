@@ -33,6 +33,7 @@ def _seriation_order(
     return np.asarray(order, dtype=int)  # ✅ explicit ndarray
 
 
+
 def hrp_weights(
     Sigma: np.ndarray,
     *,
