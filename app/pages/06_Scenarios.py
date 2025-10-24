@@ -244,7 +244,7 @@ with st.sidebar:
     if N * w_min > 1.0 or N * w_max < 1.0:
         w_min = min(w_min, 1.0 / max(N, 1))
         w_max = max(w_max, 1.0 / max(N, 1))
-        st.info(f"Box adjusted for feasibility: w_min≤{1.0/max(N,1):.4f}≤w_max")
+        st.info(f"Box adjusted for feasibility: w_min≤{1.0 / max(N, 1):.4f}≤w_max")
 
     st.caption("Covariance")
     cov_estimator = st.selectbox("Covariance estimator", ["Sample", "EWMA"], index=0)
@@ -516,9 +516,9 @@ else:
 
 # Rebalance diagnostics
 with st.expander("Rebalance diagnostics", expanded=False):
-    st.write(f"Allocator hook used by engine: **{base_bt.get('_alloc_hook','?')}**")
-    st.write(f"Returns hook used by engine: **{base_bt.get('_ret_hook','?')}**")
-    st.write(f"Allocator calls recorded: **{base_bt.get('_alloc_calls','n/a')}**")
+    st.write(f"Allocator hook used by engine: **{base_bt.get('_alloc_hook', '?')}**")
+    st.write(f"Returns hook used by engine: **{base_bt.get('_ret_hook', '?')}**")
+    st.write(f"Allocator calls recorded: **{base_bt.get('_alloc_calls', 'n/a')}**")
 
     W = np.asarray(base_bt.get("weights", []), float)
     if W.ndim == 2 and W.size > 0:
@@ -720,7 +720,7 @@ if cfgs:
     # Detailed charts per scenario
     for idx, res in enumerate(results):
         bt = res.get("bt", {})
-        sc_name = str(res.get("name", f"Scenario {idx+1}"))
+        sc_name = str(res.get("name", f"Scenario {idx + 1}"))
         sec_prefix = f"sc-{idx}-{sc_name.replace(' ', '').lower()}"
 
         st.subheader(f"Scenario: {sc_name}")

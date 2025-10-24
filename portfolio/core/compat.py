@@ -3,23 +3,30 @@ from __future__ import annotations
 
 import datetime as _dt
 from dataclasses import dataclass as _dataclass
+from typing import Any, Callable, cast, dataclass_transform
 
 
-# Decorador compatible con "slots" incluso en 3.9 (los ignora si no existen)
-def dataclass_compat(*args, **kwargs):
+# Decorador compatible con "slots" (los ignora si no existen) y visible para mypy
+@dataclass_transform()
+def dataclass_compat(*args: Any, **kwargs: Any) -> Callable[[type], type]:
     kwargs.pop("slots", None)  # en 3.9 no existe
-    return _dataclass(*args, **kwargs)
+
+    def _wrap(cls: type) -> type:
+        wrapped = _dataclass(*args, **kwargs)(cls)
+        return cast(type, wrapped)
+
+    return _wrap
 
 
-# Syntactic sugar para "frozen+slots" donde se pueda
-def dataclass_frozen_slots():
-    def _wrap(cls):
+# Syntactic sugar para "frozen+slots" donde se pueda (visible para mypy)
+@dataclass_transform(frozen_default=True)
+def dataclass_frozen_slots() -> Callable[[type], type]:
+    def _wrap(cls: type) -> type:
         params = {"frozen": True}
-        # "slots" solo si la implementación lo soporta
         try:
-            return _dataclass(**params, slots=True)(cls)  # type: ignore[arg-type]
+            return cast(type, _dataclass(**params, slots=True)(cls))
         except TypeError:
-            return _dataclass(**params)(cls)
+            return cast(type, _dataclass(**params)(cls))
 
     return _wrap
 

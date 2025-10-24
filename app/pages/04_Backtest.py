@@ -205,7 +205,7 @@ with st.sidebar:
     if N * w_min > 1.0 or N * w_max < 1.0:
         w_min = min(w_min, 1.0 / max(N, 1))
         w_max = max(w_max, 1.0 / max(N, 1))
-        st.info(f"Box adjusted for feasibility: w_min≤{1.0/max(N,1):.4f}≤w_max")
+        st.info(f"Box adjusted for feasibility: w_min≤{1.0 / max(N, 1):.4f}≤w_max")
 
     st.markdown("---")
     st.subheader("Covariance Estimation")

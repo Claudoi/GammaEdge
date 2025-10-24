@@ -1,6 +1,5 @@
 # Enforces consistent formatting, linting, and notebook hygiene across GammaEdge
-# mypy is isolated to manual runs to speed up development
-# CI handles full static type checks and tests
+# mypy is isolated to manual runs to keep commits fast; CI runs full static checks
 
 default_stages: [pre-commit, pre-push]
 
@@ -10,25 +9,33 @@ repos:
     rev: 24.10.0
     hooks:
       - id: black
+        args: [--line-length=100]
 
-  # ---- RUFF (Lint + Auto-fix) ----
+  # ---- RUFF (Lint + Auto-fix + Format) ----
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.6.9
     hooks:
       - id: ruff
-        args: [--fix]
+        args: [--fix, --exit-non-zero-on-fix]
       - id: ruff-format
 
-  # ---- MYPY (Type-checking) ----
+  # ---- MYPY (Static Type Checking) ----
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.11.1
     hooks:
       - id: mypy
-        additional_dependencies: ["types-requests"]
+        additional_dependencies:
+          - numpy
+          - pandas
+          - polars
+          - plotly
+          - types-requests
+        args: [--ignore-missing-imports, --warn-unused-ignores]
         stages: [manual]  # Run manually: poetry run mypy portfolio app tests
 
-  # ---- NBSTRIPOUT (Clean notebooks) ----
+  # ---- NBSTRIPOUT (Clean notebooks automatically) ----
   - repo: https://github.com/kynan/nbstripout
     rev: 0.7.1
     hooks:
       - id: nbstripout
+        files: \.ipynb$

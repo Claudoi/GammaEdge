@@ -221,7 +221,7 @@ def run_scenarios(
                 bench_weights=bench_weights,
             )
             m = bt_metrics.compute_backtest_metrics(bt)
-            name = cfg.name if cfg.B <= 1 else f"{cfg.name} #{b_ix+1}"
+            name = cfg.name if cfg.B <= 1 else f"{cfg.name} #{b_ix + 1}"
             out.append(ScenarioResult(name=name, bt=bt, metrics=m, shock=cfg.shock))
     return out
 

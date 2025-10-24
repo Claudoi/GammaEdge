@@ -562,7 +562,7 @@ if st.session_state.get("data_ready"):
 
     st.subheader("Returns (tail)")
     with st.container(border=True):
-        st.caption(f"Returns shape: {df_ret_wide.shape[0]} x {df_ret_wide.shape[1]-1}")
+        st.caption(f"Returns shape: {df_ret_wide.shape[0]} x {df_ret_wide.shape[1] - 1}")
         st.dataframe(df_ret_wide.tail(10).to_pandas().round(6), width="stretch")
 
     # Data Health

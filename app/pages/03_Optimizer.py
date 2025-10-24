@@ -98,7 +98,7 @@ with st.sidebar:
     if N > 0 and (N * w_min > 1.0 or N * w_max < 1.0):
         w_min = min(w_min, 1.0 / N)
         w_max = max(w_max, 1.0 / N)
-        st.info(f"Box constraints adjusted to be feasible: w_min≤{1.0/N:.4f}≤w_max")
+        st.info(f"Box constraints adjusted to be feasible: w_min≤{1.0 / N:.4f}≤w_max")
 
     rf = st.number_input("rf (annualized)", -0.5, 0.5, 0.0, 0.001, format="%.3f")
 
@@ -122,7 +122,7 @@ with st.sidebar:
         w_bench = np.full(N, 1.0 / max(N, 1))
     else:
         w_bench_str = st.text_area(
-            "Custom weights (comma-separated)", value=",".join([f"{1/max(N,1):.6f}"] * N)
+            "Custom weights (comma-separated)", value=",".join([f"{1 / max(N, 1):.6f}"] * N)
         )
         try:
             w_bench = np.array([float(x) for x in w_bench_str.split(",")], dtype=float)
@@ -378,7 +378,7 @@ try:
     # 3) Box frontier (long-only with box)
     if not box_feasible(N, w_min, w_max):
         st.warning(
-            f"Box infeasible: N*w_min={N*w_min:.3f}, N*w_max={N*w_max:.3f}. "
+            f"Box infeasible: N*w_min={N * w_min:.3f}, N*w_max={N * w_max:.3f}. "
             "Adjust bounds so N*w_min ≤ 1 ≤ N*w_max."
         )
         risks_box = rets_box = None
