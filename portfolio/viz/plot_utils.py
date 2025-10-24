@@ -38,7 +38,10 @@ pd.set_option("future.no_silent_downcasting", True)
 DataFrameLike = Union[pd.DataFrame, pl.DataFrame]
 ArrayLike = Union[NDArray[np.float64], Sequence[float]]
 
-from portfolio.core.compat import dataclass_compat as dataclass
+# SciPy soft dependency (optional)
+try:
+    import scipy.cluster.hierarchy as sch
+    from scipy.spatial.distance import squareform
 
 # ============================================================================
 # Plotly rendering helpers (centralized config, no deprecations)
