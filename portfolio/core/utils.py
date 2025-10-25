@@ -29,7 +29,8 @@ def ensure_psd(S: np.ndarray, eps: float = 1e-10, clip: bool = True) -> np.ndarr
         S = (V * w) @ V.T
 
     # Re-simetriza por seguridad
-    return 0.5 * (S + S.T)
+    S_out: np.ndarray = np.asarray(0.5 * (S + S.T), dtype=float)
+    return S_out
 
 
 def cond_number(S: np.ndarray) -> float:
