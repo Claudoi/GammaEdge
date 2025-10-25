@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Literal
+from typing import Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -285,11 +285,13 @@ def returns_to_frequency_wide(
 
 
 def annualize_mean(mu_periodic: np.ndarray | pl.Series, period: Periodicity) -> np.ndarray:
-    return np.asarray(mu_periodic) * float(period.per_year)
+    arr = np.asarray(mu_periodic, dtype=np.float64)
+    return cast(np.ndarray, arr * float(period.per_year))
 
 
 def annualize_vol(sigma_periodic: np.ndarray | pl.Series, period: Periodicity) -> np.ndarray:
-    return np.asarray(sigma_periodic) * np.sqrt(float(period.per_year))
+    arr = np.asarray(sigma_periodic, dtype=np.float64)
+    return cast(np.ndarray, arr * np.sqrt(float(period.per_year)))
 
 
 def summary_stats(
@@ -413,34 +415,29 @@ def simple_returns_pd(prices: pd.DataFrame) -> pd.DataFrame:
 
 
 def log_returns_pd(prices: pd.DataFrame) -> pd.DataFrame:
+    """
+    Log returns: ln(P_t / P_{t-1}), skipping the first row.
+    """
+    if prices.empty:
+        return prices
     df = prices.sort_index()
-    out = np.log(df).diff().iloc[1:]
-    return out
+    ratio = df.div(df.shift(1))
+    out = ratio.apply(np.log).iloc[1:]
+    return pd.DataFrame(out)
 
 
 def to_frequency_pd(returns: pd.DataFrame, freq: str) -> pd.DataFrame:
-    """
-    Agrega retornos a frecuencia `freq` respetando composición:
-      - log-like: suma
-      - simple-like: (1+r).prod - 1
-    Requiere DateTimeIndex para `resample`.
-    """
     if returns.empty:
         return returns
 
     df = returns.copy()
 
-    # Garantiza DateTimeIndex para resample
     if not isinstance(df.index, pd.DatetimeIndex):
-        # Intento conservador: si hay una columna 'date' en el índice, úsala
-        # o como último recurso, conviértelo.
         try:
             df.index = pd.to_datetime(df.index, utc=False)
         except Exception:
-            # Si no se puede, devolvemos sin agrupar para no romper
             return df
 
-    # Heurística de tipo (igual que antes)
     is_log_like = (df <= -1.0).any().any() or (df.abs().median() > 0.25).any()
 
     if is_log_like:
@@ -448,7 +445,7 @@ def to_frequency_pd(returns: pd.DataFrame, freq: str) -> pd.DataFrame:
     else:
         out = (1.0 + df).resample(freq).prod(min_count=1) - 1.0
 
-    return out.dropna(how="all")
+    return pd.DataFrame(out.dropna(how="all"))
 
 
 def winsorize_pd(returns: pd.DataFrame, q: float = 0.01) -> pd.DataFrame:
