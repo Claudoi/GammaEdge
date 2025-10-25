@@ -113,15 +113,16 @@ def cvar_minimization(
         b_ub=np.array(b),
         A_eq=A_eq,
         b_eq=b_eq,
-        bounds=list(zip(lb, ub, strict=False)),
+        bounds=list(zip(lb, ub)),
         method="highs",
     )
+
     if not res.success:
         raise RuntimeError(f"CVaR LP failed: {res.message}")
 
-    w_opt = res.x[:N]
-    # normaliza por si redondeos
+    w_opt = np.asarray(res.x[:N], dtype=np.float64)  # 👈 ensure proper type
     s = float(np.sum(w_opt))
     if s != 0:
         w_opt = w_opt / s * budget
-    return w_opt
+
+    return np.asarray(w_opt, dtype=np.float64)
