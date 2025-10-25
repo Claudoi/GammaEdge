@@ -37,7 +37,7 @@ def ensure_psd(S: np.ndarray, eps: float = 1e-10) -> np.ndarray:
             w, V = np.linalg.eigh(A)
             w = np.clip(w, eps, None)
             R = V @ np.diag(w) @ V.T
-            return 0.5 * (R + R.T)
+            return np.asarray(0.5 * (R + R.T), dtype=np.float64)
         except np.linalg.LinAlgError:
             jitter = eps if jitter == 0.0 else jitter * 10.0
             A = A + np.eye(A.shape[0]) * jitter
@@ -46,7 +46,7 @@ def ensure_psd(S: np.ndarray, eps: float = 1e-10) -> np.ndarray:
     U, s, VT = np.linalg.svd(0.5 * (A + A.T), full_matrices=False)
     s = np.clip(s, eps, None)
     R = (U * s) @ VT
-    return 0.5 * (R + R.T)
+    return np.asarray(0.5 * (R + R.T), dtype=np.float64)
 
 
 def cond_number(S: np.ndarray) -> float:
@@ -155,7 +155,7 @@ def frontier_closed_form(
         w = a * invS_one + b * invS_mu
         risks[i] = np.sqrt(max(float(w @ Sigma @ w), 0.0))
 
-    return risks, Rgrid
+    return np.asarray(risks, dtype=np.float64), np.asarray(Rgrid, dtype=np.float64)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -164,14 +164,10 @@ def frontier_closed_form(
 
 
 def project_to_box_simplex(v: np.ndarray, w_min: float, w_max: float) -> np.ndarray:
-    """
-    Proyección a { w_min ≤ w_i ≤ w_max, ∑ w_i = 1 } vía bisección sobre θ.
-    Requiere factibilidad: N*w_min ≤ 1 ≤ N*w_max.
-    """
     v = np.asarray(v, dtype=float)
     n = v.size
     if n == 0:
-        return v
+        return np.asarray(v, dtype=np.float64)
     if n * w_min - 1.0 > 1e-12 or 1.0 - n * w_max > 1e-12:
         raise ValueError("Infeasible box-simplex: ensure N*w_min ≤ 1 ≤ N*w_max.")
 
@@ -182,18 +178,21 @@ def project_to_box_simplex(v: np.ndarray, w_min: float, w_max: float) -> np.ndar
     for _ in range(80):
         theta = 0.5 * (L + U)
         w = np.clip(v - theta, lo, hi)
-        s = w.sum()
+        s = float(w.sum())
         if s > 1.0:
             L = theta
         else:
             U = theta
     theta = 0.5 * (L + U)
-    return np.clip(v - theta, lo, hi)
+    w = np.clip(v - theta, lo, hi)
+    out: np.ndarray = np.asarray(w, dtype=np.float64)  # 👈 fija el tipo
+    return out
 
 
 def soft_threshold(u: np.ndarray, t: float) -> np.ndarray:
-    """Operador de soft‑thresholding componente a componente."""
-    return np.sign(u) * np.maximum(np.abs(u) - t, 0.0)
+    """Component-wise soft-thresholding operator."""
+    result = np.sign(u) * np.maximum(np.abs(u) - t, 0.0)
+    return np.asarray(result, dtype=np.float64)
 
 
 def sparsify_topk_and_project(w: np.ndarray, k: int, w_min: float, w_max: float) -> np.ndarray:
@@ -247,7 +246,7 @@ def project_with_group_caps(
                 w = project_to_box_simplex(w, w_min, w_max)
         if not changed:
             break
-    return w
+    return np.asarray(w, dtype=np.float64)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -291,7 +290,7 @@ def pgd_box_simplex_l2(
         w = project_to_box_simplex(w - step * grad, w_min, w_max)
         if groups is not None and group_max:
             w = project_with_group_caps(w, groups, group_max, w_min, w_max)
-    return w
+    return np.asarray(w, dtype=np.float64)
 
 
 def pgd_box_simplex_l1(
@@ -332,7 +331,7 @@ def pgd_box_simplex_l1(
         w = project_to_box_simplex(w_ref + u, w_min, w_max)
         if groups is not None and group_max:
             w = project_with_group_caps(w, groups, group_max, w_min, w_max)
-    return w
+    return np.asarray(w, dtype=np.float64)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -368,7 +367,7 @@ def min_te_pgd(
         w = project_to_box_simplex(w - step * grad, w_min, w_max)
         if groups is not None and group_max:
             w = project_with_group_caps(w, groups, group_max, w_min, w_max)
-    return w
+    return np.asarray(w, dtype=np.float64)
 
 
 def mean_te_tradeoff_pgd(
@@ -402,7 +401,7 @@ def mean_te_tradeoff_pgd(
         w = project_to_box_simplex(w - step * grad, w_min, w_max)
         if groups is not None and group_max:
             w = project_with_group_caps(w, groups, group_max, w_min, w_max)
-    return w
+    return np.asarray(w, dtype=np.float64)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -412,7 +411,7 @@ def mean_te_tradeoff_pgd(
 
 def risk_contributions(w: np.ndarray, Sigma: np.ndarray) -> np.ndarray:
     """RC_i = w_i * (Σ w)_i  (contribución absoluta)."""
-    return w * (Sigma @ w)
+    return np.asarray(np.asarray(w, dtype=np.float64) * (Sigma @ w), dtype=np.float64)
 
 
 def frontier_box_projected(
@@ -442,7 +441,7 @@ def frontier_box_projected(
         w = project_to_box_simplex(w, w_min, w_max)
         r = float(w @ mu)
         s = float(np.sqrt(max(w @ Sigma @ w, 0.0)))
-        return np.array([s]), np.array([r])
+        return np.array([s], dtype=np.float64), np.array([r], dtype=np.float64)
 
     if r_min is None:
         r_min = float(np.min(mu))
@@ -456,7 +455,7 @@ def frontier_box_projected(
         w = project_to_box_simplex(w_free, w_min, w_max)
         rets[i] = float(w @ mu)
         risks[i] = np.sqrt(max(float(w @ Sigma @ w), 0.0))
-    return risks, rets
+    return np.asarray(risks, dtype=np.float64), np.asarray(rets, dtype=np.float64)
 
 
 __all__ = [
