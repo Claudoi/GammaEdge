@@ -427,30 +427,25 @@ def build_groups_idx(
     col: str = "sector",
     other_label: str = "OTHER",
 ) -> tuple[list[int], list[str], dict[str, str]]:
-    """
-    Construye índice activo→grupo para Brinson y reporting agrupado.
-    Devuelve:
-      - groups_idx: list[int] largo N con id de grupo (0..G-1)
-      - group_labels: nombres de grupo en orden de aparición
-      - groups_map: dict[ticker -> group_name]
-    """
+    group_map_out: dict[str, str]
+
     if meta_df is None or "ticker" not in meta_df.columns or col not in meta_df.columns:
-        groups_map = {tk: tk for tk in tickers}
+        group_map_out = {tk: tk for tk in tickers}
         labels = list(tickers)
         idx = list(range(len(tickers)))
-        return idx, labels, groups_map
+        return idx, labels, group_map_out
 
     lut = dict(zip(meta_df["ticker"].to_list(), meta_df[col].to_list()))
     label_order: list[str] = []
-    groups_map: dict[str, str] = {}
+    group_map_out = {}
     for tk in tickers:
         g = lut.get(tk, other_label)
-        groups_map[tk] = g
+        group_map_out[tk] = g
         if g not in label_order:
             label_order.append(g)
     label_to_id = {g: i for i, g in enumerate(label_order)}
-    groups_idx = [label_to_id[groups_map[tk]] for tk in tickers]
-    return groups_idx, label_order, groups_map
+    groups_idx = [label_to_id[group_map_out[tk]] for tk in tickers]
+    return groups_idx, label_order, group_map_out
 
 
 def coerce_benchmark_weights(
@@ -533,13 +528,14 @@ def contributions_share_by_group(df_group_daily: pl.DataFrame) -> pl.DataFrame:
     req = {"date", "group", "contrib"}
     if not req.issubset(set(df_group_daily.columns)):
         raise ValueError("df_group_daily must contain 'date','group','contrib'")
+
     total = df_group_daily.group_by("date").agg(pl.col("contrib").sum().alias("tot"))
     out = (
         df_group_daily.join(total, on="date", how="left")
         .with_columns(
             (
                 pl.col("contrib")
-                / pl.when(pl.abs(pl.col("tot")) > EPS).then(pl.col("tot")).otherwise(1.0)
+                / pl.when(pl.col("tot").abs() > EPS).then(pl.col("tot")).otherwise(1.0)
             ).alias("share")
         )
         .select(["date", "group", "share"])
