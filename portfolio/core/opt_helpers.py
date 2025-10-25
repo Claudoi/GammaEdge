@@ -11,25 +11,29 @@ from portfolio.optim.mean_variance import pgd_box_simplex_l2, project_to_box_sim
 
 def safe_project(w: np.ndarray, w_min: float, w_max: float) -> np.ndarray:
     """Proyecta con higiene numérica y normaliza. Fallback: equal-weight."""
-    w = np.asarray(w, float).reshape(-1)
-    if not np.all(np.isfinite(w)) or w.size == 0:
-        return np.array([], dtype=float) if w.size == 0 else np.full(w.size, 1.0 / w.size)
+    w = np.asarray(w, dtype=float).reshape(-1)
+    if w.size == 0:
+        return np.array([], dtype=float)
+    if not np.all(np.isfinite(w)):
+        return np.full(w.size, 1.0 / w.size, dtype=float)
+
     n = w.size
     # caja infactible → equal-weight
     if (n * w_min) > 1.0 or (n * w_max) < 1.0:
         return np.full(n, 1.0 / n, dtype=float)
+
     x = project_to_box_simplex(w, w_min=w_min, w_max=w_max)
     s = float(x.sum())
     return (x / s) if s > 1e-12 else np.full(n, 1.0 / n, dtype=float)
 
 
-def stack_Ws(Ws_list: list[np.ndarray], N: int) -> np.ndarray:
+def stack_Ws(Ws_list: Sequence[np.ndarray | None], N: int) -> np.ndarray:
     """Apila carteras (lista → matriz nGxN) filtrando None, tamaños malos y NaN/Inf."""
     good: list[np.ndarray] = []
     for w in Ws_list:
         if w is None:
             continue
-        ww = np.asarray(w, float).reshape(-1)
+        ww = np.asarray(w, dtype=float).reshape(-1)
         if ww.size != N:
             continue
         if not np.all(np.isfinite(ww)):
@@ -37,7 +41,7 @@ def stack_Ws(Ws_list: list[np.ndarray], N: int) -> np.ndarray:
         good.append(ww)
     if not good:
         raise ValueError("No valid weight vectors to stack (after filtering).")
-    return np.vstack(good)
+    return np.vstack(good).astype(float, copy=False)
 
 
 def solve_cvar_with_fallback(
@@ -61,18 +65,25 @@ def solve_cvar_with_fallback(
     N = len(names)
     if R.size == 0 or R.shape[0] < 2 or len(cols_used) < 2:
         w_mv = pgd_box_simplex_l2(
-            mu, Sigma, gamma=mv_gamma, w_min=w_min, w_max=w_max, lam_turnover=0.0, w_ref=w_bench
+            np.asarray(mu, dtype=float),
+            np.asarray(Sigma, dtype=float),
+            gamma=mv_gamma,
+            w_min=w_min,
+            w_max=w_max,
+            lam_turnover=0.0,
+            w_ref=np.asarray(w_bench, dtype=float),
         )
         return project_to_box_simplex(w_mv, w_min, w_max)
 
+    # map a subuniverso
     idx = [names.index(c) for c in cols_used]
-    mu_sub = mu[idx]
-    S_sub = Sigma[np.ix_(idx, idx)]
-    w_ref_sub = w_bench[idx]
+    mu_sub = np.asarray(mu, dtype=float)[idx]
+    S_sub = np.asarray(Sigma, dtype=float)[np.ix_(idx, idx)]
+    w_ref_sub = np.asarray(w_bench, dtype=float)[idx]
 
     try:
         w_sub = cvar_minimization(
-            R,
+            np.asarray(R, dtype=float),
             alpha=alpha,
             w_min=w_min,
             w_max=w_max,
@@ -81,6 +92,8 @@ def solve_cvar_with_fallback(
             w_ref=w_ref_sub,
         )
     except Exception:
+        # fallback a MV-L2 en el subuniverso
+        k = len(idx)
         w_sub = pgd_box_simplex_l2(
             mu_sub,
             S_sub,
@@ -88,11 +101,12 @@ def solve_cvar_with_fallback(
             w_min=w_min,
             w_max=w_max,
             lam_turnover=0.0,
-            w_ref=np.full(len(idx), 1.0 / len(idx)),
+            w_ref=np.full(k, 1.0 / k, dtype=float),
         )
 
-    # map back
+    # map back al universo completo
     w_full = np.zeros(N, dtype=float)
     for i, c in enumerate(cols_used):
         w_full[names.index(c)] = float(w_sub[i])
+
     return project_to_box_simplex(w_full, w_min, w_max)
