@@ -2,8 +2,8 @@
 # portfolio/backtest/reporting.py
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import Any
+from collections.abc import Iterable, Mapping, Sequence
+from typing import Any, cast
 
 import numpy as np
 import plotly.graph_objects as go
@@ -23,20 +23,29 @@ from .attribution import (
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _ensure_same_length(x: Iterable, y: np.ndarray, name_x: str = "x", name_y: str = "y"):
+def _ensure_same_length(
+    x: Iterable[Any],
+    y: np.ndarray,
+    name_x: str = "x",
+    name_y: str = "y",
+) -> None:
     x_len = len(list(x)) if not isinstance(x, list) else len(x)
     if x_len != len(y):
         raise ValueError(f"{name_x} and {name_y} must have the same length ({x_len} vs {len(y)})")
 
 
-def fig_equity(dates: list, equity: np.ndarray, title: str = "Equity Curve") -> go.Figure:
+def fig_equity(
+    dates: Sequence[Any],
+    equity: np.ndarray,
+    title: str = "Equity Curve",
+) -> go.Figure:
     eq = np.asarray(equity, dtype=float)
     _ensure_same_length(dates, eq, "dates", "equity")
     eq = np.where(np.isfinite(eq), eq, np.nan)
 
     fig = go.Figure(
         go.Scatter(
-            x=dates,
+            x=list(dates),
             y=eq,
             mode="lines",
             name="Equity",
@@ -47,7 +56,11 @@ def fig_equity(dates: list, equity: np.ndarray, title: str = "Equity Curve") -> 
     return fig
 
 
-def fig_drawdown(dates: list, equity: np.ndarray, title: str = "Drawdown") -> go.Figure:
+def fig_drawdown(
+    dates: Sequence[Any],
+    equity: np.ndarray,
+    title: str = "Drawdown",
+) -> go.Figure:
     eq = np.asarray(equity, dtype=float)
     _ensure_same_length(dates, eq, "dates", "equity")
     eq = np.where(np.isfinite(eq), eq, np.nan)
@@ -59,7 +72,7 @@ def fig_drawdown(dates: list, equity: np.ndarray, title: str = "Drawdown") -> go
 
     fig = go.Figure(
         go.Scatter(
-            x=dates,
+            x=list(dates),
             y=dd,
             mode="lines",
             name="Drawdown",
@@ -78,7 +91,10 @@ def fig_drawdown(dates: list, equity: np.ndarray, title: str = "Drawdown") -> go
 
 
 def fig_weights_heatmap(
-    dates: list, tickers: list[str], W: np.ndarray, title: str = "Weights"
+    dates: Sequence[Any],
+    tickers: Sequence[str],
+    W: np.ndarray,
+    title: str = "Weights",
 ) -> go.Figure:
     W = np.asarray(W, dtype=float)
     T, N = W.shape
@@ -96,7 +112,7 @@ def fig_weights_heatmap(
     fig = go.Figure(
         data=go.Heatmap(
             z=W_ord.T,
-            x=dates,
+            x=list(dates),
             y=tickers_ord,
             coloraxis="coloraxis",
             zmin=0.0,
@@ -234,16 +250,18 @@ def build_backtest_report(
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-def _to_html_table(df_any) -> str:
+def _to_html_table(df_any: Any) -> str:
     """Convert Polars/Pandas DataFrame to a compact HTML table string."""
     pdf = df_any.to_pandas() if hasattr(df_any, "to_pandas") else df_any
+    html = cast(str, pdf.to_html(index=False, border=0))
     # Simple styling; Streamlit will embed this HTML as-is.
-    return pdf.to_html(index=False, border=0).replace(
-        'class="dataframe"', 'class="dataframe" style="font-size:12px"'
-    )
+    return html.replace('class="dataframe"', 'class="dataframe" style="font-size:12px"')
 
 
-def render_html_report(bt: dict, df_metrics) -> str:
+def render_html_report(
+    bt: Mapping[str, Any] | dict[str, Any],
+    df_metrics: pl.DataFrame | Any,
+) -> str:
     """
     Minimal HTML report builder from the `bt` dict produced by the engine
     and a metrics table (Polars or Pandas).

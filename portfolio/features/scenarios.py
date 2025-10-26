@@ -5,15 +5,11 @@ from dataclasses import dataclass
 from typing import Callable
 
 import numpy as np
+import pandas as pd
 import polars as pl
 
 from portfolio.backtest import metrics as bt_metrics
 from portfolio.backtest.engine import backtest_rebalanced
-
-try:
-    _HAS_TORNADO = True
-except Exception:
-    _HAS_TORNADO = False
 
 
 # -----------------------------
@@ -56,7 +52,7 @@ class ScenarioResult:
 def _to_numpy_wide(df_ret_wide: pl.DataFrame, tickers: list[str]) -> np.ndarray:
     R = df_ret_wide.select(tickers).to_numpy()
     R = np.nan_to_num(R, nan=0.0, posinf=0.0, neginf=0.0)
-    return R
+    return R.astype(float, copy=False)
 
 
 def _from_numpy_wide(dates: list, tickers: list[str], R: np.ndarray) -> pl.DataFrame:
@@ -73,12 +69,12 @@ def _bootstrap_paths(R: np.ndarray, B: int, block: int, seed: int) -> list[np.nd
     rng = np.random.default_rng(seed)
     out: list[np.ndarray] = []
     for _ in range(B):
-        idx = []
+        idx: list[int] = []
         while len(idx) < T:
             start = int(rng.integers(0, max(T - block, 1)))
             idx.extend(range(start, min(start + block, T)))
-        idx = np.array(idx[:T])
-        out.append(R[idx, :])
+        take = np.array(idx[:T], dtype=int)
+        out.append(R[take, :])
     return out
 
 
@@ -90,25 +86,28 @@ def _apply_shock(R: np.ndarray, shock: ShockSpec) -> np.ndarray:
     - crash: inject a single-day drop
     """
     R2 = R.copy()
-    T, N = R2.shape
+    T, _ = R2.shape
+
+    # mean shift
     if shock.mean_shift is not None:
         ms = np.asarray(shock.mean_shift)
         if ms.size == 1:
             R2 += float(ms)
         else:
-            ms = ms.reshape(1, -1)
-            R2 += ms
+            R2 += ms.reshape(1, -1)
 
+    # cov scale (around cross-sectional mean)
     if abs(shock.cov_scale - 1.0) > 1e-12:
         mu = np.mean(R2, axis=0, keepdims=True)
         R2 = mu + (R2 - mu) * float(shock.cov_scale)
 
+    # single-day crash
     if shock.crash is not None:
         t_idx, drop = shock.crash
         if 0 <= t_idx < T:
             d = np.asarray(drop)
             if d.size == 1:
-                R2[t_idx, :] += float(d)  # drop is negative number, e.g. -0.05
+                R2[t_idx, :] += float(d)  # drop is usually negative, e.g., -0.05
             else:
                 R2[t_idx, :] += d.reshape(1, -1)
 
@@ -126,12 +125,13 @@ def build_index_shock(
     Returns a {ticker: beta * index_move} shock map (additive daily return shock).
     """
     cols = [c for c in df_wide.columns if c not in ("date",)]
-    assert index_col in cols, f"{index_col=} not in df columns"
+    if index_col not in cols:
+        raise ValueError(f"{index_col=} not in df columns")
     # slice last lookback
     df_tail = df_wide.sort("date").tail(lookback).select(["date", *cols])
     X = df_tail.get_column(index_col).fill_null(0.0).to_numpy()
     X = X - np.nanmean(X)
-    shock = {}
+    shock: dict[str, float] = {}
     for c in cols:
         if c == index_col:
             shock[c] = float(index_move)  # index itself moves by index_move
@@ -154,7 +154,7 @@ def apply_shock_map_to_wide(
     out = df_wide
     for k, v in shock_map.items():
         if k in out.columns:
-            out = out.with_columns(pl.col(k).fill_null(0.0) + float(v))
+            out = out.with_columns((pl.col(k).fill_null(0.0).cast(pl.Float64) + float(v)).alias(k))
     return out
 
 
@@ -167,12 +167,15 @@ def historical_slice_returns(
     """
     Return df subset between [start, end], keeping ['date', *tickers].
     """
+    # Parse robustly with pandas → native Python datetimes
+    start_dt = pd.to_datetime(start, utc=False).to_pydatetime()
+    end_dt = pd.to_datetime(end, utc=False).to_pydatetime()
+
     cols = [c for c in df_wide.columns if c != "date"] if tickers is None else list(tickers)
+    cols = [c for c in cols if c in df_wide.columns]
+
     df = (
-        df_wide.filter(
-            (pl.col("date") >= pl.datetime.strptime(start, "%Y-%m-%d"))
-            & (pl.col("date") <= pl.datetime.strptime(end, "%Y-%m-%d"))
-        )
+        df_wide.filter((pl.col("date") >= pl.lit(start_dt)) & (pl.col("date") <= pl.lit(end_dt)))
         .sort("date")
         .select(["date", *cols])
     )
@@ -227,8 +230,6 @@ def run_scenarios(
 
 
 # --- Advanced scenario helpers (additive; safe to include) --------------------
-
-
 def estimate_rolling_beta(
     df_ret_wide: pl.DataFrame,
     index_col: str,
@@ -251,7 +252,7 @@ def estimate_rolling_beta(
     x = np.nan_to_num(x, nan=0.0)
     xx = float(np.dot(x, x)) + 1e-12
 
-    betas = []
+    betas: list[float] = []
     for t in tickers:
         y = df.get_column(t).to_numpy()
         y = np.nan_to_num(y, nan=0.0)
@@ -259,41 +260,13 @@ def estimate_rolling_beta(
     return np.array(betas, dtype=float), tickers
 
 
-@dataclass
-class ShockSpec:
-    """
-    Defines a return-space shock applied to a wide return matrix.
-
-    mean_shift: constant additive drift per period (e.g., 0.0001 = +1bp/day)
-    cov_scale: scaling factor for cross-sectional deviations from mean
-    crash: optional (index, shock_value) one-day additive return gap
-    """
-
-    mean_shift: float | None = None
-    cov_scale: float = 1.0
-    crash: tuple[int, float] | None = None
-
-
-def apply_shock(df_wide: pl.DataFrame, shock: ShockSpec | None) -> pl.DataFrame:
-    """Wrapper to apply a ShockSpec dataclass to a Polars DataFrame."""
-    if shock is None:
-        return df_wide
-    shock_map = {
-        "__mean__": shock.mean_shift,
-        "__cov_scale__": shock.cov_scale,
-        "__crash__": shock.crash,
-    }
-    shock_map = {k: v for k, v in shock_map.items() if v is not None}
-    return apply_shock_map_to_wide(df_wide, shock_map)
-
-
 def block_bootstrap_indices(T: int, block: int, seed: int) -> np.ndarray:
     """Generate block bootstrap indices for synthetic paths."""
     rng = np.random.default_rng(seed)
-    idx = []
+    idx: list[int] = []
     i = 0
     while i < T:
-        start = rng.integers(0, max(T - block, 1))
+        start = int(rng.integers(0, max(T - block, 1)))
         take = min(block, T - i)
         idx.extend(range(start, start + take))
         i += take
