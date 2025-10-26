@@ -37,6 +37,59 @@ except Exception:  # pragma: no cover
 DataFrameLike = Union[pd.DataFrame, pl.DataFrame]
 ArrayLike = Union[NDArray[np.float64], Sequence[float]]
 
+
+# ============================================================================
+# Plotly rendering helpers (centralized config, no deprecations)
+# ============================================================================
+
+DEFAULT_PLOTLY_CONFIG: dict[str, Any] = {
+    "displaylogo": False,
+    "toImageButtonOptions": {"format": "svg", "filename": "gammaedge_plot"},
+}
+
+
+def apply_fig_defaults(fig: go.Figure) -> go.Figure:
+    fig.update_layout(
+        template="plotly_white",
+        margin=dict(l=40, r=20, t=30, b=40),
+    )
+    return fig
+
+
+def show_plot(
+    fig: go.Figure,
+    *,
+    config: dict[str, Any] | None = None,
+    st_obj: Any | None = None,
+    key: str | None = None,
+) -> None:
+    fig = apply_fig_defaults(fig)
+    cfg = dict(DEFAULT_PLOTLY_CONFIG)
+    if config:
+        cfg.update(config)
+
+    if st_obj is None:
+        import streamlit as st
+
+        st.plotly_chart(fig, config=cfg, key=key)  # <-- pasa key
+    else:
+        st_obj.plotly_chart(fig, config=cfg, key=key)
+
+
+def fig_to_html(
+    fig: go.Figure,
+    *,
+    include_plotlyjs: str = "cdn",
+    config: dict[str, Any] | None = None,
+    full_html: bool = False,
+) -> str:
+    fig = apply_fig_defaults(fig)
+    cfg = dict(DEFAULT_PLOTLY_CONFIG)
+    if config:
+        cfg.update(config)
+    return fig.to_html(full_html=full_html, include_plotlyjs=include_plotlyjs, config=cfg)
+
+
 # ============================================================================
 # Helpers numéricos / utilidades
 # ============================================================================

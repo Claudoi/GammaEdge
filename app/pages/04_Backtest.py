@@ -42,12 +42,19 @@ from portfolio.viz.plot_utils import (
     plot_tracking_error,
     plot_turnover,
     plot_weights_heatmap,
+    show_plot,
 )
 
 
 # ─────────────────────────────────────────────────────────────────────
 # Utility functions
 # ─────────────────────────────────────────────────────────────────────
+def _bt_key(tag: str) -> str:
+    st.session_state.setdefault("_bt_key_seq", 0)
+    st.session_state["_bt_key_seq"] += 1
+    return f"bt-{tag}-{st.session_state['_bt_key_seq']}"
+
+
 def _to_pandas(df: Any):
     """Safely convert Polars or other table objects to pandas."""
     try:
@@ -144,7 +151,7 @@ def metrics_bootstrap(
         sharpe = (np.mean(s) / (np.std(s) + 1e-12)) * np.sqrt(252)
         mdd = 1 - (eqb / np.maximum.accumulate(eqb)).min()
         rows.append((cagr, sharpe, mdd))
-    dfb = pl.DataFrame(rows, schema=["CAGR", "Sharpe", "MaxDD"])
+    dfb = pl.DataFrame(rows, schema=["CAGR", "Sharpe", "MaxDD"], orient="row")
     q = dfb.select(
         [
             pl.col("CAGR").quantile([0.05, 0.5, 0.95]).alias("CAGR_q"),
@@ -454,7 +461,7 @@ if do_grid:
             )
             k += 1
             prog.progress(k / total)
-    df_grid = pl.DataFrame(rows)
+    df_grid = pl.DataFrame(rows, orient="row")
     st.subheader("🔎 Grid results")
     st.dataframe(_to_pandas(df_grid.sort("Sharpe", descending=True)), width="stretch")
 
@@ -480,24 +487,25 @@ if not do_grid:
 # ─────────────────────────────────────────────────────────────────────
 if not do_grid:
     st.subheader("📉 Equity & Drawdown")
-    st.plotly_chart(
+    show_plot(
         equity_and_drawdown(bt["dates"], bt["equity"], title="Equity & Drawdown"),
-        width="stretch",
+        key=_bt_key("equity-dd"),
     )
 
     col1, col2 = st.columns(2)
     with col1:
-        st.plotly_chart(plot_equity(bt["dates"], bt["equity"], title="Equity"), width="stretch")
+        show_plot(plot_equity(bt["dates"], bt["equity"], title="Equity"), key=_bt_key("equity"))
     with col2:
-        st.plotly_chart(plot_drawdown(bt["dates"], bt["equity"], title="Drawdown"), width="stretch")
+        show_plot(plot_drawdown(bt["dates"], bt["equity"], title="Drawdown"), key=_bt_key("dd"))
 
     st.subheader("⚖️ Weights & Turnover")
-    st.plotly_chart(
+    show_plot(
         plot_weights_heatmap(
             bt["dates"], bt["tickers"], bt["weights"], title="Weights (rebalance steps)"
         ),
-        width="stretch",
+        key=_bt_key("weights-heatmap"),
     )
+
     # Turnover plot (per rebalance step)
     dates_w = bt.get("rebalance_dates", None)
     if dates_w is None:
@@ -508,14 +516,14 @@ if not do_grid:
 
     if len(dates_w) == to_vals.size and to_vals.size > 0:
         fig = plot_turnover(dates_w, to_vals, title="Turnover at Rebalance")
-        st.plotly_chart(fig, width="stretch")
+        show_plot(fig, key=_bt_key("turnover"))
     else:
         st.info("Turnover plot unavailable (length mismatch or empty series).")
 
     if bt.get("te_daily_proxy") is not None:
-        st.plotly_chart(
+        show_plot(
             plot_tracking_error(bt["dates"], bt["te_daily_proxy"], title="Daily TE (proxy)"),
-            width="stretch",
+            key=_bt_key("te-proxy"),
         )
 
 # ─────────────────────────────────────────────────────────────────────
@@ -554,15 +562,17 @@ if not do_grid and bt is not None:
         df_top = bt_attr.top_contributors(bt=bt, df_ret_wide=df_ret_bt, top_n=10, sign="both")
 
         # 4) Plots
-        st.plotly_chart(plot_top_contributors(df_top), width="stretch")
+        show_plot(plot_top_contributors(df_top), key=_bt_key("top-contrib"))
         df_bottom = (
             df_contrib_asset.group_by("ticker")
             .agg(pl.col("contrib").sum().alias("contrib_total"))
             .sort("contrib_total")
             .head(10)
         )
-        st.plotly_chart(
-            plot_top_contributors(df_bottom, title="Bottom Contributors"), width="stretch"
+
+        show_plot(
+            plot_top_contributors(df_bottom, title="Bottom Contributors"),
+            key=_bt_key("bottom-contrib"),
         )
 
     except Exception as e:
@@ -584,8 +594,8 @@ if not do_grid and bt is not None:
             )
             .sort("contrib_total", descending=True)
         )
-        st.plotly_chart(plot_group_contrib(df_group_total), width="stretch")
-        st.plotly_chart(plot_group_contrib_area(df_group_daily), width="stretch")
+        show_plot(plot_group_contrib(df_group_total), key=_bt_key("group-bar"))
+        show_plot(plot_group_contrib_area(df_group_daily), key=_bt_key("group-area"))
     except Exception as e:
         st.info(f"Group attribution not available: {e}")
 
@@ -602,6 +612,6 @@ if not do_grid and bt is not None:
             bench_weights_daily=Wb_daily,
             groups_idx=groups_idx,
         )
-        st.plotly_chart(plot_brinson_cumulative(df_brinson), width="stretch")
+        show_plot(plot_brinson_cumulative(df_brinson), key=_bt_key("brinson-cum"))
     except Exception as e:
         st.info(f"Brinson attribution not available: {e}")

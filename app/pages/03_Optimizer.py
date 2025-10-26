@@ -47,11 +47,23 @@ from portfolio.viz.plot_utils import (
     efficient_frontier,
     equity_and_drawdown,
     risk_contributions_bar,
+    show_plot,
     te_frontier,
     turnover_vs_gamma,
     weights_bar,
     weights_path_gammas,
 )
+
+
+def _opt_key(tag: str) -> str:
+    """
+    Genera claves únicas y legibles para todos los plots de la página Optimizer.
+    Evita StreamlitDuplicateElementId al re-renderizar.
+    """
+    st.session_state.setdefault("_opt_key_seq", 0)
+    st.session_state["_opt_key_seq"] += 1
+    return f"opt-{tag}-{st.session_state['_opt_key_seq']}"
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Page config
@@ -298,11 +310,15 @@ elif mode == "Active (TE penalized)":
 if w_out is not None:
     c1, c2 = st.columns([2, 1])
     with c1:
-        st.plotly_chart(weights_bar(w_out, names, sort=True, topn=min(40, N)), width="stretch")
+        show_plot(
+            weights_bar(w_out, names, sort=True, topn=min(40, N)),
+            key=_opt_key("weights-bar"),
+        )
     with c2:
         rc = risk_contributions(w_out, Sigma)
-        st.plotly_chart(
-            risk_contributions_bar(rc, names, sort=True, topn=min(30, N)), width="stretch"
+        show_plot(
+            risk_contributions_bar(rc, names, sort=True, topn=min(30, N)),
+            key=_opt_key("rc-bar"),
         )
 
     # Portfolio stats (core.metrics)
@@ -350,11 +366,19 @@ if w_out is not None:
         Ws_arr = stack_Ws(Ws_proj, N)
         logger.log("gamma_sweep_done", n_gammas=len(gammas))
 
-        st.plotly_chart(
-            weights_path_gammas(Ws_arr, gammas, names, topn=min(25, N)), width="stretch"
+        show_plot(
+            weights_path_gammas(Ws_arr, gammas, names, topn=min(25, N)),
+            key=_opt_key("weights-path-gamma"),
         )
-        st.plotly_chart(turnover_vs_gamma(Ws_arr, w_bench, gammas), width="stretch")
-        st.plotly_chart(te_frontier(mu, Sigma, w_bench, Ws_arr), width="stretch")
+        show_plot(
+            turnover_vs_gamma(Ws, w_bench, gammas),
+            key=_opt_key("turnover-vs-gamma"),
+        )
+        show_plot(
+            te_frontier(mu, Sigma, w_bench, Ws_arr),
+            key=_opt_key("te-frontier"),
+            config={"displayModeBar": True, "scrollZoom": True},
+        )
 
 # ─────────────────────────────────────────────────────────────────────
 # Efficient Frontier (closed-form vs box-projected)
@@ -415,7 +439,7 @@ try:
         minvar_point=(s_mvp, r_mvp),
         title="Efficient Frontier",
     )
-    st.plotly_chart(fig, width="stretch")
+    show_plot(fig, key=_opt_key("custom-fig"))
 
 except Exception as e:
     st.warning(f"Frontier plot skipped: {e}")
@@ -521,9 +545,9 @@ bt = backtest_rebalanced(
 
 # ---- Equity & drawdown (safe) ----
 try:
-    st.plotly_chart(
+    show_plot(
         equity_and_drawdown(bt["dates"], bt["equity"], title="Equity & Drawdown"),
-        width="stretch",
+        key=_opt_key("equity-drawdown"),
     )
 except Exception as e:
     st.info(f"Could not plot equity/drawdown: {e}")

@@ -18,3 +18,5 @@ data/cache/
 venv/
 .logs/
 *.log
+.coverage
+.coverageger

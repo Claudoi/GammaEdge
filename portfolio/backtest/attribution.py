@@ -170,32 +170,67 @@ def contributions_by_group(
 
 def brinson_fachler_period(
     w_p: np.ndarray,
-    r_p: np.ndarray,  # portfolio
+    r_p: np.ndarray,  # kept for backward compat; we use r := r_p
     w_b: np.ndarray,
-    r_b: np.ndarray,  # benchmark
+    r_b: np.ndarray,  # kept for backward compat; we use r := r_b
     groups: list[int],  # asset→group indices [0..G-1]
 ) -> tuple[float, float, float]:
     """
-    Brinson–Fachler (un periodo):
-    - Allocation:  Σ_g (w_p_g - w_b_g) * r_b_g
-    - Selection:   Σ_g w_b_g * (r_p_g - r_b_g)
-    - Interaction: Σ_g (w_p_g - w_b_g) * (r_p_g - r_b_g)
+    Brinson–Fachler (single period):
+    Allocation:  Σ_g (w_p_g - w_b_g) * (r_b_g - r_b)
+    Selection:   Σ_g w_b_g * (r_p_g - r_b_g)    [r_p_g, r_b_g are group returns]
+    Interaction: Σ_g (w_p_g - w_b_g) * (r_p_g - r_b_g)
+    Notes:
+      - r_p and r_b are the same asset-level return vector in practice; we use one r.
+      - Group returns are computed with within-group normalized weights.
     """
+    # Use a single return vector (asset-level) for both portfolio and benchmark math
+    r = np.asarray(r_p, dtype=float)
+    w_p = np.asarray(w_p, dtype=float)
+    w_b = np.asarray(w_b, dtype=float)
+
     groups_arr = np.asarray(groups, dtype=int)
-    G = int(groups_arr.max()) + 1 if len(groups_arr) else 0
-    A = S = interaction = 0.0
+    G = int(groups_arr.max()) + 1 if groups_arr.size else 0
+
+    # Total benchmark return r_b_total = sum_i w_b_i * r_i
+    rb_total = float(np.sum(w_b * r))
+
+    A = 0.0
+    S = 0.0
+    interaction = 0.0
+
     for g in range(G):
         idx = groups_arr == g
         wp_g = float(np.sum(w_p[idx]))
         wb_g = float(np.sum(w_b[idx]))
-        rb_g = float(np.sum(w_b[idx] * r_b[idx])) / (wb_g if wb_g > EPS else 1.0)
-        rp_g = float(np.sum(w_p[idx] * r_p[idx])) / (wp_g if wp_g > EPS else 1.0)
+
+        # Within-group normalized weights (guarded by EPS)
+        # Benchmark group return r_b_g
+        rb_g_num = float(np.sum(w_b[idx] * r[idx]))
+        rb_g_den = wb_g if wb_g > EPS else 1.0
+        rb_g = rb_g_num / rb_g_den
+
+        # Portfolio group return r_p_g
+        rp_g_num = float(np.sum(w_p[idx] * r[idx]))
+        rp_g_den = wp_g if wp_g > EPS else 1.0
+        rp_g = rp_g_num / rp_g_den
 
         diff_w = wp_g - wb_g
         diff_r = rp_g - rb_g
-        A += diff_w * rb_g
+
+        # Brinson–Fachler:
+        A += diff_w * (rb_g - rb_total)  # <-- change vs BHB
         S += wb_g * diff_r
         interaction += diff_w * diff_r
+
+    # Tiny clamp to remove floating-point dust
+    if abs(A) < 1e-15:
+        A = 0.0
+    if abs(S) < 1e-15:
+        S = 0.0
+    if abs(interaction) < 1e-15:
+        interaction = 0.0
+
     return A, S, interaction
 
 
@@ -203,10 +238,13 @@ def brinson_fachler_cumulative(
     aln: DailyAlignment,
     bench_weights_daily: np.ndarray,  # (T, N)
     groups_idx: list[int],  # asset→group indices [0..G-1]
+    *,
+    return_aggregate_row: bool = False,
 ) -> pl.DataFrame:
     """
-    Suma aritmética de Brinson–Fachler en el tiempo.
-    Salida: ['date','alloc','select','interact','total'].
+    Arithmetic linking of Brinson–Fachler through time.
+    Output: ['date','alloc','select','interact','total'] per period.
+    If return_aggregate_row=True, appends an 'AGG' summary row with arithmetic sums.
     """
     R = aln.returns
     Wp = aln.weights
@@ -214,11 +252,38 @@ def brinson_fachler_cumulative(
     if Wb.shape != Wp.shape:
         raise ValueError("bench_weights_daily must have the same shape as portfolio weights")
 
-    rows = []
+    rows: list[tuple] = []
     for t in range(R.shape[0]):
         a, s, inter = brinson_fachler_period(Wp[t], R[t], Wb[t], R[t], groups_idx)
+
+        # clamp per-period BEFORE appending
+        if abs(a) < 1e-15:
+            a = 0.0
+        if abs(s) < 1e-15:
+            s = 0.0
+        if abs(inter) < 1e-15:
+            inter = 0.0
         rows.append((aln.dates[t], a, s, inter, a + s + inter))
-    return pl.DataFrame(rows, schema=["date", "alloc", "select", "interact", "total"]).sort("date")
+
+    df = pl.DataFrame(
+        rows,
+        schema=["date", "alloc", "select", "interact", "total"],
+        orient="row",
+    ).sort("date")
+
+    if return_aggregate_row:
+        agg = df.select(
+            [
+                pl.lit("AGG").alias("date"),
+                pl.col("alloc").sum().alias("alloc"),
+                pl.col("select").sum().alias("select"),
+                pl.col("interact").sum().alias("interact"),
+                pl.col("total").sum().alias("total"),
+            ]
+        )
+        df = pl.concat([df, agg])
+
+    return df
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -233,16 +298,15 @@ def brinson_fachler_vectorized(
     *,
     cumulative: bool = True,
 ) -> AttributionResult:
-    """
-    Descomposición Brinson–Fachler completamente vectorizada.
-    Complejidad O(T·G), con G = nº de grupos.
-    """
     R = np.asarray(aln.returns, dtype=float)
     Wp = np.asarray(aln.weights, dtype=float)
     Wb = np.asarray(bench_weights_daily, dtype=float)
 
     if Wb.shape != Wp.shape:
         raise ValueError("bench_weights_daily must have same shape as portfolio weights")
+
+    # Sanitize returns
+    R = np.nan_to_num(R, nan=0.0, posinf=0.0, neginf=0.0, copy=False)
 
     T, N = Wp.shape
     gidx = np.asarray(groups_idx, dtype=int)
@@ -254,18 +318,20 @@ def brinson_fachler_vectorized(
     if G > 0:
         H[np.arange(N), gidx] = 1.0
 
-    # weights y retornos por grupo
-    Wp_g = Wp @ H  # (T, G)
-    Wb_g = Wb @ H  # (T, G)
+    Wp_g = Wp @ H
+    Wb_g = Wb @ H
+
     Rp_g = np.divide((Wp * R) @ H, np.clip(Wp_g, EPS, None), where=Wp_g > EPS)
     Rb_g = np.divide((Wb * R) @ H, np.clip(Wb_g, EPS, None), where=Wb_g > EPS)
+
+    Rb_t = np.sum(Wb * R, axis=1)  # (T,)
 
     diff_w = Wp_g - Wb_g
     diff_r = Rp_g - Rb_g
 
-    alloc = np.sum(diff_w * Rb_g, axis=1)  # (T,)
-    select = np.sum(Wb_g * diff_r, axis=1)  # (T,)
-    inter = np.sum(diff_w * diff_r, axis=1)  # (T,)
+    alloc = np.sum(diff_w * (Rb_g - Rb_t[:, None]), axis=1)
+    select = np.sum(Wb_g * diff_r, axis=1)
+    inter = np.sum(diff_w * diff_r, axis=1)
     total = alloc + select + inter
 
     if cumulative:
@@ -274,8 +340,20 @@ def brinson_fachler_vectorized(
         inter = np.cumsum(inter)
         total = np.cumsum(total)
 
+    # clamps
+    alloc = np.where(np.abs(alloc) < 1e-15, 0.0, alloc)
+    select = np.where(np.abs(select) < 1e-15, 0.0, select)
+    inter = np.where(np.abs(inter) < 1e-15, 0.0, inter)
+    total = np.where(np.abs(total) < 1e-15, 0.0, total)
+
+    # force +0.0 (cosmetic; avoids -0.0 in plots)
+    alloc = alloc + 0.0
+    select = select + 0.0
+    inter = inter + 0.0
+    total = total + 0.0
+
     return AttributionResult(
-        date=np.asarray(aln.dates),
+        date=np.array(aln.dates),
         alloc=alloc,
         select=select,
         interact=inter,
@@ -573,3 +651,173 @@ def brinson_fachler_timeseries(
         }
     ).sort("date")
     return df
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Euler Risk Attribution (volatility contributions)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+@dataclass(frozen=True, slots=True)
+class EulerRCResult:
+    """Container for Euler risk attribution at a single time step."""
+
+    sigma: float  # portfolio volatility (per-step, sqrt of variance)
+    mrc: np.ndarray  # marginal risk contributions, shape (N,)
+    rc: np.ndarray  # total risk contributions, shape (N,)  with sum(rc) == sigma (≈)
+    tickers: list[str]
+
+
+def _euler_single(weights: np.ndarray, cov: np.ndarray) -> EulerRCResult:
+    """
+    Compute Euler risk contributions for a single time step.
+    sigma = sqrt(w^T Σ w)
+    MRC = (Σ w) / sigma
+    RC_i = w_i * MRC_i
+    """
+    w = np.asarray(weights, dtype=float).reshape(-1)
+    S = np.asarray(cov, dtype=float)
+    if S.ndim != 2 or S.shape[0] != S.shape[1]:
+        raise ValueError("cov must be a square matrix")
+    if S.shape[0] != w.size:
+        raise ValueError("cov dim must match number of assets")
+
+    # Ensure symmetry and numerical stability
+    S = 0.5 * (S + S.T)
+    # Portfolio variance and sigma
+    var = float(w @ (S @ w))
+    var = max(var, 0.0)
+    sigma = float(np.sqrt(var))
+
+    if sigma < EPS:
+        # Degenerate: zero risk; define zeros safely
+        mrc = np.zeros_like(w)
+        rc = np.zeros_like(w)
+        return EulerRCResult(sigma=sigma, mrc=mrc, rc=rc, tickers=[])
+
+    grad = S @ w  # gradient of variance wrt w is 2 Σ w, but for sigma we want Σ w / sigma
+    mrc = grad / sigma  # Σ w / sigma
+    rc = w * mrc
+    return EulerRCResult(sigma=sigma, mrc=mrc, rc=rc, tickers=[])
+
+
+def euler_rc_by_asset(
+    aln: DailyAlignment,
+    *,
+    cov: np.ndarray | list[np.ndarray] | None = None,
+    cov_builder: Any | None = None,
+    window: int = 60,
+    ddof: int = 1,
+) -> pl.DataFrame:
+    """
+    Euler RC per day by asset.
+
+    Inputs:
+      - aln: DailyAlignment with returns and daily portfolio weights.
+      - cov:
+          • None → build rolling covariance from aln.returns with 'window' and 'ddof'.
+          • np.ndarray (N,N) → same covariance for all dates.
+          • list[np.ndarray] length T → one covariance per date.
+      - cov_builder (callable optional): cov_builder(R_slice: np.ndarray) -> np.ndarray
+          • If provided, overrides default covariance estimator.
+      - window, ddof: parameters for rolling sample covariance if cov is None.
+
+    Output (long DF):
+      ['date','ticker','rc','mrc','sigma']  with one row per asset-date.
+      The daily identity holds: group_by('date').sum('rc') ≈ sigma (first() by date).
+    """
+    R = np.asarray(aln.returns, dtype=float)  # (T, N)
+    W = np.asarray(aln.weights, dtype=float)  # (T, N)
+    T, N = R.shape
+    if W.shape != (T, N):
+        raise ValueError("aln.weights must match returns shape")
+
+    # Build covariances timeline
+    if cov is None:
+        # Rolling covariance on returns (rows=time)
+        covs: list[np.ndarray] = []
+        for t in range(T):
+            slice_R = R[: t + 1, :] if t + 1 < max(window, 2) else R[t - window + 1 : t + 1, :]
+
+            if cov_builder is not None:
+                C = np.asarray(cov_builder(slice_R), dtype=float)
+            else:
+                # Sample covariance (columns=assets)
+                X = slice_R - np.nanmean(slice_R, axis=0, keepdims=True)
+                X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
+                # shape (window, N) → covariance (N, N)
+                denom = max(X.shape[0] - ddof, 1)
+                C = (X.T @ X) / float(denom)
+            # Stabilize: symmetrize + tiny ridge
+            C = 0.5 * (C + C.T)
+            if N > 0:
+                C.flat[:: N + 1] += 1e-12  # tiny ridge
+            covs.append(C)
+    elif isinstance(cov, list):
+        if len(cov) != T:
+            raise ValueError("cov list length must equal T")
+        covs = [np.asarray(C, dtype=float) for C in cov]
+    else:
+        C = np.asarray(cov, dtype=float)
+        covs = [C for _ in range(T)]
+
+    rows = []
+    for t in range(T):
+        res = _euler_single(W[t], covs[t])
+        sigma = res.sigma
+        rc = res.rc
+        # Guard against tiny negatives due to FP errors
+        rc = np.where(np.abs(rc) < 1e-15, 0.0, rc)
+
+        for j, tk in enumerate(aln.tickers):
+            rows.append((aln.dates[t], tk, float(rc[j]), float(res.mrc[j]), float(sigma)))
+
+    return pl.DataFrame(
+        rows,
+        schema=["date", "ticker", "rc", "mrc", "sigma"],
+        orient="row",
+    ).sort(["date", "ticker"])
+
+
+def euler_rc_by_group(
+    aln: DailyAlignment,
+    *,
+    groups_map: dict[str, str],
+    cov: np.ndarray | list[np.ndarray] | None = None,
+    cov_builder: Any | None = None,
+    window: int = 60,
+    ddof: int = 1,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """
+    Euler RC per day aggregated by group.
+
+    Returns:
+      - df_group_daily: ['date','group','rc','sigma']  (daily series)
+      - df_group_total: ['group','rc_total','share']   (time-aggregated)
+    """
+    df_rc_asset = euler_rc_by_asset(
+        aln,
+        cov=cov,
+        cov_builder=cov_builder,
+        window=window,
+        ddof=ddof,
+    ).with_columns(pl.col("ticker").replace(groups_map, default="OTHER").alias("group"))
+
+    df_group_daily = (
+        df_rc_asset.group_by(["date", "group"])
+        .agg(
+            [
+                pl.col("rc").sum().alias("rc"),
+                pl.col("sigma").first().alias("sigma"),
+            ]
+        )
+        .sort(["date", "group"])
+    )
+
+    df_group_total = (
+        df_group_daily.group_by("group")
+        .agg(pl.col("rc").sum().alias("rc_total"))
+        .with_columns((pl.col("rc_total") / pl.col("rc_total").sum().alias("tot")).alias("share"))
+        .sort("rc_total", descending=True)
+    )
+    return df_group_daily, df_group_total

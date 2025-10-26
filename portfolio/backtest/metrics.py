@@ -211,4 +211,4 @@ def compute_backtest_metrics(bt: Any) -> pl.DataFrame:
         MetricRow("TrackingError_ann_proxy", te_ann),
         MetricRow("AnnFactor_used", ann),
     ]
-    return pl.DataFrame([r.__dict__ for r in rows])
+    return pl.DataFrame([r.__dict__ for r in rows], orient="row")

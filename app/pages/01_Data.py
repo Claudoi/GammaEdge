@@ -27,6 +27,7 @@ from portfolio.features.returns import (
 )
 from portfolio.io.cache import age_seconds, cache_path, invalidate, load_pl, save_json, save_pl
 from portfolio.io.data_loader import get_prices_long
+from portfolio.viz.plot_utils import show_plot
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -583,7 +584,7 @@ if st.session_state.get("data_ready"):
     uni = df_prices.group_by("ticker").agg(pl.len().alias("n_obs")).sort("n_obs", descending=True)
     st.write("Universe snapshot (observations per ticker)")
     fig_uni = px.bar(uni.to_pandas(), x="n_obs", y="ticker", orientation="h")
-    st.plotly_chart(fig_uni, width="stretch")
+    show_plot(fig_uni, config={"scrollZoom": True, "displayModeBar": True})
 
     # Missing report (returns, wide)
     st.write("Missing report (returns, wide)")

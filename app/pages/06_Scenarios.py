@@ -706,7 +706,7 @@ if cfgs:
         rows.append({"Scenario": res.get("name", "Scenario")} | flat)
 
     if rows:
-        df_comp = pl.DataFrame(rows)
+        df_comp = pl.DataFrame(rows, orient="row")
         st.dataframe(df_comp.to_pandas(), width="stretch", key=next_key("sc-metrics-table"))
 
         # ΔCAGR vs baseline, if present

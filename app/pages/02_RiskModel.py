@@ -41,6 +41,7 @@ from portfolio.viz.plot_utils import (
     network_corr_graph,
     risk_contributions_bar,
     scree_plot,
+    show_plot,
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -549,45 +550,50 @@ if st.session_state.get("risk_ready"):
         method=meta["params"]["heatmap_method"],
         optimal=bool(meta["params"]["heatmap_optimal"]),
     )
+
+    # Heatmap (keys distintos según GL vs normal)
     if len(names) > 200:
-        st.plotly_chart(
+        show_plot(
             corr_heatmap_gl(Sigma, labels=names, is_cov=True, order=order_cfg),
-            width="stretch",
+            key="risk-heatmap-gl",
         )
     else:
-        st.plotly_chart(
+        show_plot(
             corr_heatmap(Sigma, labels=names, is_cov=True, order=order_cfg),
-            width="stretch",
+            key="risk-heatmap",
         )
 
+    # Dendrogram
     if show_dendro:
         st.subheader("Correlation dendrogram")
-        st.plotly_chart(
+        show_plot(
             corr_dendrogram(
                 Sigma, labels=names, is_cov=True, method=meta["params"]["heatmap_method"]
             ),
-            width="stretch",
+            key="risk-dendrogram",
         )
 
+    # Covariance spectrum
     st.subheader("Covariance spectrum")
-    st.plotly_chart(covariance_spectrum(Sigma), width="stretch")
+    show_plot(covariance_spectrum(Sigma), key="risk-cov-spectrum")
 
+    # Scree Plot
     st.subheader("Scree Plot (explained variance)")
-    st.plotly_chart(scree_plot(eigvals), width="stretch")
+    show_plot(scree_plot(eigvals), key="risk-scree")
 
+    # Correlation Network
     st.subheader("Correlation Network Graph")
-    st.plotly_chart(network_corr_graph(Sigma, names), width="stretch")
+    show_plot(network_corr_graph(Sigma, names), key="risk-netgraph")
 
     # Risk contributions (benchmark equal-weight)
     st.subheader("Risk Contributions (Equal-Weight Benchmark)")
     if len(names) > 0:
         w_eq = np.full(len(names), 1.0 / len(names))
-        rc = w_eq * (Sigma @ w_eq)  # contribución absoluta
-        st.plotly_chart(
+        rc = w_eq * (Sigma @ w_eq)
+        show_plot(
             risk_contributions_bar(rc, names, sort=True, topn=min(30, len(names))),
-            width="stretch",
+            key="risk-rc-ew",
         )
-
     # ──────────────────────────────────────────────────────────────────────────
     # Black–Litterman (Views) – esqueleto operativo
     # ──────────────────────────────────────────────────────────────────────────
