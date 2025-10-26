@@ -120,7 +120,7 @@ def apply_shock_map_to_wide(
         if (k in out.columns) and isinstance(v, (int, float)):
             out = out.with_columns((pl.col(k).fill_null(0.0) + float(v)).alias(k))
 
-    return out
+    return out.with_columns(pl.col("date").cast(pl.Datetime))
 
 
 def apply_shock(df_wide: pl.DataFrame, shock: ShockSpec | None) -> pl.DataFrame:
@@ -198,7 +198,7 @@ def historical_slice_returns(
 
     if out.height == 0:
         raise ValueError("historical_slice_returns: empty slice.")
-    return out
+    return out.with_columns(pl.col("date").cast(pl.Datetime))
 
 
 def block_bootstrap_indices(T: int, block: int, seed: int) -> np.ndarray:

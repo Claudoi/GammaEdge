@@ -152,7 +152,7 @@ def backtest_rebalanced(
     df = df_ret_wide.sort("date")
     dates = df["date"]
 
-    rb = _rebalance_dates_from_freq_polars(pl.Series(list(dates)), str(rebalance_freq))
+    rb = _rebalance_dates_from_freq_polars(pl.Series(list(dates)), str(rebalance_freq).lower())
     rb_set = set(rb.to_list())
 
     W: list[np.ndarray] = []  # pesos en cada rebalance
