@@ -1,0 +1,12 @@
+[run]
+branch = True
+source =
+    portfolio/backtest
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+
+omit =
+    portfolio/backtest/attribution.py
