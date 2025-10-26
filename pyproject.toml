@@ -133,5 +133,6 @@ check_untyped_defs = false
 
 # ── PYTEST ─────────────────────────────────────────────────────────────────────
 [tool.pytest.ini_options]
-addopts = "-q --maxfail=1 --disable-warnings"
+pythonpath = ["."]
 testpaths = ["tests"]
+addopts = "-q --disable-warnings --maxfail=1 --cov=portfolio --cov-report=term-missing --cov-fail-under=25"
