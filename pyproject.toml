@@ -135,4 +135,4 @@ check_untyped_defs = false
 [tool.pytest.ini_options]
 pythonpath = ["."]
 testpaths = ["tests"]
-addopts = "-q --disable-warnings --maxfail=1 --cov=portfolio --cov-report=term-missing --cov-fail-under=25"
+addopts = "-q --disable-warnings --maxfail=1 --cov=portfolio --cov-report=term-missing --cov-fail-under=25 --cov-report=term-missing --cov-report=xml --cov-report=html"
