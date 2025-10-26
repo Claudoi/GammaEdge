@@ -21,3 +21,8 @@ venv/
 .coverage
 .coverageger
 .htmlcov/
+
+# Coverage artifacts
+.coverage*
+coverage.xml
+htmlcov/
