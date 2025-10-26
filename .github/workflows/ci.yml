@@ -31,7 +31,7 @@ jobs:
         with:
           version: 1.8.3
           virtualenvs-create: true
-          virtualenvs-in-project: true   # Crea .venv en raíz → fácil de cachear
+          virtualenvs-in-project: true
           installer-parallel: true
 
       - name: Cache virtualenv
@@ -48,12 +48,14 @@ jobs:
       - name: Ruff (Lint)
         run: poetry run ruff check .
 
+      - name: Format check (Ruff)
+        run: poetry run ruff format --check .
+
       - name: Black (Format check)
         run: poetry run black --check .
 
       - name: Mypy (Type-check)
         run: poetry run mypy portfolio api
-        continue-on-error: true  # quítalo cuando mypy esté limpio
 
   # -------- UNIT TESTS --------
   tests:
@@ -87,8 +89,22 @@ jobs:
         if: steps.cache-venv.outputs.cache-hit != 'true'
         run: poetry install --with dev --no-interaction --no-ansi
 
-      - name: Run Pytest
-        run: poetry run pytest -q --disable-warnings --maxfail=1
+      - env:
+          PYTHONPATH: .
+        name: Run Pytest
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-report
+          path: ./htmlcov/, ./coverage.xml
+          if-no-files-found: ignore
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-xml
+          path: coverage.xml
 
   # -------- MATRIX BUILD (push only, optional) --------
   matrix-build:
@@ -128,6 +144,7 @@ jobs:
       - name: Ruff + Black
         run: |
           poetry run ruff check .
+          poetry run ruff format --check .
           poetry run black --check .
 
       - name: Run Tests
