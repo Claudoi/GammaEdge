@@ -128,38 +128,120 @@ def metrics_bootstrap(
     bt: dict[str, Any], B: int = 200, block: int = 10, seed: int = 42
 ) -> tuple[pl.DataFrame, pl.DataFrame]:
     """
-    Bootstrap (block-based) on daily returns to compute CI for metrics.
-    Requires 'equity' or 'equity_returns' in the backtest dictionary.
+    Block bootstrap on daily returns to compute CI for metrics (CAGR, Sharpe, MaxDD).
+    Returns:
+      dfb: bootstrap samples (B x 3)
+      q:   scalar quantiles table (3 x 4: metric, q05, q50, q95)
     """
+    # 1) Build daily return series
     if bt.get("equity_returns") is not None:
-        r = np.array(bt["equity_returns"], dtype=float)
+        r = np.asarray(bt["equity_returns"], dtype=float)
     else:
-        eq = np.array(bt["equity"], dtype=float)
+        eq = np.asarray(bt["equity"], dtype=float)
+        if eq.size < 2:
+            # Not enough data → return empty frames
+            return pl.DataFrame(schema=["CAGR", "Sharpe", "MaxDD"]), pl.DataFrame(
+                schema=["metric", "q05", "q50", "q95"]
+            )
         r = np.diff(eq) / eq[:-1]
-    T = len(r)
+
+    T = int(r.size)
+    if T == 0 or B <= 0:
+        return pl.DataFrame(schema=["CAGR", "Sharpe", "MaxDD"]), pl.DataFrame(
+            schema=["metric", "q05", "q50", "q95"]
+        )
+
+    # 2) Bootstrap
     rng = np.random.default_rng(seed)
-    rows = []
-    for _ in range(B):
-        idx = []
+    rows: list[tuple[float, float, float]] = []
+    blk = max(int(block), 1)
+    for _ in range(int(B)):
+        idx: list[int] = []
         while len(idx) < T:
-            start = rng.integers(0, max(T - block, 1))
-            idx.extend(range(start, min(start + block, T)))
-        idx = np.array(idx[:T])
-        s = r[idx]
-        eqb = np.cumprod(1 + s)
-        cagr = eqb[-1] ** (252 / max(len(s), 1)) - 1
-        sharpe = (np.mean(s) / (np.std(s) + 1e-12)) * np.sqrt(252)
-        mdd = 1 - (eqb / np.maximum.accumulate(eqb)).min()
+            start = int(rng.integers(0, max(T - blk, 1)))
+            idx.extend(range(start, min(start + blk, T)))
+        s = r[np.asarray(idx[:T])]
+        eqb = np.cumprod(1.0 + s)
+        cagr = float(eqb[-1] ** (252.0 / max(len(s), 1)) - 1.0)
+        # Use population-safe std (ddof=0) to avoid warnings; add epsilon guard
+        vol = float(np.std(s) + 1e-12)
+        sharpe = float((np.mean(s) / vol) * np.sqrt(252.0))
+        mdd = float(1.0 - (eqb / np.maximum.accumulate(eqb)).min())
         rows.append((cagr, sharpe, mdd))
-    dfb = pl.DataFrame(rows, schema=["CAGR", "Sharpe", "MaxDD"], orient="row")
-    q = dfb.select(
-        [
-            pl.col("CAGR").quantile([0.05, 0.5, 0.95]).alias("CAGR_q"),
-            pl.col("Sharpe").quantile([0.05, 0.5, 0.95]).alias("Sharpe_q"),
-            pl.col("MaxDD").quantile([0.05, 0.5, 0.95]).alias("MaxDD_q"),
-        ]
+
+    # 3) Samples DataFrame
+    dfb = pl.DataFrame(rows, schema=["CAGR", "Sharpe", "MaxDD"])
+
+    # 4) Scalar quantiles (avoid List(Float64))
+    def _q(df: pl.DataFrame, col: str, p: float) -> float:
+        return float(df.select(pl.col(col).quantile(p)).item())
+
+    q = pl.DataFrame(
+        {
+            "metric": ["CAGR", "Sharpe", "MaxDD"],
+            "q05": [_q(dfb, "CAGR", 0.05), _q(dfb, "Sharpe", 0.05), _q(dfb, "MaxDD", 0.05)],
+            "q50": [_q(dfb, "CAGR", 0.50), _q(dfb, "Sharpe", 0.50), _q(dfb, "MaxDD", 0.50)],
+            "q95": [_q(dfb, "CAGR", 0.95), _q(dfb, "Sharpe", 0.95), _q(dfb, "MaxDD", 0.95)],
+        }
     )
+
     return dfb, q
+
+
+def _metric_from_df(m, name: str) -> float:
+    """Robust metric extraction (Polars | pandas) -> float or NaN."""
+    try:
+        import polars as pl
+
+        if isinstance(m, pl.DataFrame):
+            # exact match
+            if name in m.columns:
+                return float(m.select(pl.col(name)).item())
+            # case-insensitive
+            low = name.lower()
+            for c in m.columns:
+                if str(c).lower() == low:
+                    return float(m.select(pl.col(c)).item())
+    except Exception:
+        pass
+    try:
+        import pandas as pd
+
+        if isinstance(m, pd.DataFrame) and len(m.index) > 0:
+            if name in m.columns:
+                return float(m.at[m.index[0], name])
+            low = name.lower()
+            for c in m.columns:
+                if str(c).lower() == low:
+                    return float(m.at[m.index[0], c])
+    except Exception:
+        pass
+    return float("nan")
+
+
+def _metrics_safe(bt_obj: dict) -> dict[str, float]:
+    """Compute metrics with robust extraction and a fallback if needed."""
+    m = bt_metrics.compute_backtest_metrics(bt_obj)
+    cagr = _metric_from_df(m, "CAGR")
+    sharpe = _metric_from_df(m, "Sharpe")
+    maxdd = _metric_from_df(m, "MaxDD")
+
+    # Fallback si algo viene NaN/None: calcula desde equity
+    if not np.isfinite(cagr) or not np.isfinite(sharpe) or not np.isfinite(maxdd):
+        eq = np.asarray(bt_obj.get("equity", []), dtype=float)
+        if eq.size > 1:
+            r = np.diff(eq) / eq[:-1]
+            if r.size > 0:
+                eqb = np.cumprod(1.0 + r)
+                cagr_fb = float(eqb[-1] ** (252.0 / max(len(r), 1)) - 1.0)
+                vol = float(np.std(r) + 1e-12)
+                sharpe_fb = float((np.mean(r) / vol) * np.sqrt(252.0))
+                maxdd_fb = float(1.0 - (eqb / np.maximum.accumulate(eqb)).min())
+                cagr = cagr if np.isfinite(cagr) else cagr_fb
+                sharpe = sharpe if np.isfinite(sharpe) else sharpe_fb
+                maxdd = maxdd if np.isfinite(maxdd) else maxdd_fb
+
+    return {"CAGR": float(cagr), "Sharpe": float(sharpe), "MaxDD": float(maxdd)}
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -374,6 +456,41 @@ def cached_backtest(
     )
 
 
+# ─────────────────────────────────────────────────────────────────────
+# Cached metrics computation for grid search (per combination)
+# ─────────────────────────────────────────────────────────────────────
+@st.cache_data(show_spinner=False)
+def _cached_metrics_for_grid(
+    df_ret_wide: pl.DataFrame,
+    lookback: int,
+    cost_bps: float,
+    alloc_kind: str,
+    rebalance_freq: str,
+    w_min: float,
+    w_max: float,
+    cov_estimator: str,
+    ewma_lambda: float,
+    use_to_budget: bool,
+    max_turnover: float,
+    band_eps: float,
+) -> dict[str, float]:
+    """
+    Compute metrics for a single (lookback, cost) combination, cached by parameters.
+    This prevents recomputing the full backtest grid repeatedly.
+    """
+    alloc = make_allocator(alloc_kind)
+    n_cols = len([c for c in df_ret_wide.columns if c != "date"])
+    bt_ = backtest_rebalanced(
+        df_ret_wide=df_ret_wide,
+        lookback=int(lookback),
+        rebalance_freq=rebalance_freq,
+        cost_bps=float(cost_bps),
+        allocator=alloc,
+        bench_weights=np.full(n_cols, 1.0 / max(n_cols, 1)),
+    )
+    return _metrics_safe(bt_)
+
+
 # Run backtest or grid depending on user setting
 bt = None
 if not do_grid:
@@ -426,44 +543,74 @@ if not do_grid:
             _export_to_05(bt, st.session_state.get("returns_wide", df_ret_wide))
             st.success("Exported to session_state.")
 
+
 # ─────────────────────────────────────────────────────────────────────
 # Grid search mode (optional)
 # ─────────────────────────────────────────────────────────────────────
+
 if do_grid:
     st.info("Running grid search…")
     Ls = [int(s) for s in grid_lookbacks.split(",") if s.strip()]
     Cs = [float(s) for s in grid_costs.split(",") if s.strip()]
-    rows = []
+
+    rows: list[dict[str, float]] = []
     total = max(len(Ls) * len(Cs), 1)
     prog = st.progress(0.0)
     k = 0
+
     for L in Ls:
         for C in Cs:
-            alloc = make_allocator(alloc_kind)
-            bt_ = backtest_rebalanced(
+            mets = _cached_metrics_for_grid(
                 df_ret_wide=df_ret_wide,
                 lookback=int(L),
-                rebalance_freq=rebalance_freq,
                 cost_bps=float(C),
-                allocator=alloc,
-                bench_weights=np.full(N, 1.0 / max(N, 1)),
+                alloc_kind=alloc_kind,
+                rebalance_freq=rebalance_freq,
+                w_min=w_min,
+                w_max=w_max,
+                cov_estimator=cov_estimator,
+                ewma_lambda=float(ewma_lambda),
+                use_to_budget=use_to_budget,
+                max_turnover=float(max_turnover),
+                band_eps=float(band_eps),
             )
-            m = bt_metrics.compute_backtest_metrics(bt_)
-            mp = _to_pandas(m)
             rows.append(
                 {
-                    "lookback": int(L),
+                    "lookback": float(L),
                     "cost_bps": float(C),
-                    "CAGR": float(mp.loc[0, "CAGR"]) if "CAGR" in mp.columns else np.nan,
-                    "Sharpe": float(mp.loc[0, "Sharpe"]) if "Sharpe" in mp.columns else np.nan,
-                    "MaxDD": float(mp.loc[0, "MaxDD"]) if "MaxDD" in mp.columns else np.nan,
+                    "CAGR": mets["CAGR"],
+                    "Sharpe": mets["Sharpe"],
+                    "MaxDD": mets["MaxDD"],
                 }
             )
             k += 1
             prog.progress(k / total)
-    df_grid = pl.DataFrame(rows, orient="row")
+
+    # Construye Polars robusto y limpia no-finitos → null
+    df_grid = (
+        pl.from_dicts(rows)
+        .with_columns(pl.col(["CAGR", "Sharpe", "MaxDD"]).cast(pl.Float64, strict=False))
+        .with_columns(
+            [
+                pl.when(pl.col("CAGR").is_finite())
+                .then(pl.col("CAGR"))
+                .otherwise(None)
+                .alias("CAGR"),
+                pl.when(pl.col("Sharpe").is_finite())
+                .then(pl.col("Sharpe"))
+                .otherwise(None)
+                .alias("Sharpe"),
+                pl.when(pl.col("MaxDD").is_finite())
+                .then(pl.col("MaxDD"))
+                .otherwise(None)
+                .alias("MaxDD"),
+            ]
+        )
+    )
+
     st.subheader("🔎 Grid results")
     st.dataframe(_to_pandas(df_grid.sort("Sharpe", descending=True)), width="stretch")
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Metrics + Bootstrap CI (if not running grid)

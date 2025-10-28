@@ -87,7 +87,15 @@ def fig_to_html(
     cfg = dict(DEFAULT_PLOTLY_CONFIG)
     if config:
         cfg.update(config)
-    return fig.to_html(full_html=full_html, include_plotlyjs=include_plotlyjs, config=cfg)
+    html = cast(
+        str,
+        fig.to_html(
+            full_html=full_html,
+            include_plotlyjs=include_plotlyjs,
+            config=cfg,
+        ),
+    )
+    return html
 
 
 # ============================================================================
