@@ -556,6 +556,7 @@ if not do_grid:
 # ─────────────────────────────────────────────────────────────────────
 # Grid search mode (optional)
 # ─────────────────────────────────────────────────────────────────────
+
 if do_grid:
     st.info("Running grid search…")
     Ls = [int(s) for s in grid_lookbacks.split(",") if s.strip()]

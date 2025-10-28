@@ -1,0 +1,16 @@
+{"event": "start", "utc": "2025-10-28T11:44:58.291899", "elapsed_sec": 0.0, "mode": "Active (TE penalized)", "n_assets": 30, "box": {"w_min": 0.03333333333333333, "w_max": 0.27000000000000013}}
+{"event": "sigma_psd", "utc": "2025-10-28T11:44:58.292358", "elapsed_sec": 0.0, "cond": 79.76401262750332}
+{"event": "returns_cleaned", "utc": "2025-10-28T11:44:58.294826", "elapsed_sec": 0.003, "n_rows": 408, "n_cols": 31}
+{"event": "solution_ok", "utc": "2025-10-28T11:44:58.520350", "elapsed_sec": 0.228, "algo": "ActiveTE", "gamma": 10.0, "lam2": 0.0, "iters": 800, "use_expos": false}
+{"event": "start", "utc": "2025-10-28T11:44:58.574605", "elapsed_sec": 0.0, "mode": "Active (TE penalized)", "n_assets": 30, "box": {"w_min": 0.03333333333333333, "w_max": 0.28000000000000014}}
+{"event": "sigma_psd", "utc": "2025-10-28T11:44:58.575451", "elapsed_sec": 0.001, "cond": 79.76401262750332}
+{"event": "start", "utc": "2025-10-28T11:44:58.582585", "elapsed_sec": 0.0, "mode": "Active (TE penalized)", "n_assets": 30, "box": {"w_min": 0.03333333333333333, "w_max": 0.29000000000000015}}
+{"event": "returns_cleaned", "utc": "2025-10-28T11:44:58.582826", "elapsed_sec": 0.008, "n_rows": 408, "n_cols": 31}
+{"event": "sigma_psd", "utc": "2025-10-28T11:44:58.582991", "elapsed_sec": 0.0, "cond": 79.76401262750332}
+{"event": "returns_cleaned", "utc": "2025-10-28T11:44:58.636732", "elapsed_sec": 0.054, "n_rows": 408, "n_cols": 31}
+{"event": "solution_ok", "utc": "2025-10-28T11:44:58.865335", "elapsed_sec": 0.283, "algo": "ActiveTE", "gamma": 10.0, "lam2": 0.0, "iters": 800, "use_expos": false}
+{"event": "start", "utc": "2025-10-28T11:44:58.922887", "elapsed_sec": 0.0, "mode": "Active (TE penalized)", "n_assets": 30, "box": {"w_min": 0.03333333333333333, "w_max": 0.30000000000000016}}
+{"event": "sigma_psd", "utc": "2025-10-28T11:44:58.923440", "elapsed_sec": 0.001, "cond": 79.76401262750332}
+{"event": "returns_cleaned", "utc": "2025-10-28T11:44:58.925879", "elapsed_sec": 0.003, "n_rows": 408, "n_cols": 31}
+{"event": "solution_ok", "utc": "2025-10-28T11:44:59.149695", "elapsed_sec": 0.227, "algo": "ActiveTE", "gamma": 10.0, "lam2": 0.0, "iters": 800, "use_expos": false}
+{"event": "gamma_sweep_done", "utc": "2025-10-28T11:45:02.019269", "elapsed_sec": 3.096, "n_gammas": 25}
