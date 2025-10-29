@@ -175,6 +175,7 @@ with tab2:
     except Exception as e:
         st.error(f"Group attribution failed: {e}")
 
+
 # ─────────────────────────────────────────────────────────────────────
 # TAB 3 – Brinson–Fachler
 # ─────────────────────────────────────────────────────────────────────
@@ -185,11 +186,12 @@ with tab3:
 
         df_brinson = pl.DataFrame(
             {
-                "date": pl.Series("date", list(pl.Series(result.date).to_list())),
-                "alloc": pl.Series("alloc", result.alloc, dtype=pl.Float64),
-                "select": pl.Series("select", result.select, dtype=pl.Float64),
-                "interact": pl.Series("interact", result.interact, dtype=pl.Float64),
-                "total": pl.Series("total", result.total, dtype=pl.Float64),
+                # Keep as strings, then normalize to Datetime
+                "date": pl.Series(list(pl.Series(result.date).to_list())),
+                "alloc": pl.Series(result.alloc, dtype=pl.Float64),
+                "select": pl.Series(result.select, dtype=pl.Float64),
+                "interact": pl.Series(result.interact, dtype=pl.Float64),
+                "total": pl.Series(result.total, dtype=pl.Float64),
             }
         )
         df_brinson = _ensure_datetime(df_brinson, "date")
@@ -200,7 +202,7 @@ with tab3:
         )
         show_plot(viz.plot_brinson_cumulative_components(df_brinson), key="brinson_comp")
 
-        # 3B) Timeseries por grupo (normaliza a formato largo para plotting)
+        # 3B) Timeseries by group (normalize to long for plotting)
         df_brinson_g_raw = bt_attr.brinson_fachler_timeseries(
             aln_ipo, Wb_daily, groups_idx, cumulative=True, by_group=True
         )
@@ -215,15 +217,19 @@ with tab3:
         )
         df_brinson_g = _ensure_datetime(df_brinson_g, "date")
 
-        # Etiquetas para grupos
+        # Build robust labels (guard against length mismatches)
         gser = df_brinson_g.select(pl.col("group_id").cast(pl.Int64)).get_column("group_id")
         unique_gids = sorted({int(x) for x in gser.unique().to_list() if x is not None})
         if len(unique_gids) == 1 and unique_gids[0] == 0:
             labels = ["Total"]
         else:
-            labels = (
-                list(group_labels) if group_labels is not None else [f"G{i}" for i in unique_gids]
-            )
+            base_labels = list(group_labels) if group_labels is not None else []
+            # Map each gid to a label, fallback to "G{gid}" if missing
+            label_map = {
+                gid: (base_labels[i] if i < len(base_labels) else f"G{gid}")
+                for i, gid in enumerate(unique_gids)
+            }
+            labels = [label_map[gid] for gid in unique_gids]
 
         show_plot(
             viz.plot_brinson_by_group_area(
@@ -234,10 +240,15 @@ with tab3:
             ),
             key="brinson_group",
         )
+
         st.dataframe(df_brinson.tail(10))
+
+        # Persist for Reporting page
+        st.session_state["df_brinson"] = df_brinson
 
     except Exception as e:
         st.error(f"Brinson–Fachler attribution failed: {e}")
+
 
 # ---------------------------------------------------------------------
 # Export

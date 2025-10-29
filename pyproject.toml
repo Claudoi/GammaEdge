@@ -19,7 +19,7 @@ scikit-learn = ">=1.4.2"
 statsmodels = ">=0.14.2"
 yfinance = ">=0.2.40"
 requests = ">=2.32.0"
-plotly = ">=5.22.0"
+plotly = {extras = ["kaleido"], version = "^6.3.1"}
 streamlit = ">=1.36.0"
 fastapi = ">=0.112.0"
 uvicorn = { version = ">=0.30.0", extras = ["standard"] }
@@ -31,6 +31,7 @@ cvxpy = { version = ">=1.4.3", optional = true }
 torch = { version = "*", optional = true }
 jupyterlab = { version = ">=4.2.0", optional = true }
 ipykernel = { version = ">=6.29.0", optional = true }
+reportlab = "^4.4.4"
 
 [tool.poetry.group.dev.dependencies]
 pytest = ">=8.2.0"
