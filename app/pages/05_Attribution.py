@@ -177,6 +177,7 @@ if isinstance(df_brinson, pl.DataFrame) and "date" in df_brinson.columns:
         st.info(f"Brinson figures skipped: {e}")
 
 
+
 # ---------------------------------------------------------------------
 # Show tables
 # ---------------------------------------------------------------------
