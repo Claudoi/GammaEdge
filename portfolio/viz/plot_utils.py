@@ -30,6 +30,7 @@ except Exception:  # pragma: no cover
     squareform = None
     _SCIPY_OK = False
 
+pd.set_option("future.no_silent_downcasting", True)
 
 # ============================================================================
 # Tipos
@@ -1707,27 +1708,47 @@ def plot_brinson_by_group_area(
     component: str = "total",  # "alloc" | "select" | "interact" | "total"
     title: str | None = None,
 ) -> go.Figure:
-    req = {"date", "group_id", "alloc", "select", "interact", "total"}
-    if not req.issubset(set(df_brinson_g.columns)):
-        raise ValueError(
-            "df_brinson_g must come from brinson_fachler_timeseries(..., by_group=True)."
-        )
+    # columnas mínimas
+    metrics = {"alloc", "select", "interact", "total"}
+    req_base = {"date"} | metrics
+    cols = set(df_brinson_g.columns)
     if component not in {"alloc", "select", "interact", "total"}:
         raise ValueError("component must be one of {'alloc','select','interact','total'}.")
 
+    # 0) caso minimalista: no hay 'group_id' ni 'group' ⇒ inventamos grupo 0
+    if req_base.issubset(cols) and "group_id" not in cols and "group" not in cols:
+        df_brinson_g = df_brinson_g.with_columns(pl.lit(0).alias("group_id"))
+
+    # 1) normalizar a group_id
+    if "group_id" not in df_brinson_g.columns and "group" in df_brinson_g.columns:
+        uniq = [g for g in df_brinson_g.get_column("group").unique().to_list() if g is not None]
+        mapping = {g: i for i, g in enumerate(sorted(uniq))}
+        df_brinson_g = df_brinson_g.with_columns(
+            pl.col("group").map_elements(lambda g: mapping.get(g, -1)).alias("group_id")
+        )
+
+    # 2) validar contrato final
+    need = {"date", "group_id", component}
+    if not need.issubset(set(df_brinson_g.columns)):
+        raise ValueError(
+            f"df_brinson_g must include {sorted(need)}; got {sorted(df_brinson_g.columns)}"
+        )
+
+    # 3) a pandas, saneando infinitos/NaN
     pdf = (
         df_brinson_g.select(["date", "group_id", component])
         .to_pandas()
         .replace([np.inf, -np.inf], np.nan)
         .dropna()
     )
+    pdf["group_id"] = pdf["group_id"].astype(int)
 
+    # 4) labels
+    gids = sorted(pdf["group_id"].unique().tolist())
     if group_labels is None:
-        gids = sorted(set(int(i) for i in pdf["group_id"]))
-        group_labels = [f"G{i}" for i in gids]
-
-    gid = pdf["group_id"].astype(int).values
-    labels = [group_labels[i] if 0 <= i < len(group_labels) else f"G{i}" for i in gid]
+        group_labels = [f"G{i}" for i in range(max(gids) + 1)]
+    # map
+    labels = [group_labels[i] if 0 <= i < len(group_labels) else f"G{i}" for i in pdf["group_id"]]
     pdf = pdf.assign(group=labels).drop(columns=["group_id"]).sort_values("date")
 
     fig = px.area(
