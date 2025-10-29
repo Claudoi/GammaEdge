@@ -21,7 +21,14 @@ def _dates(n: int) -> pl.Series:
 def _numeric_sum_dict(df: pl.DataFrame) -> dict:
     # Suma solo columnas numéricas para evitar sumar Datetime
     num_df = df.select(pl.all().exclude([pl.Datetime, pl.Date, pl.Time, pl.Duration]))
-    return num_df.select(pl.all().sum()).to_dict(False)
+    summed = num_df.select(pl.all().sum())
+    # Devuelve primitivos Python: evita Series en el dict
+    try:
+        # Polars >= 0.20 tiene row(named=True)
+        return summed.row(0, named=True)
+    except Exception:
+        # Fallback universal
+        return summed.to_dicts()[0]
 
 
 def test_long_with_group_id_ok():
