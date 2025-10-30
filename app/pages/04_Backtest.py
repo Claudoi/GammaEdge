@@ -1,9 +1,8 @@
 # app/pages/04_Backtest.py
 from __future__ import annotations
 
-import contextlib
-
 # --- stdlib ---
+import contextlib
 import os
 import sys
 from typing import Any, Callable
@@ -95,14 +94,11 @@ def enforce_turnover(
     """
     if prev_w is None or prev_w.size == 0:
         return project_to_box_simplex(new_w, w_min, w_max)
-    # Skip rebalance if changes are minor
     if np.median(np.abs(new_w - prev_w)) < band:
         return prev_w
-    # Compute turnover
     to = 0.5 * np.sum(np.abs(new_w - prev_w))
     if to <= max_to:
         return project_to_box_simplex(new_w, w_min, w_max)
-    # Rescale new weights to meet turnover budget
     lam = min(1.0, max_to / (to + 1e-12))
     w_lim = prev_w + lam * (new_w - prev_w)
     return project_to_box_simplex(w_lim, w_min, w_max)
@@ -139,7 +135,6 @@ def metrics_bootstrap(
     else:
         eq = np.asarray(bt["equity"], dtype=float)
         if eq.size < 2:
-            # Not enough data → return empty frames
             return pl.DataFrame(schema=["CAGR", "Sharpe", "MaxDD"]), pl.DataFrame(
                 schema=["metric", "q05", "q50", "q95"]
             )
@@ -163,7 +158,6 @@ def metrics_bootstrap(
         s = r[np.asarray(idx[:T])]
         eqb = np.cumprod(1.0 + s)
         cagr = float(eqb[-1] ** (252.0 / max(len(s), 1)) - 1.0)
-        # Use population-safe std (ddof=0) to avoid warnings; add epsilon guard
         vol = float(np.std(s) + 1e-12)
         sharpe = float((np.mean(s) / vol) * np.sqrt(252.0))
         mdd = float(1.0 - (eqb / np.maximum.accumulate(eqb)).min())
@@ -172,7 +166,7 @@ def metrics_bootstrap(
     # 3) Samples DataFrame
     dfb = pl.DataFrame(rows, schema=["CAGR", "Sharpe", "MaxDD"])
 
-    # 4) Scalar quantiles (avoid List(Float64))
+    # 4) Scalar quantiles
     def _q(df: pl.DataFrame, col: str, p: float) -> float:
         return float(df.select(pl.col(col).quantile(p)).item())
 
@@ -194,10 +188,8 @@ def _metric_from_df(m, name: str) -> float:
         import polars as pl
 
         if isinstance(m, pl.DataFrame):
-            # exact match
             if name in m.columns:
                 return float(m.select(pl.col(name)).item())
-            # case-insensitive
             low = name.lower()
             for c in m.columns:
                 if str(c).lower() == low:
@@ -225,8 +217,6 @@ def _metrics_safe(bt_obj: dict) -> dict[str, float]:
     cagr = _metric_from_df(m, "CAGR")
     sharpe = _metric_from_df(m, "Sharpe")
     maxdd = _metric_from_df(m, "MaxDD")
-
-    # Fallback si algo viene NaN/None: calcula desde equity
     if not np.isfinite(cagr) or not np.isfinite(sharpe) or not np.isfinite(maxdd):
         eq = np.asarray(bt_obj.get("equity", []), dtype=float)
         if eq.size > 1:
@@ -240,8 +230,34 @@ def _metrics_safe(bt_obj: dict) -> dict[str, float]:
                 cagr = cagr if np.isfinite(cagr) else cagr_fb
                 sharpe = sharpe if np.isfinite(sharpe) else sharpe_fb
                 maxdd = maxdd if np.isfinite(maxdd) else maxdd_fb
-
     return {"CAGR": float(cagr), "Sharpe": float(sharpe), "MaxDD": float(maxdd)}
+
+
+# --- Benchmark helpers ------------------------------------------------
+def build_benchmark_weights(
+    mode: str,
+    T: int,
+    tickers: list[str],
+    W_portfolio_daily: np.ndarray | None = None,
+) -> np.ndarray:
+    """
+    Returns Wb_daily with shape (T, N).
+    mode: 'equal' | 'static_first_day'
+      - equal: 1/N constant.
+      - static_first_day: freeze day-0 portfolio weights and keep them static.
+    """
+    N = len(tickers)
+    if mode == "equal":
+        return np.tile(np.full(N, 1.0 / max(N, 1), dtype=float), (T, 1))
+    elif mode == "static_first_day":
+        if W_portfolio_daily is None:
+            raise ValueError("static_first_day requires W_portfolio_daily")
+        w0 = np.clip(W_portfolio_daily[0], 0.0, None)
+        s = float(w0.sum())
+        w0 = (w0 / s) if s > 0 else np.full(N, 1.0 / max(N, 1), dtype=float)
+        return np.tile(w0, (T, 1))
+    else:
+        raise ValueError(f"Unknown benchmark mode: {mode}")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -306,6 +322,10 @@ with st.sidebar:
     use_to_budget = st.checkbox("Limit turnover (budget)", value=True)
     max_turnover = st.slider("Max turnover per rebalance", 0.0, 0.50, 0.10, 0.01)
     band_eps = st.slider("Band threshold (median |Δw|)", 0.0, 0.05, 0.01, 0.001)
+
+    st.markdown("---")
+    st.subheader("Benchmark (for Brinson)")
+    bench_mode = st.selectbox("Benchmark mode", ["equal", "static_first_day"], index=0)
 
     st.markdown("---")
     st.subheader("Hyperparameter Grid Search")
@@ -402,7 +422,7 @@ def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
             w = np.ones(n, dtype=float) / max(n, 1)
             return project_to_box_simplex(w, w_min, w_max)
 
-    # Add turnover control wrapper
+    # Turnover control wrapper
     def alloc(win: pl.DataFrame) -> np.ndarray:
         w_new = base_alloc(win)
         if use_to_budget:
@@ -444,7 +464,6 @@ def cached_backtest(
     band_eps,
 ):
     alloc = make_allocator(alloc_kind)
-    # compute local number of assets (exclude 'date')
     n_cols = len([c for c in df_ret_wide.columns if c != "date"])
     return backtest_rebalanced(
         df_ret_wide=df_ret_wide,
@@ -474,10 +493,6 @@ def _cached_metrics_for_grid(
     max_turnover: float,
     band_eps: float,
 ) -> dict[str, float]:
-    """
-    Compute metrics for a single (lookback, cost) combination, cached by parameters.
-    This prevents recomputing the full backtest grid repeatedly.
-    """
     alloc = make_allocator(alloc_kind)
     n_cols = len([c for c in df_ret_wide.columns if c != "date"])
     bt_ = backtest_rebalanced(
@@ -511,11 +526,8 @@ if not do_grid:
         )
     st.success("✅ Backtest executed.")
 
-    # ─────────────────────────────────────────────────────────────────
     # Handoff to 05_Attribution (persist into session_state)
-    # ─────────────────────────────────────────────────────────────────
     def _export_to_05(bt_obj, df_wide_obj):
-        # normalize to Polars with datetime
         if isinstance(df_wide_obj, pd.DataFrame):
             df_pl = pl.from_pandas(df_wide_obj)
         elif isinstance(df_wide_obj, pl.DataFrame):
@@ -523,21 +535,16 @@ if not do_grid:
         else:
             st.error("`returns_wide/df_ret_wide` must be a Polars/Pandas DataFrame.")
             return
-
         if df_pl.schema.get("date") != pl.Datetime:
             df_pl = df_pl.with_columns(pl.col("date").cast(pl.Datetime))
-
         st.session_state["bt"] = bt_obj
         st.session_state["df_ret_wide"] = df_pl
-        # keep a generic copy as well (so 05 can fallback)
         st.session_state["returns_wide"] = df_pl
         with contextlib.suppress(Exception):
             st.toast("Artifacts saved for 05_Attribution.", icon="💾")
 
-    # auto-export now that bt exists
     _export_to_05(bt, st.session_state.get("returns_wide", df_ret_wide))
 
-    # optional manual button to re-export on demand
     with st.sidebar:
         if st.button("Export to 05_Attribution"):
             _export_to_05(bt, st.session_state.get("returns_wide", df_ret_wide))
@@ -547,7 +554,6 @@ if not do_grid:
 # ─────────────────────────────────────────────────────────────────────
 # Grid search mode (optional)
 # ─────────────────────────────────────────────────────────────────────
-
 if do_grid:
     st.info("Running grid search…")
     Ls = [int(s) for s in grid_lookbacks.split(",") if s.strip()]
@@ -586,7 +592,6 @@ if do_grid:
             k += 1
             prog.progress(k / total)
 
-    # Construye Polars robusto y limpia no-finitos → null
     df_grid = (
         pl.from_dicts(rows)
         .with_columns(pl.col(["CAGR", "Sharpe", "MaxDD"]).cast(pl.Float64, strict=False))
@@ -653,14 +658,12 @@ if not do_grid:
         key=_bt_key("weights-heatmap"),
     )
 
-    # Turnover plot (per rebalance step)
     dates_w = bt.get("rebalance_dates", None)
     if dates_w is None:
         k = int(np.size(bt.get("turnover", [])))
         dates_w = bt["dates"][-k:] if k > 0 else []
 
     to_vals = np.asarray(bt.get("turnover", []), dtype=float)
-
     if len(dates_w) == to_vals.size and to_vals.size > 0:
         fig = plot_turnover(dates_w, to_vals, title="Turnover at Rebalance")
         show_plot(fig, key=_bt_key("turnover"))
@@ -676,26 +679,27 @@ if not do_grid:
 # ─────────────────────────────────────────────────────────────────────
 # Attribution (only when not running grid search)
 # ─────────────────────────────────────────────────────────────────────
-aln = None  # Prevent undefined variable if attribution fails
+aln = None
 
 if not do_grid and bt is not None:
     st.subheader("📊 Attribution")
 
-    # ────────────────────────────────
-    # Basic / Asset-level attribution
-    # ────────────────────────────────
+    # 1) Align returns to bt dates and expand rebalance weights to daily
     try:
-        # 1) Align the date grid
         dates_bt = list(bt["dates"])
-        df_ret_bt = df_ret_wide.filter(pl.col("date").is_in(dates_bt)).sort("date")
-        df_ret_bt = df_ret_bt.unique(subset=["date"]).sort("date")
+        df_ret_bt = (
+            df_ret_wide.filter(pl.col("date").is_in(dates_bt)).unique(subset=["date"]).sort("date")
+        )
 
-        # 2) Expand rebalancing weights to daily frequency
         W_reb = np.asarray(bt["weights"], dtype=float)
         rb_dates = list(bt.get("rebalance_dates", []))
-        if W_reb.size == 0 or len(rb_dates) != W_reb.shape[0]:
+        if W_reb.size == 0:
+            raise ValueError("bt['weights'] is empty.")
+
+        if len(rb_dates) != W_reb.shape[0]:
             K = W_reb.shape[0]
-            rb_dates = dates_bt[:: max(1, len(dates_bt) // max(1, K))][:K]
+            step = max(len(dates_bt) // max(K, 1), 1)
+            rb_dates = dates_bt[::step][:K]
 
         daily_W = bt_attr.expand_rebalance_weights(
             dates=df_ret_bt.get_column("date").to_list(),
@@ -703,62 +707,119 @@ if not do_grid and bt is not None:
             W_reb=W_reb,
         )
 
-        # 3) Align and compute contributions
         aln = bt_attr.align_returns_and_weights(df_ret_bt, daily_W)
-        df_contrib_asset = bt_attr.contributions_by_asset(aln)
-        df_top = bt_attr.top_contributors(bt=bt, df_ret_wide=df_ret_bt, top_n=10, sign="both")
-
-        # 4) Plots
-        show_plot(plot_top_contributors(df_top), key=_bt_key("top-contrib"))
-        df_bottom = (
-            df_contrib_asset.group_by("ticker")
-            .agg(pl.col("contrib").sum().alias("contrib_total"))
-            .sort("contrib_total")
-            .head(10)
-        )
-
-        show_plot(
-            plot_top_contributors(df_bottom, title="Bottom Contributors"),
-            key=_bt_key("bottom-contrib"),
-        )
 
     except Exception as e:
-        st.info(f"Basic attribution not available: {e}")
+        st.info(f"Alineación para attribution no disponible: {e}")
+        aln = None
 
-    # ────────────────────────────────
-    # Group / Sector attribution
-    # ────────────────────────────────
-    try:
-        groups_map = {tk: "OTHER" for tk in bt["tickers"]}
-        df_group_daily = bt_attr.contributions_by_group(aln, groups_map)
-        df_group_total = (
-            df_group_daily.group_by("group")
-            .agg(
-                [
-                    pl.col("contrib").sum().alias("contrib_total"),
-                    pl.col("weight").mean().alias("avg_weight"),
-                ]
+    # 2) Asset-level contributors
+    if aln is not None:
+        try:
+            df_contrib_asset = bt_attr.contributions_by_asset(aln)
+            df_top = (
+                df_contrib_asset.group_by("ticker")
+                .agg(pl.col("contrib").sum().alias("contrib_total"))
+                .sort("contrib_total", descending=True)
+                .head(10)
             )
-            .sort("contrib_total", descending=True)
-        )
-        show_plot(plot_group_contrib(df_group_total), key=_bt_key("group-bar"))
-        show_plot(plot_group_contrib_area(df_group_daily), key=_bt_key("group-area"))
-    except Exception as e:
-        st.info(f"Group attribution not available: {e}")
+            show_plot(plot_top_contributors(df_top), key=_bt_key("top-contrib"))
 
-    # ────────────────────────────────
-    # Brinson–Fachler performance attribution
-    # ────────────────────────────────
-    try:
-        N_assets = len(bt["tickers"])
-        w_bench = np.full(N_assets, 1.0 / max(N_assets, 1))
-        Wb_daily = np.tile(w_bench, (len(aln.dates), 1))
-        groups_idx = list(range(N_assets))
-        df_brinson = bt_attr.brinson_fachler_cumulative(
-            aln=aln,
-            bench_weights_daily=Wb_daily,
-            groups_idx=groups_idx,
-        )
-        show_plot(plot_brinson_cumulative(df_brinson), key=_bt_key("brinson-cum"))
-    except Exception as e:
-        st.info(f"Brinson attribution not available: {e}")
+            df_bottom = (
+                df_contrib_asset.group_by("ticker")
+                .agg(pl.col("contrib").sum().alias("contrib_total"))
+                .sort("contrib_total", descending=False)
+                .head(10)
+            )
+            show_plot(
+                plot_top_contributors(df_bottom, title="Bottom Contributors"),
+                key=_bt_key("bottom-contrib"),
+            )
+        except Exception as e:
+            st.info(f"Basic attribution not available: {e}")
+
+    # 3) Group-level contributors (use user map if present; else 2 buckets)
+    if aln is not None:
+        try:
+            user_map = st.session_state.get("group_map")  # dict[ticker -> group]
+            if user_map:
+                groups_map = {tk: user_map.get(tk, "OTHER") for tk in bt["tickers"]}
+            else:
+
+                def _bucket(tk: str) -> str:
+                    return "A-M" if tk.upper()[:1] <= "M" else "N-Z"
+
+                groups_map = {tk: _bucket(tk) for tk in bt["tickers"]}
+
+            df_group_daily = bt_attr.contributions_by_group(aln, groups_map)
+            df_group_total = (
+                df_group_daily.group_by("group")
+                .agg(
+                    [
+                        pl.col("contrib").sum().alias("contrib_total"),
+                        pl.col("weight").mean().alias("avg_weight"),
+                    ]
+                )
+                .sort("contrib_total", descending=True)
+            )
+            show_plot(plot_group_contrib(df_group_total), key=_bt_key("group-bar"))
+            show_plot(plot_group_contrib_area(df_group_daily), key=_bt_key("group-area"))
+
+        except Exception as e:
+            st.info(f"Group attribution not available: {e}")
+
+    # 4) Brinson–Fachler
+    if aln is not None:
+        try:
+            T, N_assets = aln.weights.shape
+
+            # Build benchmark by user selection (do not mirror portfolio unless asked)
+            Wb_daily = build_benchmark_weights(
+                bench_mode, T, aln.tickers, W_portfolio_daily=aln.weights
+            )
+
+            # Build groups_idx: prefer user mapping; else per-asset distinct groups
+            user_map = st.session_state.get("group_map")
+            if user_map:
+                name_to_id: dict[str, int] = {}
+                gid = 1
+                groups_idx = np.zeros(N_assets, dtype=int)
+                for j, tk in enumerate(aln.tickers):
+                    gname = user_map.get(tk, "OTHER")
+                    if gname not in name_to_id:
+                        name_to_id[gname] = gid
+                        gid += 1
+                    groups_idx[j] = name_to_id[gname]
+            else:
+                groups_idx = np.arange(1, N_assets + 1, dtype=int)
+
+            if len(set(groups_idx.tolist())) < 2:
+                st.warning(
+                    "Brinson: only 1 group detected. Add more groups to see allocation effect."
+                )
+
+            df_brinson = bt_attr.brinson_fachler_cumulative(
+                aln=aln,
+                bench_weights_daily=Wb_daily,
+                groups_idx=groups_idx.tolist(),
+            )
+
+            # Quick debug caption to ensure it's not flat
+            _alloc = df_brinson["alloc"].to_numpy()
+            _select = df_brinson["select"].to_numpy()
+            _total = df_brinson["total"].to_numpy()
+            st.caption(
+                f"Brinson debug — total[min,max]=({np.nanmin(_total):.6f}, {np.nanmax(_total):.6f}) | "
+                f"alloc[min,max]=({np.nanmin(_alloc):.6f}, {np.nanmax(_alloc):.6f}) | "
+                f"select[min,max]=({np.nanmin(_select):.6f}, {np.nanmax(_select):.6f})"
+            )
+
+            show_plot(plot_brinson_cumulative(df_brinson), key=_bt_key("brinson-cum"))
+
+            # Export artifacts for 05_Attribution and 06_Reporting
+            st.session_state["df_brinson"] = df_brinson
+            st.session_state["Wb_daily"] = Wb_daily
+            st.session_state["groups_idx"] = groups_idx
+
+        except Exception as e:
+            st.info(f"Brinson attribution not available: {e}")

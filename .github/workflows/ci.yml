@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [develop, main]
+    branches: [develop, main, 'feature/**']
   pull_request:
     branches: [develop, main]
 
@@ -14,7 +14,7 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # -------- LINT + TYPE CHECK --------
+  # -------- LINT + TYPE CHECK (PR only) --------
   lint:
     name: Lint & Type Check
     runs-on: ubuntu-latest
@@ -57,12 +57,11 @@ jobs:
       - name: Mypy (Type-check)
         run: poetry run mypy portfolio api
 
-  # -------- UNIT TESTS --------
+  # -------- UNIT TESTS (push + PR) --------
   tests:
     name: Unit Tests
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-    needs: lint
+    continue-on-error: false
     steps:
       - uses: actions/checkout@v4
 
@@ -89,24 +88,98 @@ jobs:
         if: steps.cache-venv.outputs.cache-hit != 'true'
         run: poetry install --with dev --no-interaction --no-ansi
 
-      - env:
+      - name: Run Pytest with Coverage
+        env:
           PYTHONPATH: .
-        name: Run Pytest
-      - name: Upload coverage
+        run: |
+          poetry run pytest -q --disable-warnings --maxfail=1 \
+            --cov=portfolio --cov-report=xml --cov-report=html --cov-report=term-missing \
+            --cov-fail-under=60
+
+      - name: Upload Coverage (HTML + XML)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: coverage-report
-          path: ./htmlcov/, ./coverage.xml
+          path: |
+            htmlcov/
+            coverage.xml
           if-no-files-found: ignore
 
-      - name: Upload coverage artifact
+  # -------- BUILD REPORT (CLI EXPORT) --------
+  build-report:
+    name: Build Reporting Artifacts
+    runs-on: ubuntu-latest
+    needs: [tests]
+    if: github.event_name == 'push'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          version: 1.8.3
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+          installer-parallel: true
+
+      - name: Cache virtualenv
+        id: cache-venv
+        uses: actions/cache@v4
+        with:
+          path: .venv
+          key: venv-${{ runner.os }}-py311-${{ hashFiles('**/poetry.lock') }}
+
+      - name: Install dependencies
+        if: steps.cache-venv.outputs.cache-hit != 'true'
+        run: poetry install --no-interaction --no-root
+
+      - name: Generate synthetic inputs
+        run: |
+          mkdir -p results reports
+          python - <<'PY'
+import json, csv, numpy as np, datetime as dt, os
+os.makedirs('results', exist_ok=True)
+T, N = 50, 4
+dates = [(dt.date(2024,1,1)+dt.timedelta(days=i)).isoformat() for i in range(T)]
+eq = (1.0 + 0.001*np.arange(T)).tolist()
+tickers = [f"T{i}" for i in range(N)]
+W = [[1/N]*N for _ in range(T)]
+bt = {"dates": dates, "equity": eq, "tickers": tickers, "weights": W}
+json.dump(bt, open("results/bt.json","w"))
+with open("results/returns_wide.csv","w",newline="") as f:
+    wr = csv.writer(f); wr.writerow(["date"]+tickers)
+    for d in dates:
+        wr.writerow([d]+[0.001]*N)
+json.dump({t: ("GroupA" if i%2==0 else "GroupB") for i,t in enumerate(tickers)}, open("results/group_map.json","w"))
+with open("results/metrics.csv","w",newline="") as f:
+    wr = csv.writer(f); wr.writerow(["Metric","Value"])
+    wr.writerow(["Sharpe", 1.25]); wr.writerow(["MaxDD",-0.10])
+PY
+
+      - name: Export HTML & PDF report
+        env:
+          PYTHONPATH: .
+        run: |
+          poetry run python tools/export_report.py \
+            --bt results/bt.json \
+            --returns results/returns_wide.csv \
+            --groups results/group_map.json \
+            --metrics results/metrics.csv \
+            --out reports/
+
+      - name: Upload Reporting Artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: coverage-xml
-          path: coverage.xml
+          name: gammaedge-report
+          path: reports/
+          if-no-files-found: error
 
-  # -------- MATRIX BUILD (push only, optional) --------
+  # -------- MATRIX BUILD (push only) --------
   matrix-build:
     name: Matrix (3.10, 3.11, 3.12)
     runs-on: ubuntu-latest
@@ -141,11 +214,13 @@ jobs:
         if: steps.cache-venv.outputs.cache-hit != 'true'
         run: poetry install --with dev --no-interaction --no-ansi
 
-      - name: Ruff + Black
+      - name: Lint & Format
         run: |
           poetry run ruff check .
           poetry run ruff format --check .
           poetry run black --check .
 
       - name: Run Tests
+        env:
+          PYTHONPATH: .
         run: poetry run pytest -q --disable-warnings --maxfail=1

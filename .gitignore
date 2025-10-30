@@ -20,3 +20,4 @@ venv/
 *.log
 .coverage
 .coverageger
+.htmlcov/

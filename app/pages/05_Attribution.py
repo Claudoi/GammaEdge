@@ -1,9 +1,12 @@
-# app/pages/05_Attribution.py
+# app/pages/06_Reporting.py
 from __future__ import annotations
 
+# --- stdlib ---
 import os
 import sys
 
+# --- third-party ---
+import numpy as np
 import polars as pl
 import streamlit as st
 
@@ -12,270 +15,268 @@ import streamlit as st
 # ---------------------------------------------------------------------
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-# Core modules
-from portfolio.backtest import attribution as bt_attr
-from portfolio.backtest.brinson_utils import (
-    coerce_brinson_timeseries_to_long as _coerce_brinson_ts_to_long,
+from portfolio.backtest import attribution as bt_attr  # expand/align helpers
+from portfolio.backtest.brinson_utils import ensure_datetime as _ensure_datetime
+from portfolio.backtest.kpis import compute_kpis
+from portfolio.backtest.reporting import (
+    BacktestReport,
+    ReportFigure,
+    build_backtest_report,
+    build_context,
+    render_html,
+    render_pdf,
 )
-from portfolio.backtest.brinson_utils import (
-    ensure_datetime as _ensure_datetime,
-)
-from portfolio.viz import plot_utils as viz
-from portfolio.viz.plot_utils import show_plot
+from portfolio.viz import plot_utils as viz  # para figuras extra (Brinson) opcionales
 
 
 # ---------------------------------------------------------------------
-# Helpers (UI-only)
+# Helpers
 # ---------------------------------------------------------------------
-def _csv_bytes(df: pl.DataFrame) -> bytes:
-    """Return CSV bytes from a Polars DF, evitando dtypes Object/List para descargas robustas."""
+def _coerce_dates_list(dates_any: list) -> list:
+    """Fuerza una lista de fechas (str/datetime/np.datetime64) a Polars Datetime,
+    y devuelve lista de Python con dtype consistente para usar en is_in()."""
+    if dates_any is None or len(dates_any) == 0:
+        return []
+    df = pl.DataFrame({"date": dates_any})
+    df = _ensure_datetime(df, "date")
+    return df.get_column("date").to_list()
+
+
+def _safe_metrics_to_dict(metrics_df_obj) -> dict[str, float] | None:
+    """Convierte una tabla 2-col a dict Metric->Value; devuelve None si falla."""
     try:
-        cols = []
-        for name, dtype in df.schema.items():
-            if dtype == pl.Datetime:
-                cols.append(pl.col(name).dt.to_string().alias(name))
-            elif dtype == pl.Object or dtype == pl.List:
-                cols.append(pl.col(name).cast(pl.String, strict=False).alias(name))
-            else:
-                cols.append(pl.col(name))
-        return df.select(cols).write_csv().encode()
+        pdf = metrics_df_obj.to_pandas() if hasattr(metrics_df_obj, "to_pandas") else metrics_df_obj
+        return {str(k): float(v) for k, v in zip(pdf.iloc[:, 0], pdf.iloc[:, 1])}
     except Exception:
-        # Fallback universal (requiere pandas en deps, ya incluida en pyproject)
-        return df.to_pandas().to_csv(index=False).encode()
+        return None
 
 
 # ---------------------------------------------------------------------
 # Streamlit config
 # ---------------------------------------------------------------------
-st.set_page_config(page_title="Attribution Analysis", layout="wide")
-st.title("📊 Performance Attribution Dashboard")
-st.caption("Vectorized Brinson–Fachler decomposition and return contribution analysis.")
+st.set_page_config(page_title="Reporting", layout="wide")
+st.title("📄 Reporting")
+st.caption(
+    "Generate HTML and PDF reports with equity, drawdown, weights, attribution and benchmark context."
+)
 
 # ---------------------------------------------------------------------
-# Defensive handoff from previous pages
+# Inputs from previous pages (expected in session_state)
 # ---------------------------------------------------------------------
 bt = st.session_state.get("bt")
 df_ret_wide = st.session_state.get("df_ret_wide", st.session_state.get("returns_wide"))
-asset_meta = st.session_state.get("asset_meta")
+group_map = st.session_state.get("group_map")
+metrics_df = st.session_state.get("metrics_df")  # optional KPIs
+df_brinson = st.session_state.get("df_brinson")  # optional Brinson table (cumulative)
+bench_meta = st.session_state.get("bench_meta")  # optional metadata about benchmark
+Wb_daily_session = st.session_state.get("Wb_daily")  # optional benchmark weights
+groups_idx = st.session_state.get("groups_idx")  # optional groups
 
 if bt is None or df_ret_wide is None:
-    st.warning("⚠️ Run pages 02–04 first, then export to Attribution.")
-    st.stop()
-
-# Normalize inputs to Polars + Datetime
-try:
-    if not isinstance(df_ret_wide, pl.DataFrame):
-        df_ret_wide = pl.from_pandas(df_ret_wide)
-    df_ret_wide = _ensure_datetime(df_ret_wide, "date")
-except Exception as e:
-    st.error(f"Input normalization failed: {e}")
-    st.stop()
-
-# ---------------------------------------------------------------------
-# 1) Alignment & IPO safety
-# ---------------------------------------------------------------------
-try:
-    aln = bt_attr._daily_alignment_from_bt(bt, df_ret_wide)
-    aln_ipo = bt_attr.align_with_ipo_mask(aln)
-    st.success("✅ Alignment successful (IPO-safe).")
-except Exception as e:
-    st.error(f"Alignment failed: {e}")
-    st.stop()
-
-# ---------------------------------------------------------------------
-# 2) Grouping setup
-# ---------------------------------------------------------------------
-try:
-    meta_df = asset_meta
-    if meta_df is not None and not isinstance(meta_df, pl.DataFrame):
-        meta_df = pl.DataFrame(meta_df)
-
-    if meta_df is not None and "sector" in meta_df.columns:
-        groups_idx, group_labels, groups_map = bt_attr.build_groups_idx(
-            aln_ipo.tickers, meta_df, col="sector"
-        )
-    elif meta_df is not None and "country" in meta_df.columns:
-        groups_idx, group_labels, groups_map = bt_attr.build_groups_idx(
-            aln_ipo.tickers, meta_df, col="country"
-        )
-    else:
-        groups_idx = list(range(len(aln_ipo.tickers)))
-        group_labels = aln_ipo.tickers
-        groups_map = {tk: tk for tk in aln_ipo.tickers}
-except Exception:
-    # Fallback sin metadatos
-    groups_idx = list(range(len(aln_ipo.tickers)))
-    group_labels = aln_ipo.tickers
-    groups_map = {tk: tk for tk in aln_ipo.tickers}
-
-# ---------------------------------------------------------------------
-# 3) Benchmark construction
-# ---------------------------------------------------------------------
-try:
-    Wb_daily = bt_attr.coerce_benchmark_weights(
-        None, len(aln_ipo.dates), len(aln_ipo.tickers), scheme="EW"
+    st.warning(
+        "⚠️ Run pages 02–05 first so we can build the report (risk model, backtest, attribution)."
     )
-except Exception as e:
-    st.error(f"Benchmark generation failed: {e}")
     st.stop()
 
+# Normalize returns table to Polars + Datetime
+if not isinstance(df_ret_wide, pl.DataFrame):
+    df_ret_wide = pl.from_pandas(df_ret_wide)
+df_ret_wide = _ensure_datetime(df_ret_wide, "date")
+
 # ---------------------------------------------------------------------
-# Tabs
+# Extract BT artifacts
 # ---------------------------------------------------------------------
-tab1, tab2, tab3 = st.tabs(["🎯 Asset-level", "🏗️ Group-level", "🧩 Brinson–Fachler"])
+dates_bt_any = list(bt.get("dates", []))
+equity = np.asarray(bt.get("equity", []), dtype=float)
+tickers = list(bt.get("tickers", []))
+W_reb = np.asarray(bt.get("weights", []), dtype=float)  # shape (K, N)
+rb_dates_any = list(bt.get("rebalance_dates", []))
 
-# ─────────────────────────────────────────────────────────────────────
-# TAB 1 – Asset-level
-# ─────────────────────────────────────────────────────────────────────
-with tab1:
+if not dates_bt_any or equity.size == 0 or W_reb.size == 0 or not tickers:
+    st.error("Missing essentials in 'bt' (dates, equity, weights, tickers).")
+    st.stop()
+
+# Coerce BT dates to Datetime (consistent con df_ret_wide['date'])
+dates_bt = _coerce_dates_list(dates_bt_any)
+
+# ---------------------------------------------------------------------
+# Align returns to backtest date grid and expand weights to daily
+# ---------------------------------------------------------------------
+# 1) returns solo en fechas del backtest (dtypes compatibles)
+df_ret_bt = df_ret_wide.filter(pl.col("date").is_in(dates_bt)).unique(subset=["date"]).sort("date")
+
+# 2) validar dimensiones y construir rb_dates si faltan o no cuadran con W_reb
+K, N = W_reb.shape[0], W_reb.shape[1] if W_reb.ndim == 2 else (W_reb.shape[0], len(tickers))
+if len(tickers) != N:
+    st.error(f"Weight columns ({N}) do not match tickers ({len(tickers)}).")
+    st.stop()
+
+# Si no hay rebalance_dates válidos o el número no coincide con K, infiérelo equiespaciado
+rb_dates_list = _coerce_dates_list(rb_dates_any)
+if len(rb_dates_list) != K:
+    step = max(len(dates_bt) // max(K, 1), 1)
+    rb_dates_list = dates_bt[::step][:K]
+
+# 3) expandir a diario (T×N) usando la malla exacta de df_ret_bt
+daily_W = bt_attr.expand_rebalance_weights(
+    dates=df_ret_bt.get_column("date").to_list(),
+    rb_dates=rb_dates_list,
+    W_reb=W_reb,
+)
+
+# persist fallback de benchmark solo si no existía
+if Wb_daily_session is None:
+    st.session_state["Wb_daily"] = daily_W
+
+# ---------------------------------------------------------------------
+# Build unified BacktestReport (tables + figs)
+# ---------------------------------------------------------------------
+report: BacktestReport = build_backtest_report(
+    df_ret_wide=df_ret_bt,
+    daily_weights=daily_W,
+    equity=equity,
+    group_map=group_map,
+    title="GammaEdge Backtest",
+)
+
+# ---------------------------------------------------------------------
+# Display meta info (benchmark & groups)
+# ---------------------------------------------------------------------
+st.markdown("### 🧭 Context Summary")
+colA, colB, colC = st.columns(3)
+bench_scheme = (bench_meta or {}).get("scheme", "Equal-Weight")
+colA.metric("Benchmark Scheme", bench_scheme)
+colB.metric("Groups mapped", f"{len(group_map) if isinstance(group_map, dict) else 0}")
+colC.metric("Period", f"{str(dates_bt[0])[:10]} → {str(dates_bt[-1])[:10]}")
+
+# ---------------------------------------------------------------------
+# Show figures
+# ---------------------------------------------------------------------
+st.markdown("### 📈 Charts")
+col1, col2 = st.columns(2)
+col1.plotly_chart(report.figures["equity"], use_container_width=True)
+col2.plotly_chart(report.figures["drawdown"], use_container_width=True)
+st.plotly_chart(report.figures["weights"], use_container_width=True)
+st.plotly_chart(report.figures["top_contrib"], use_container_width=True)
+
+# Si tenemos df_brinson en sesión, añadimos también sus figuras para la UI
+if isinstance(df_brinson, pl.DataFrame) and "date" in df_brinson.columns:
     try:
-        df_asset = bt_attr.contributions_by_asset(aln_ipo)
-        df_cum = (
-            df_asset.group_by("ticker")
-            .agg(pl.col("contrib").sum().alias("contrib_total"))
-            .sort("contrib_total", descending=True)
-            .with_columns(pl.col("contrib_total").cast(pl.Float64, strict=False))
-        )
-
-        col1, col2 = st.columns(2)
-        show_plot(
-            viz.plot_top_contributors(df_cum.head(10), title="Top 10 Contributors"),
-            key="asset_top10",
-            st_obj=col1,
-        )
-        show_plot(
-            viz.plot_top_contributors(df_cum.tail(10), title="Bottom 10 Contributors"),
-            key="asset_bottom10",
-            st_obj=col2,
-        )
-        st.dataframe(df_cum.head(15))
-    except Exception as e:
-        st.error(f"Asset-level attribution failed: {e}")
-
-# ─────────────────────────────────────────────────────────────────────
-# TAB 2 – Group attribution
-# ─────────────────────────────────────────────────────────────────────
-with tab2:
-    try:
-        df_total, df_daily = bt_attr.group_contrib(bt, df_ret_wide, groups_map=groups_map)
-
-        df_total = df_total.with_columns(
-            [
-                pl.col("contrib_total").cast(pl.Float64, strict=False),
-                pl.col("weight_avg").cast(pl.Float64, strict=False),
-            ]
-        )
-
-        show_plot(
-            viz.plot_group_contrib_area(df_daily, title="Group Contributions Over Time"),
-            key="group_area",
-        )
-        show_plot(viz.plot_group_contrib(df_total), key="group_bar")
-        st.dataframe(df_total)
-    except Exception as e:
-        st.error(f"Group attribution failed: {e}")
-
-
-# ─────────────────────────────────────────────────────────────────────
-# TAB 3 – Brinson–Fachler
-# ─────────────────────────────────────────────────────────────────────
-with tab3:
-    try:
-        # 3A) Global cumulative series (alloc/select/interact/total)
-        result = bt_attr.brinson_fachler_vectorized(aln_ipo, Wb_daily, groups_idx, cumulative=True)
-
-        df_brinson = pl.DataFrame(
-            {
-                # Keep as strings, then normalize to Datetime
-                "date": pl.Series(list(pl.Series(result.date).to_list())),
-                "alloc": pl.Series(result.alloc, dtype=pl.Float64),
-                "select": pl.Series(result.select, dtype=pl.Float64),
-                "interact": pl.Series(result.interact, dtype=pl.Float64),
-                "total": pl.Series(result.total, dtype=pl.Float64),
-            }
-        )
         df_brinson = _ensure_datetime(df_brinson, "date")
-
-        show_plot(
-            viz.plot_brinson_cumulative(df_brinson, title="Brinson–Fachler Cumulative Attribution"),
-            key="brinson_cum",
+        # Alinear a periodo del BT por seguridad
+        df_brinson = df_brinson.filter(pl.col("date").is_in(dates_bt)).sort("date")
+        st.plotly_chart(
+            viz.plot_brinson_cumulative(df_brinson, title="Brinson–Fachler (Cumulative)"),
+            use_container_width=True,
         )
-        show_plot(viz.plot_brinson_cumulative_components(df_brinson), key="brinson_comp")
-
-        # 3B) Timeseries by group (normalize to long for plotting)
-        df_brinson_g_raw = bt_attr.brinson_fachler_timeseries(
-            aln_ipo, Wb_daily, groups_idx, cumulative=True, by_group=True
+        st.plotly_chart(
+            viz.plot_brinson_cumulative_components(df_brinson),
+            use_container_width=True,
         )
-        df_brinson_g = _coerce_brinson_ts_to_long(df_brinson_g_raw).with_columns(
-            [
-                pl.col("group_id").cast(pl.Int64, strict=False),
-                pl.col("alloc").cast(pl.Float64, strict=False),
-                pl.col("select").cast(pl.Float64, strict=False),
-                pl.col("interact").cast(pl.Float64, strict=False),
-                pl.col("total").cast(pl.Float64, strict=False),
-            ]
-        )
-        df_brinson_g = _ensure_datetime(df_brinson_g, "date")
-
-        # Build robust labels (guard against length mismatches)
-        gser = df_brinson_g.select(pl.col("group_id").cast(pl.Int64)).get_column("group_id")
-        unique_gids = sorted({int(x) for x in gser.unique().to_list() if x is not None})
-        if len(unique_gids) == 1 and unique_gids[0] == 0:
-            labels = ["Total"]
-        else:
-            base_labels = list(group_labels) if group_labels is not None else []
-            # Map each gid to a label, fallback to "G{gid}" if missing
-            label_map = {
-                gid: (base_labels[i] if i < len(base_labels) else f"G{gid}")
-                for i, gid in enumerate(unique_gids)
-            }
-            labels = [label_map[gid] for gid in unique_gids]
-
-        show_plot(
-            viz.plot_brinson_by_group_area(
-                df_brinson_g,
-                group_labels=labels,
-                component="total",
-                title="Brinson by Group (Total)",
-            ),
-            key="brinson_group",
-        )
-
-        st.dataframe(df_brinson.tail(10))
-
-        # Persist for Reporting page
-        st.session_state["df_brinson"] = df_brinson
-
     except Exception as e:
-        st.error(f"Brinson–Fachler attribution failed: {e}")
-
+        st.info(f"Brinson figures skipped: {e}")
 
 # ---------------------------------------------------------------------
-# Export
+# Show tables
 # ---------------------------------------------------------------------
-st.markdown("---")
-st.subheader("📤 Export results")
+st.subheader("📊 Tables")
+for name, df in report.tables.items():
+    st.write(f"**{name}**")
+    st.dataframe(df, use_container_width=True)
 
-if "df_asset" in locals():
-    st.download_button(
-        "Download asset daily contributions (CSV)",
-        _csv_bytes(df_asset),
-        file_name="contrib_asset_daily.csv",
-        mime="text/csv",
-    )
+# ---------------------------------------------------------------------
+# Build context for export
+# ---------------------------------------------------------------------
+period_start = str(dates_bt[0]) if dates_bt else "—"
+period_end = str(dates_bt[-1]) if dates_bt else "—"
 
-if "df_total" in locals():
-    st.download_button(
-        "Download group totals (CSV)",
-        _csv_bytes(df_total),
-        file_name="contrib_group_total.csv",
-        mime="text/csv",
-    )
+# metrics: si no vienen, calcula a partir de equity
+extra_metrics = _safe_metrics_to_dict(metrics_df) if metrics_df is not None else None
+if extra_metrics is None:
+    extra_metrics = compute_kpis(equity, rf_daily=0.0, periods_per_year=252)
 
-if "df_brinson" in locals():
+# añade benchmark info a extra_metrics (aparece en el HTML/PDF)
+if bench_meta and "scheme" in bench_meta:
+    extra_metrics["Benchmark Scheme"] = bench_meta.get("scheme")
+
+df_asset_total = report.tables.get("contrib_asset_total")
+df_group_total = report.tables.get("contrib_group_total")
+
+# Inyecta df_brinson si existe y parece válida
+df_brinson_ctx = None
+if isinstance(df_brinson, pl.DataFrame) and {"date", "total"}.issubset(set(df_brinson.columns)):
+    df_brinson_ctx = df_brinson
+
+ctx = build_context(
+    portfolio_name=st.session_state.get("portfolio_name", "Portfolio"),
+    period=(period_start, period_end),
+    df_asset_cum=df_asset_total,
+    df_group_total=df_group_total,
+    df_brinson=df_brinson_ctx,
+    extra_metrics=extra_metrics,
+)
+
+# ---------------------------------------------------------------------
+# Export buttons: HTML + PDF
+# ---------------------------------------------------------------------
+st.subheader("📤 Export")
+
+figures: list[ReportFigure] = [
+    ReportFigure("Equity", report.figures["equity"]),
+    ReportFigure("Drawdown", report.figures["drawdown"]),
+    ReportFigure("Weights", report.figures["weights"]),
+    ReportFigure("Top Contributors", report.figures["top_contrib"]),
+]
+
+# Si hay Brinson, añadimos una figura representativa (cumulative total)
+if df_brinson_ctx is not None:
+    try:
+        br_cum_fig = viz.plot_brinson_cumulative(
+            df_brinson_ctx, title="Brinson–Fachler (Cumulative)"
+        )
+        figures.append(ReportFigure("Brinson (Cumulative)", br_cum_fig))
+    except Exception:
+        pass
+
+# HTML export
+try:
+    html_bytes = render_html(ctx, figures, page_title="GammaEdge Report", h1="Backtest Report")
     st.download_button(
-        "Download Brinson–Fachler results (CSV)",
-        _csv_bytes(df_brinson),
-        file_name="brinson_fachler_cumulative.csv",
-        mime="text/csv",
+        "Download HTML report",
+        data=html_bytes,
+        file_name="backtest_report.html",
+        mime="text/html",
     )
+except Exception as e:
+    st.info(f"HTML export not available: {e}")
+
+# PDF export
+try:
+    pdf_bytes = render_pdf(ctx, figures, title="GammaEdge Report")
+    st.download_button(
+        "Download PDF report",
+        data=pdf_bytes,
+        file_name="backtest_report.pdf",
+        mime="application/pdf",
+    )
+except Exception:
+    st.info("PDF export not available: {e}\nInstall dependencies: plotly[kaleido], reportlab")
+
+# Guardar en disco (reports/)
+save_to_disk = st.checkbox("Save also to ./reports", value=False)
+if save_to_disk:
+    os.makedirs("reports", exist_ok=True)
+    try:
+        html_bytes = render_html(ctx, figures, page_title="GammaEdge Report", h1="Backtest Report")
+        with open("reports/backtest_report.html", "wb") as f:
+            f.write(html_bytes)
+        st.success("HTML saved to reports/backtest_report.html")
+    except Exception as e:
+        st.info(f"Saving HTML failed: {e}")
+    try:
+        pdf_bytes = render_pdf(ctx, figures, title="GammaEdge Report")
+        with open("reports/backtest_report.pdf", "wb") as f:
+            f.write(pdf_bytes)
+        st.success("PDF saved to reports/backtest_report.pdf")
+    except Exception as e:
+        st.info(f"Saving PDF failed: {e}")
