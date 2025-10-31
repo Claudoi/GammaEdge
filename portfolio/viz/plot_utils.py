@@ -43,8 +43,8 @@ try:
     import scipy.cluster.hierarchy as sch  # noqa: F401
     from scipy.spatial.distance import squareform  # noqa: F401
 except Exception:  # pragma: no cover
-    sch = None  # type: ignore[assignment]
-    squareform = None  # type: ignore[assignment]
+    sch = None
+    squareform = None
 
 # ============================================================================
 # Plotly rendering helpers (centralized config, no deprecations)
