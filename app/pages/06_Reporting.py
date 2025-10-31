@@ -142,7 +142,9 @@ extra_metrics = None
 if metrics_df is not None:
     try:
         pdf = metrics_df.to_pandas() if hasattr(metrics_df, "to_pandas") else metrics_df
-        extra_metrics = {str(k): float(v) for k, v in zip(pdf.iloc[:, 0], pdf.iloc[:, 1])}
+        extra_metrics = {
+            str(k): float(v) for k, v in zip(pdf.iloc[:, 0], pdf.iloc[:, 1], strict=False)
+        }
     except Exception:
         extra_metrics = None
 

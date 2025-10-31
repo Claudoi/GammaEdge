@@ -1,13 +1,14 @@
-# portfolio/core/compat.py
 from __future__ import annotations
 
 import datetime as _dt
+from collections.abc import Callable
 from dataclasses import dataclass as _dataclass
-from typing import Any, Callable, cast, dataclass_transform
+from typing import Any, cast
 
 try:
-    from typing import dataclass_transform  # py311+
-except Exception:  # py310 y anteriores
+    # Python 3.11+
+    from typing import dataclass_transform
+except Exception:  # Python 3.10 y anteriores
     from typing_extensions import dataclass_transform
 
 

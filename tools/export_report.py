@@ -79,7 +79,7 @@ def _read_metrics_csv(path: str | None) -> dict[str, float] | None:
     keys = df.get_column(kcol).cast(pl.Utf8, strict=False).to_list()
     vals_any = df.get_column(vcol).to_list()
     out: dict[str, float] = {}
-    for k, v in zip(keys, vals_any):
+    for k, v in zip(keys, vals_any, strict=False):
         try:
             out[str(k)] = float(v)
         except Exception:

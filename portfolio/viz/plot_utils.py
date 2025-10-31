@@ -317,7 +317,7 @@ def corr_dendrogram(
     xlbls: list[str] = dn.get("ivl", labels)
 
     lines: list[go.Scatter] = []
-    for xs, ys in zip(icoord, dcoord):
+    for xs, ys in zip(icoord, dcoord, strict=False):
         lines.append(
             go.Scatter(
                 x=xs,

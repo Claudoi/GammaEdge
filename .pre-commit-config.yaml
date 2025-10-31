@@ -6,14 +6,14 @@ default_stages: [pre-commit, pre-push]
 repos:
   # ---- BLACK (Formatter) ----
   - repo: https://github.com/psf/black
-    rev: 24.10.0
+    rev: 25.9.0
     hooks:
       - id: black
         args: [--line-length=100]
 
   # ---- RUFF (Lint + Auto-fix + Format) ----
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.6.9
+    rev: v0.14.3
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
@@ -21,7 +21,7 @@ repos:
 
   # ---- MYPY (Static Type Checking) ----
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.11.1
+    rev: v1.18.2
     hooks:
       - id: mypy
         additional_dependencies:
@@ -35,7 +35,7 @@ repos:
 
   # ---- NBSTRIPOUT (Clean notebooks automatically) ----
   - repo: https://github.com/kynan/nbstripout
-    rev: 0.7.1
+    rev: 0.8.1
     hooks:
       - id: nbstripout
         files: \.ipynb$

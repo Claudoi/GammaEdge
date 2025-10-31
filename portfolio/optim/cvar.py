@@ -113,7 +113,7 @@ def cvar_minimization(
         b_ub=np.array(b),
         A_eq=A_eq,
         b_eq=b_eq,
-        bounds=list(zip(lb, ub)),
+        bounds=list(zip(lb, ub, strict=False)),
         method="highs",
     )
 

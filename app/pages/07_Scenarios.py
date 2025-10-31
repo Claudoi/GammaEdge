@@ -6,7 +6,8 @@ import inspect
 # --- stdlib ---
 import os
 import sys
-from typing import Any, Callable
+from collections.abc import Callable
+from typing import Any
 
 # --- third-party ---
 import numpy as np
@@ -653,7 +654,9 @@ def _flatten_metrics_row(m: pl.DataFrame | pd.DataFrame) -> dict[str, float]:
                     except Exception:
                         pass
             elif {"metric", "value"}.issubset(set(m.columns)):
-                for k, v in zip(m.get_column("metric").to_list(), m.get_column("value").to_list()):
+                for k, v in zip(
+                    m.get_column("metric").to_list(), m.get_column("value").to_list(), strict=False
+                ):
                     try:
                         fv = float(v)
                         if np.isfinite(fv):

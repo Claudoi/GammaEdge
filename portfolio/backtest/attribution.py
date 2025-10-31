@@ -513,7 +513,7 @@ def build_groups_idx(
         idx = list(range(len(tickers)))
         return idx, labels, group_map_out
 
-    lut = dict(zip(meta_df["ticker"].to_list(), meta_df[col].to_list()))
+    lut = dict(zip(meta_df["ticker"].to_list(), meta_df[col].to_list(), strict=False))
     label_order: list[str] = []
     group_map_out = {}
     for tk in tickers:
