@@ -1,0 +1,7 @@
+name: Run CI manually
+on:
+  workflow_dispatch:
+jobs:
+  ci:
+    uses: ./.github/workflows/ci.yml
+    secrets: inherit
