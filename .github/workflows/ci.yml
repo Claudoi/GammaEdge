@@ -8,18 +8,6 @@ on:
   pull_request:
     branches: [develop, main]
 
-permissions:
-  contents: read
-
-concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  PIP_DISABLE_PIP_VERSION_CHECK: "1"
-  PYTHONUNBUFFERED: "1"
-  POETRY_VERSION: "1.8.3"
-
 jobs:
   # -------- LINT + TYPE CHECK (PR only) --------
   lint:
