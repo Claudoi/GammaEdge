@@ -202,13 +202,13 @@ def export_report(
 
     html_bytes = render_html(ctx, figs, page_title=page_title, h1=h1_title)
     (out_dir_p / "backtest_report.html").write_bytes(html_bytes)
-    print(f"[export_report] HTML written: {out_dir_p/'backtest_report.html'}")
+    print(f"[export_report] HTML written: {out_dir_p / 'backtest_report.html'}")
 
     if not no_pdf:
         try:
             pdf_bytes = render_pdf(ctx, figs, title=page_title)
             (out_dir_p / "backtest_report.pdf").write_bytes(pdf_bytes)
-            print(f"[export_report] PDF written:  {out_dir_p/'backtest_report.pdf'}")
+            print(f"[export_report] PDF written:  {out_dir_p / 'backtest_report.pdf'}")
         except Exception as e:
             print(f"[export_report] PDF export skipped: {e}")
 

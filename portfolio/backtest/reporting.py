@@ -589,7 +589,7 @@ def render_pdf(
     # First page header
     c.setFont("Helvetica-Bold", 16)
     c.drawString(margin, h_page - margin, title)
-    meta = f"Portfolio: {ctx.get('portfolio_name','—')}   Period: {ctx.get('period_start','—')} → {ctx.get('period_end','—')}"
+    meta = f"Portfolio: {ctx.get('portfolio_name', '—')}   Period: {ctx.get('period_start', '—')} → {ctx.get('period_end', '—')}"
     c.setFont("Helvetica", 10)
     c.drawString(margin, h_page - margin - 18, meta)
 
