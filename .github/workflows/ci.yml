@@ -3,6 +3,8 @@ name: CI
 on:
   workflow_dispatch:
   workflow_call:
+  workflow_dispatch:
+  workflow_call:
   push:
     branches: [develop, main, 'feature/**']
   pull_request:
@@ -13,7 +15,7 @@ jobs:
   lint:
     name: Lint & Type Check
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch'
+if: github.event_name == 'push' || github.event_name == 'pull_request' || github.event_name == 'workflow_call' || github.event_name == 'workflow_dispatch'
     steps:
       - uses: actions/checkout@v4
         with:
