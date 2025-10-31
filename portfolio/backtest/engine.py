@@ -74,7 +74,6 @@ def _ensure_wide_prices(df_prices_long: pl.DataFrame) -> pl.DataFrame:
     return _pivot_prices_compat(df_prices_long)
 
 
-
 def _dates_to_rebalance_pandas(dates: pd.DatetimeIndex, freq: RebalanceFreq) -> pd.DatetimeIndex:
     """
     Rebalanceo por última observación de cada período (pandas “D/W/M/Q”).
@@ -85,7 +84,6 @@ def _dates_to_rebalance_pandas(dates: pd.DatetimeIndex, freq: RebalanceFreq) -> 
         ix = ix.insert(0, dates[0])
     # mypy a veces infiere Index; forzamos DatetimeIndex explícito
     return cast(pd.DatetimeIndex, ix.intersection(dates))
-
 
 
 def _rebalance_dates_from_freq_polars(dates: pl.Series, freq: str = "1mo") -> pl.Series:

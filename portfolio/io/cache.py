@@ -38,7 +38,6 @@ PandasParquetCompression = Literal["snappy", "gzip", "brotli", "lz4", "zstd"]
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-
 def _normalize_for_hash(obj: Any) -> Any:
     """
     Convierte objetos no serializables en representaciones estables.
