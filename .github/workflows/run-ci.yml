@@ -2,6 +2,10 @@ name: Run CI manually
 on:
   workflow_dispatch:
 jobs:
-  ci:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo ping-ok
+  call:
     uses: Claudoi/GammaEdge/.github/workflows/ci.yml@main
     secrets: inherit
