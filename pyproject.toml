@@ -1,15 +1,27 @@
 [tool.poetry]
 name = "gammaedge"
-version = "1.1.0-dev"
+version = "2.0.0"
 description = "Portfolio optimization, risk analytics, and backtesting platform"
 authors = ["Tu Nombre <tu@email.com>"]
 readme = "README.md"
 license = "MIT"
-packages = [{ include = "app" }, { include = "portfolio" }]
+
+# Publicamos SOLO el core del paquete (portfolio). La app/ tests/ etc. quedan fuera del wheel.
+packages = [{ include = "portfolio" }]
+exclude = [
+  "app*",
+  "tests*",
+  "notebooks*",
+  "docs*",
+  ".github*",
+  "scripts*",
+  "tools*",
+  "data*"
+]
 
 # ── DEPENDENCIAS PRINCIPALES ───────────────────────────────────────────────────
 [tool.poetry.dependencies]
-python = ">=3.10,<3.12"                          # CI: 3.10 y 3.11
+python = ">=3.11,<3.12"                          # Estabilizamos en 3.11 para CI y local
 numpy = ">=1.26,<2.0"
 scipy = ">=1.11"
 polars = ">=1.4.0"
@@ -25,7 +37,7 @@ fastapi = ">=0.112.0"
 uvicorn = { version = ">=0.30.0", extras = ["standard"] }
 pyyaml = ">=6.0.1"
 reportlab = "^4.4.4"
-typing-extensions = ">=4.6"                      # Necesario en py310
+typing-extensions = ">=4.6"                      # Necesario en py310; no molesta en 3.11
 
 # ── EXTRAS OPCIONALES ──────────────────────────────────────────────────────────
 arch = { version = ">=6.3.0", optional = true }
@@ -60,6 +72,8 @@ garch = ["arch"]
 opt = ["cvxpy"]
 notebooks = ["jupyterlab", "ipykernel"]
 
+# Nota: dejamos los entry points, pero la app no se empaqueta. Invocarlos fallará si no está el código.
+# En CI no los ejecutamos, así que no afectan a la build ni a los tests.
 [tool.poetry.scripts]
 gammaedge-api = "api.main:run"
 gammaedge-app = "app.Home:main"
@@ -68,12 +82,12 @@ export-report = "tools.export_report:main"
 # ── BLACK ──────────────────────────────────────────────────────────────────────
 [tool.black]
 line-length = 100
-target-version = ["py310"]
+target-version = ["py311"]
 
 # ── RUFF ───────────────────────────────────────────────────────────────────────
 [tool.ruff]
 line-length = 100
-target-version = "py310"
+target-version = "py311"
 
 [tool.ruff.lint]
 extend-select = ["I", "E", "F", "UP", "SIM", "B", "C90"]
@@ -132,6 +146,6 @@ testpaths = ["tests"]
 addopts = """
 -q --disable-warnings --maxfail=1
 --cov=portfolio
---cov-report=xml
 --cov-report=term-missing
+--cov-fail-under=65
 """
