@@ -26,9 +26,4 @@ venv/
 .coverage*
 coverage.xml
 htmlcov/
-
-# runtime logs
-logs/
-
-# runtime logs
-logs/
+results/
