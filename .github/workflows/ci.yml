@@ -1,11 +1,11 @@
 name: CI
 
 on:
+  workflow_dispatch:        
   push:
     branches: [develop, main, 'feature/**']
   pull_request:
     branches: [develop, main]
-  workflow_dispatch:
 
 permissions:
   contents: read
