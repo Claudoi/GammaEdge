@@ -25,6 +25,7 @@ fastapi = ">=0.112.0"
 uvicorn = { version = ">=0.30.0", extras = ["standard"] }
 pyyaml = ">=6.0.1"
 reportlab = "^4.4.4"
+typing-extensions = ">=4.6"
 
 # ── EXTRAS OPCIONALES ──────────────────────────────────────────────────────────
 arch = { version = ">=6.3.0", optional = true }
