@@ -872,9 +872,11 @@ def _align_mu_by_names(names_list, mu_obj):
             tk_col = "ticker" if "ticker" in cols else list(mu_obj.columns)[0]
             mu_col = "mu" if "mu" in cols else [c for c in mu_obj.columns if c != tk_col][0]
             mapping = {
-                str(t): float(v) for t, v in zip(mu_obj[tk_col].to_list(), mu_obj[mu_col].to_list())
+                str(t): float(v)
+                for t, v in zip(mu_obj[tk_col].to_list(), mu_obj[mu_col].to_list(), strict=False)
             }
             return _np.array([mapping.get(t, _np.nan) for t in names_list], float)
+
         if isinstance(mu_obj, pl.Series):
             pass
     except Exception:
@@ -887,7 +889,9 @@ def _align_mu_by_names(names_list, mu_obj):
             mu_col = (
                 "mu" if "mu" in mu_obj.columns else [c for c in mu_obj.columns if c != tk_col][0]
             )
-            mapping = dict(zip(mu_obj[tk_col].astype(str), mu_obj[mu_col].astype(float)))
+            mapping = dict(
+                zip(mu_obj[tk_col].astype(str), mu_obj[mu_col].astype(float), strict=False)
+            )
             return _np.array([mapping.get(t, _np.nan) for t in names_list], float)
         if isinstance(mu_obj, pd.Series):
             s = mu_obj.astype(float)

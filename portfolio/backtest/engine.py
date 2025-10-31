@@ -1,7 +1,8 @@
 # portfolio/backtest/engine.py
 from __future__ import annotations
 
-from typing import Callable, Literal, cast
+from collections.abc import Callable
+from typing import Literal, cast
 
 import numpy as np
 import pandas as pd

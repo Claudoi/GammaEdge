@@ -46,7 +46,7 @@ def _safe_metrics_to_dict(metrics_df_obj) -> dict[str, float] | None:
     """Convierte una tabla 2-col a dict Metric->Value; devuelve None si falla."""
     try:
         pdf = metrics_df_obj.to_pandas() if hasattr(metrics_df_obj, "to_pandas") else metrics_df_obj
-        return {str(k): float(v) for k, v in zip(pdf.iloc[:, 0], pdf.iloc[:, 1])}
+        return {str(k): float(v) for k, v in zip(pdf.iloc[:, 0], pdf.iloc[:, 1], strict=False)}
     except Exception:
         return None
 

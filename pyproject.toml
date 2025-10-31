@@ -9,7 +9,7 @@ packages = [{ include = "app" }, { include = "portfolio" }]
 
 # ── DEPENDENCIAS PRINCIPALES ───────────────────────────────────────────────────
 [tool.poetry.dependencies]
-python = ">=3.9,<3.9.7 || >3.9.7,<3.12"
+python = ">=3.10,<3.12"                          # CI: 3.10 y 3.11
 numpy = ">=1.26,<2.0"
 scipy = ">=1.11"
 polars = ">=1.4.0"
@@ -25,7 +25,7 @@ fastapi = ">=0.112.0"
 uvicorn = { version = ">=0.30.0", extras = ["standard"] }
 pyyaml = ">=6.0.1"
 reportlab = "^4.4.4"
-typing-extensions = ">=4.6"
+typing-extensions = ">=4.6"                      # Necesario en py310
 
 # ── EXTRAS OPCIONALES ──────────────────────────────────────────────────────────
 arch = { version = ">=6.3.0", optional = true }
@@ -68,12 +68,12 @@ export-report = "tools.export_report:main"
 # ── BLACK ──────────────────────────────────────────────────────────────────────
 [tool.black]
 line-length = 100
-target-version = ["py39"]
+target-version = ["py310"]
 
 # ── RUFF ───────────────────────────────────────────────────────────────────────
 [tool.ruff]
 line-length = 100
-target-version = "py39"
+target-version = "py310"
 
 [tool.ruff.lint]
 extend-select = ["I", "E", "F", "UP", "SIM", "B", "C90"]
