@@ -181,13 +181,13 @@ PY
 
   # -------- MATRIX BUILD (push only) --------
   matrix-build:
-    name: Matrix (3.10, 3.11, 3.12)
+    name: Matrix (3.10, 3.11)
     runs-on: ubuntu-latest
     if: github.event_name == 'push'
     strategy:
       fail-fast: false
       matrix:
-        python-version: ['3.10', '3.11', '3.12']
+        python-version: ['3.10', '3.11']
     steps:
       - uses: actions/checkout@v4
 

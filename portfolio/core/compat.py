@@ -5,6 +5,11 @@ import datetime as _dt
 from dataclasses import dataclass as _dataclass
 from typing import Any, Callable, cast, dataclass_transform
 
+try:
+    from typing import dataclass_transform  # py311+
+except Exception:  # py310 y anteriores
+    from typing_extensions import dataclass_transform
+
 
 # Decorador compatible con "slots" (los ignora si no existen) y visible para mypy
 @dataclass_transform()
