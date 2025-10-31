@@ -7,8 +7,9 @@ import json
 import os
 import sys
 
-
+import numpy as _np
 import numpy as np
+import numpy.linalg as _la
 import polars as pl
 import streamlit as st
 
@@ -16,6 +17,9 @@ import streamlit as st
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 # Core risk
+from datetime import datetime
+
+from portfolio.core.compat import UTC
 from portfolio.features.risk_models import (
     black_litterman_mu,
     capm_mu,
@@ -37,9 +41,8 @@ from portfolio.viz.plot_utils import (
     network_corr_graph,
     risk_contributions_bar,
     scree_plot,
+    show_plot,
 )
-from datetime import datetime
-from portfolio.core.compat import UTC
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Config & guards
@@ -53,6 +56,7 @@ if "returns_wide" not in st.session_state:
 
 df_ret_wide: pl.DataFrame = st.session_state["returns_wide"]
 
+
 def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
     # 0) Tipo y columna fecha
     if not isinstance(df, pl.DataFrame):
@@ -63,10 +67,7 @@ def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
         st.stop()
 
     # 1) Normaliza fecha + orden + unicidad
-    df = (
-        df.with_columns(pl.col("date").cast(pl.Datetime, strict=False))
-          .sort("date")
-    )
+    df = df.with_columns(pl.col("date").cast(pl.Datetime, strict=False)).sort("date")
     if df["date"].n_unique() < df.height:
         st.warning("Duplicate dates detected — keeping last per timestamp.")
         df = df.unique(subset=["date"], keep="last")
@@ -76,10 +77,12 @@ def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
     df = df.with_columns([pl.col(c).cast(pl.Float64, strict=False).alias(c) for c in value_cols])
 
     # 3) Limpieza de no finitos: ±inf → null
-    df = df.with_columns([
-        pl.when(pl.col(c).is_finite()).then(pl.col(c)).otherwise(None).alias(c)
-        for c in value_cols
-    ])
+    df = df.with_columns(
+        [
+            pl.when(pl.col(c).is_finite()).then(pl.col(c)).otherwise(None).alias(c)
+            for c in value_cols
+        ]
+    )
 
     # 4) Elimina columnas completamente vacías
     null_counts = df.select([pl.col(c).is_null().sum().alias(c) for c in value_cols]).row(0)
@@ -94,7 +97,8 @@ def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
     if value_cols:
         stds = df.select([pl.col(c).std(ddof=1).alias(c) for c in value_cols]).row(0)
         const_cols = [
-            c for c, s in zip(value_cols, stds)  # noqa: B905
+            c
+            for c, s in zip(value_cols, stds)  # noqa: B905
             if (s is None) or (not np.isfinite(s)) or (s <= 1e-14)
         ]
         if const_cols:
@@ -107,6 +111,7 @@ def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
         st.stop()
 
     return df
+
 
 df_ret_wide = _validate_returns_wide(df_ret_wide)
 tickers = [c for c in df_ret_wide.columns if c != "date"]
@@ -137,6 +142,7 @@ def _json_default(o):
         return o.tolist()
     return str(o)
 
+
 def _infer_per_year(dates: pl.Series) -> int:
     s = dates.sort()
     if s.len() < 2:
@@ -146,9 +152,10 @@ def _infer_per_year(dates: pl.Series) -> int:
     if med <= 3.0:
         return 252  # daily
     elif med <= 9.0:
-        return 52   # weekly
+        return 52  # weekly
     else:
-        return 12   # monthly approx
+        return 12  # monthly approx
+
 
 def _apply_fill_policy(df_wide: pl.DataFrame, policy: str):
     """Devuelve df_wide_filled y un reporte de imputación por ticker."""
@@ -156,7 +163,9 @@ def _apply_fill_policy(df_wide: pl.DataFrame, policy: str):
         original_h = df_wide.height
         df_filled = df_wide.drop_nulls()
         dropped = original_h - df_filled.height
-        report = pl.DataFrame({"policy": ["drop"], "rows_dropped": [int(dropped)], "imputed_pct": [0.0]})
+        report = pl.DataFrame(
+            {"policy": ["drop"], "rows_dropped": [int(dropped)], "imputed_pct": [0.0]}
+        )
         return df_filled, report
     else:
         value_cols = [c for c in df_wide.columns if c != "date"]
@@ -171,19 +180,24 @@ def _apply_fill_policy(df_wide: pl.DataFrame, policy: str):
         total_cells = df_wide.height * len(value_cols)
         total_na = int(sum(na_counts.row(0)))
         imputed_pct = (100.0 * total_na / total_cells) if total_cells else 0.0
-        report = pl.DataFrame({"policy": ["mean"], "rows_dropped": [0], "imputed_pct": [imputed_pct]})
+        report = pl.DataFrame(
+            {"policy": ["mean"], "rows_dropped": [0], "imputed_pct": [imputed_pct]}
+        )
         return df_filled, report
+
 
 def _annualize(mu: np.ndarray, Sigma: np.ndarray, per_year: int) -> tuple[np.ndarray, np.ndarray]:
     mu_a = mu * float(per_year)
     Sigma_a = Sigma * float(per_year)
     return mu_a, Sigma_a
 
+
 def _apply_ridge(Sigma: np.ndarray, eps: float) -> np.ndarray:
     if eps <= 0:
         return Sigma
     n = Sigma.shape[0]
     return Sigma + np.eye(n) * float(eps)
+
 
 def _cond_number(S: np.ndarray) -> float:
     if S.size == 0:
@@ -194,9 +208,11 @@ def _cond_number(S: np.ndarray) -> float:
     lam_max = float(np.max(vals)) if vals.size else np.nan
     return float(lam_max / max(lam_min, 1e-16)) if vals.size else np.nan
 
+
 def _fingerprint(names: list[str], params: dict) -> str:
     blob = json.dumps({"tickers": names, "params": params}, sort_keys=True).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:12]
+
 
 def _ewma_default(per_year: int) -> float:
     if per_year >= 250:
@@ -222,7 +238,9 @@ def _build_PQ_absolute(names: list[str], asset: str, q: float) -> tuple[np.ndarr
     return P, Q
 
 
-def _build_PQ_relative(names: list[str], long: str, short: str, q: float) -> tuple[np.ndarray, np.ndarray]:
+def _build_PQ_relative(
+    names: list[str], long: str, short: str, q: float
+) -> tuple[np.ndarray, np.ndarray]:
     """Vista relativa: r_i - r_j = q."""
     N = len(names)
     P = np.zeros((1, N), dtype=float)
@@ -236,7 +254,10 @@ def _build_PQ_relative(names: list[str], long: str, short: str, q: float) -> tup
     Q = np.array([q], dtype=float)
     return P, Q
 
-def _omega_from_confidence(P: np.ndarray, Sigma: np.ndarray, tau: float, confidence: float | list[float]) -> np.ndarray:
+
+def _omega_from_confidence(
+    P: np.ndarray, Sigma: np.ndarray, tau: float, confidence: float | list[float]
+) -> np.ndarray:
     """
     Ω diagonal a partir de P, Σ y tau. Mayor confidence → menor varianza (Ω escala por 1/conf).
     """
@@ -315,7 +336,7 @@ def _risk_pipeline(
             mu_shrink_to=mu_shrink_to_vec,
             cov_method=cov_method,
             ewma_lambda=float(ewma_lambda),
-            fill="none",       # ya hicimos fill
+            fill="none",  # ya hicimos fill
             annualize=False,
             psd=enforce_psd,
         )
@@ -342,24 +363,32 @@ def _risk_pipeline(
     lam_min = float(np.min(eigvals)) if eigvals.size else np.nan
     lam_max = float(np.max(eigvals)) if eigvals.size else np.nan
     cond_post = float(lam_max / max(lam_min, 1e-16)) if eigvals.size else np.nan
-    eff_rank = float((eigvals.sum() ** 2) / np.sum(eigvals ** 2)) if eigvals.size else np.nan
+    eff_rank = float((eigvals.sum() ** 2) / np.sum(eigvals**2)) if eigvals.size else np.nan
 
     params = {
-        "mu_method": mu_method, "mu_span": int(mu_span),
+        "mu_method": mu_method,
+        "mu_span": int(mu_span),
         "mu_shrink_target": mu_shrink_target,
         "mu_rf_annual": float(mu_rf_annual or 0.0),
-        "cov_method": cov_method, "ewma_lambda": float(ewma_lambda),
-        "n_factors": int(n_factors), "fill_policy": fill_policy,
-        "per_year": int(per_year), "enforce_psd": bool(enforce_psd),
-        "ridge_eps": float(ridge_eps), "stress_test": bool(stress_test),
-        "heatmap_method": heatmap_method, "heatmap_optimal": bool(heatmap_optimal),
+        "cov_method": cov_method,
+        "ewma_lambda": float(ewma_lambda),
+        "n_factors": int(n_factors),
+        "fill_policy": fill_policy,
+        "per_year": int(per_year),
+        "enforce_psd": bool(enforce_psd),
+        "ridge_eps": float(ridge_eps),
+        "stress_test": bool(stress_test),
+        "heatmap_method": heatmap_method,
+        "heatmap_optimal": bool(heatmap_optimal),
     }
     meta = {
         "generated_at_utc": datetime.now(UTC).isoformat(),
         "params": params,
         "diagnostics": {
-            "lambda_min": lam_min, "lambda_max": lam_max,
-            "cond_kappa_pre": cond_pre, "cond_kappa_post": cond_post,
+            "lambda_min": lam_min,
+            "lambda_max": lam_max,
+            "cond_kappa_pre": cond_pre,
+            "cond_kappa_post": cond_post,
             "effective_rank": eff_rank,
         },
         "tickers": names,
@@ -399,8 +428,12 @@ with c1:
     mu_span = st.number_input("EMA span (if μ=ema)", min_value=5, max_value=360, value=60, step=5)
 with c2:
     cov_method = st.selectbox("Covariance (Σ)", ["sample", "oas", "lw", "ewma", "pca"], index=0)
-    ewma_lambda = st.slider("EWMA λ", min_value=0.80, max_value=0.995, value=float(ewma_default), step=0.005)
-    n_factors = st.slider("PCA factors (if Σ=pca)", min_value=1, max_value=len(tickers), value=min(5, len(tickers)))
+    ewma_lambda = st.slider(
+        "EWMA λ", min_value=0.80, max_value=0.995, value=float(ewma_default), step=0.005
+    )
+    n_factors = st.slider(
+        "PCA factors (if Σ=pca)", min_value=1, max_value=len(tickers), value=min(5, len(tickers))
+    )
 with c3:
     fill_policy = st.selectbox("NaN policy", ["drop", "mean"], index=0)
     enforce_psd = st.checkbox("Enforce PSD (clip eigenvalues)", value=True)
@@ -414,26 +447,42 @@ if mu_method == "shrunk":
     with _tcol1:
         mu_shrink_target = st.selectbox("Target", ["zero", "equal", "rf"], index=0)
     with _tcol2:
-        mu_rf_annual = st.number_input("Risk-free (annual, in return units)", min_value=-1.0, max_value=1.0,
-                                       value=0.0, step=0.001, format="%.3f")
+        mu_rf_annual = st.number_input(
+            "Risk-free (annual, in return units)",
+            min_value=-1.0,
+            max_value=1.0,
+            value=0.0,
+            step=0.001,
+            format="%.3f",
+        )
 
 c4, c5, c6 = st.columns(3)
 with c4:
     per_year = st.selectbox(
         "Annualization: periods/year",
         [252, 260, 52, 12],
-        index=[252, 260, 52, 12].index(default_per_year if default_per_year in (252, 260, 52, 12) else 252),
+        index=[252, 260, 52, 12].index(
+            default_per_year if default_per_year in (252, 260, 52, 12) else 252
+        ),
     )
 with c5:
-    ridge_eps = st.number_input("Ridge ε on Σ (0 = off)", min_value=0.0, max_value=1.0, value=0.0,
-                                step=0.0001, format="%.4f")
+    ridge_eps = st.number_input(
+        "Ridge ε on Σ (0 = off)",
+        min_value=0.0,
+        max_value=1.0,
+        value=0.0,
+        step=0.0001,
+        format="%.4f",
+    )
 with c6:
     stress_test = st.checkbox("Enable Stress Testing (+20% vol, -50% corr)", value=False)
 
 # Orden del heatmap y WebGL
 h1, h2, h3 = st.columns(3)
 with h1:
-    heatmap_method = st.selectbox("Heatmap linkage", ["single", "complete", "average", "ward"], index=2)
+    heatmap_method = st.selectbox(
+        "Heatmap linkage", ["single", "complete", "average", "ward"], index=2
+    )
 with h2:
     heatmap_optimal = st.checkbox("Optimal leaf ordering", value=True)
 with h3:
@@ -476,7 +525,7 @@ if st.session_state.get("risk_ready"):
 
     # Fill policy report
     st.subheader("NaN Policy Report")
-    st.dataframe(fill_report.to_pandas(), use_container_width=True)
+    st.dataframe(fill_report.to_pandas(), width="stretch")
 
     # Diagnostics
     st.subheader("Diagnostics")
@@ -492,39 +541,59 @@ if st.session_state.get("risk_ready"):
     # μ
     st.subheader("Expected returns (μ, annualized)")
     mu_df = pl.DataFrame({"ticker": names, "mu": mu}).sort("mu", descending=True)
-    st.dataframe(mu_df.to_pandas().round(6), use_container_width=True)
+    st.dataframe(mu_df.to_pandas().round(6), width="stretch")
 
     # Σ/ρ visualizations
     st.subheader("Correlation heatmap (clustered)")
-    order_cfg = HeatmapOrder(clustered=True, method=meta["params"]["heatmap_method"],
-                             optimal=bool(meta["params"]["heatmap_optimal"]))
-    if len(names) > 200:
-        st.plotly_chart(corr_heatmap_gl(Sigma, labels=names, is_cov=True, order=order_cfg), use_container_width=True)
-    else:
-        st.plotly_chart(corr_heatmap(Sigma, labels=names, is_cov=True, order=order_cfg), use_container_width=True)
+    order_cfg = HeatmapOrder(
+        clustered=True,
+        method=meta["params"]["heatmap_method"],
+        optimal=bool(meta["params"]["heatmap_optimal"]),
+    )
 
+    # Heatmap (keys distintos según GL vs normal)
+    if len(names) > 200:
+        show_plot(
+            corr_heatmap_gl(Sigma, labels=names, is_cov=True, order=order_cfg),
+            key="risk-heatmap-gl",
+        )
+    else:
+        show_plot(
+            corr_heatmap(Sigma, labels=names, is_cov=True, order=order_cfg),
+            key="risk-heatmap",
+        )
+
+    # Dendrogram
     if show_dendro:
         st.subheader("Correlation dendrogram")
-        st.plotly_chart(corr_dendrogram(Sigma, labels=names, is_cov=True,
-                                        method=meta["params"]["heatmap_method"]), use_container_width=True)
+        show_plot(
+            corr_dendrogram(
+                Sigma, labels=names, is_cov=True, method=meta["params"]["heatmap_method"]
+            ),
+            key="risk-dendrogram",
+        )
 
+    # Covariance spectrum
     st.subheader("Covariance spectrum")
-    st.plotly_chart(covariance_spectrum(Sigma), use_container_width=True)
+    show_plot(covariance_spectrum(Sigma), key="risk-cov-spectrum")
 
+    # Scree Plot
     st.subheader("Scree Plot (explained variance)")
-    st.plotly_chart(scree_plot(eigvals), use_container_width=True)
+    show_plot(scree_plot(eigvals), key="risk-scree")
 
+    # Correlation Network
     st.subheader("Correlation Network Graph")
-    st.plotly_chart(network_corr_graph(Sigma, names), use_container_width=True)
+    show_plot(network_corr_graph(Sigma, names), key="risk-netgraph")
 
     # Risk contributions (benchmark equal-weight)
     st.subheader("Risk Contributions (Equal-Weight Benchmark)")
     if len(names) > 0:
         w_eq = np.full(len(names), 1.0 / len(names))
-        rc = w_eq * (Sigma @ w_eq)  # contribución absoluta
-        st.plotly_chart(risk_contributions_bar(rc, names, sort=True, topn=min(30, len(names))),
-                        use_container_width=True)
-
+        rc = w_eq * (Sigma @ w_eq)
+        show_plot(
+            risk_contributions_bar(rc, names, sort=True, topn=min(30, len(names))),
+            key="risk-rc-ew",
+        )
     # ──────────────────────────────────────────────────────────────────────────
     # Black–Litterman (Views) – esqueleto operativo
     # ──────────────────────────────────────────────────────────────────────────
@@ -532,45 +601,67 @@ if st.session_state.get("risk_ready"):
         st.caption("Construye vistas absolutas o relativas; ajusta Ω desde 'confidence'.")
         col_bl1, col_bl2, col_bl3 = st.columns(3)
         with col_bl1:
-            bl_tau = st.number_input("τ (tau)", min_value=0.0001, max_value=1.0, value=0.05, step=0.01, format="%.4f")
+            bl_tau = st.number_input(
+                "τ (tau)", min_value=0.0001, max_value=1.0, value=0.05, step=0.01, format="%.4f"
+            )
         with col_bl2:
             bl_conf_mode = st.selectbox("Confidence mode", ["scalar", "per-view"], index=0)
         with col_bl3:
-            bl_conf_scalar = st.slider("Confidence (scalar)", min_value=0.05, max_value=1.0, value=0.5, step=0.05)
+            bl_conf_scalar = st.slider(
+                "Confidence (scalar)", min_value=0.05, max_value=1.0, value=0.5, step=0.05
+            )
 
         if "bl_views" not in st.session_state:
-            st.session_state["bl_views"] = []   # lista de dicts: {"kind":"abs"/"rel", ...}
+            st.session_state["bl_views"] = []  # lista de dicts: {"kind":"abs"/"rel", ...}
 
         st.markdown("**Añadir vista**")
         kind = st.radio("Tipo", ["absolute", "relative"], horizontal=True)
         if kind == "absolute":
-            ca1, ca2 = st.columns([2,1])
+            ca1, ca2 = st.columns([2, 1])
             with ca1:
                 a_asset = st.selectbox("Asset", names, index=0, key="bl_abs_asset")
             with ca2:
-                a_q = st.number_input("q (target return, per-period)", value=0.001, step=0.001, format="%.4f", key="bl_abs_q")
+                a_q = st.number_input(
+                    "q (target return, per-period)",
+                    value=0.001,
+                    step=0.001,
+                    format="%.4f",
+                    key="bl_abs_q",
+                )
             a_conf = st.slider("Confidence (this view)", 0.05, 1.0, 0.5, 0.05, key="bl_abs_conf")
             if st.button("➕ Add absolute view"):
-                st.session_state["bl_views"].append({"kind":"absolute","asset":a_asset,"q":float(a_q),"conf":float(a_conf)})
+                st.session_state["bl_views"].append(
+                    {"kind": "absolute", "asset": a_asset, "q": float(a_q), "conf": float(a_conf)}
+                )
         else:
-            cr1, cr2, cr3 = st.columns([2,2,1])
+            cr1, cr2, cr3 = st.columns([2, 2, 1])
             with cr1:
                 long_a = st.selectbox("Long asset", names, index=0, key="bl_rel_long")
             with cr2:
                 short_a = st.selectbox("Short asset", names, index=1, key="bl_rel_short")
             with cr3:
-                r_q = st.number_input("q (r_i - r_j)", value=0.0, step=0.001, format="%.4f", key="bl_rel_q")
+                r_q = st.number_input(
+                    "q (r_i - r_j)", value=0.0, step=0.001, format="%.4f", key="bl_rel_q"
+                )
             r_conf = st.slider("Confidence (this view)", 0.05, 1.0, 0.5, 0.05, key="bl_rel_conf")
             if st.button("➕ Add relative view"):
                 if long_a == short_a:
                     st.warning("Long y Short no pueden ser el mismo activo.")
                 else:
-                    st.session_state["bl_views"].append({"kind":"relative","long":long_a,"short":short_a,"q":float(r_q),"conf":float(r_conf)})
+                    st.session_state["bl_views"].append(
+                        {
+                            "kind": "relative",
+                            "long": long_a,
+                            "short": short_a,
+                            "q": float(r_q),
+                            "conf": float(r_conf),
+                        }
+                    )
 
         # Tabla de vistas
         if st.session_state["bl_views"]:
             st.write("**Vistas actuales**")
-            st.dataframe(pl.DataFrame(st.session_state["bl_views"]).to_pandas(), use_container_width=True)
+            st.dataframe(pl.DataFrame(st.session_state["bl_views"]).to_pandas(), width="stretch")
             if st.button("🗑️ Clear views"):
                 st.session_state["bl_views"] = []
 
@@ -582,9 +673,11 @@ if st.session_state.get("risk_ready"):
                     P, Q = _build_PQ_absolute(names, v["asset"], v["q"])
                 else:
                     P, Q = _build_PQ_relative(names, v["long"], v["short"], v["q"])
-                P_list.append(P); Q_list.append(Q); conf_list.append(v["conf"])
-            P = np.vstack(P_list)                   # (K,N)
-            Q = np.concatenate(Q_list)              # (K,)
+                P_list.append(P)
+                Q_list.append(Q)
+                conf_list.append(v["conf"])
+            P = np.vstack(P_list)  # (K,N)
+            Q = np.concatenate(Q_list)  # (K,)
             per_y = int(meta["params"]["per_year"])
 
             # Llevar Σ, μ a per-period para coherencia BL
@@ -592,9 +685,11 @@ if st.session_state.get("risk_ready"):
             mu_prior_per = mu_prior / max(per_y, 1)
             Sigma_per = Sigma / max(per_y, 1)
 
-            Omega = (_omega_from_confidence(P, Sigma_per, bl_tau, bl_conf_scalar)
-                     if bl_conf_mode == "scalar"
-                     else _omega_from_confidence(P, Sigma_per, bl_tau, conf_list))
+            Omega = (
+                _omega_from_confidence(P, Sigma_per, bl_tau, bl_conf_scalar)
+                if bl_conf_mode == "scalar"
+                else _omega_from_confidence(P, Sigma_per, bl_tau, conf_list)
+            )
 
             inv_term = np.linalg.inv(P @ (bl_tau * Sigma_per) @ P.T + Omega)
             middle = (bl_tau * Sigma_per) @ P.T @ inv_term
@@ -602,21 +697,25 @@ if st.session_state.get("risk_ready"):
             mu_post = mu_post_per * float(per_y)
 
             st.subheader("μ prior vs μ posterior (annualized)")
-            mu_tbl = pl.DataFrame({
-                "ticker": names,
-                "mu_prior": mu_prior,
-                "mu_post": mu_post,
-                "delta": mu_post - mu_prior
-            }).sort("delta", descending=True)
-            st.dataframe(mu_tbl.to_pandas().round(6), use_container_width=True)
+            mu_tbl = pl.DataFrame(
+                {
+                    "ticker": names,
+                    "mu_prior": mu_prior,
+                    "mu_post": mu_post,
+                    "delta": mu_post - mu_prior,
+                }
+            ).sort("delta", descending=True)
+            st.dataframe(mu_tbl.to_pandas().round(6), width="stretch")
 
             use_bl_for_optimizer = st.toggle("Use BL posterior μ for Optimizer", value=False)
             if use_bl_for_optimizer:
                 st.session_state["mu_vec"] = mu_post  # Handoff con μ posterior
                 # peguemos meta mínimo de BL
                 meta_bl = dict(meta)
-                meta_bl = {**meta_bl, "bl": {"tau": float(bl_tau), "K": int(P.shape[0]),
-                                             "conf_mode": bl_conf_mode}}
+                meta_bl = {
+                    **meta_bl,
+                    "bl": {"tau": float(bl_tau), "K": int(P.shape[0]), "conf_mode": bl_conf_mode},
+                }
                 st.session_state["risk_meta"] = meta_bl
                 st.success("Using Black–Litterman posterior μ for Optimizer handoff.")
 
@@ -626,17 +725,18 @@ if st.session_state.get("risk_ready"):
 # ──────────────────────────────────────────────────────────────────────────
 
 # Ensure we have 'names' (tickers) and 'df_ret_wide' in scope
-try:
-    names  # noqa: F821
-except NameError:
+# Ensure we have 'names' (tickers) and 'df_ret_wide' in scope
+names = locals().get("names")
+if not names:
     names = st.session_state.get("asset_names") or []
     if not names:
-        try:
-            _dfw = st.session_state.get("returns_wide", None)
-            if _dfw is not None:
-                names = [c for c in _dfw.columns if c != "date"]
-        except Exception:
-            names = []
+        dfw = st.session_state.get("returns_wide")
+        names = [c for c in dfw.columns if c != "date"] if dfw is not None else []
+
+# idem para df_ret_wide y Sigma si usabas try/except:
+df_ret_wide = locals().get("df_ret_wide", st.session_state.get("returns_wide"))
+Sigma = locals().get("Sigma", st.session_state.get("cov_mat"))
+
 # If still missing, derive generic tickers from Sigma
 if not names:
     try:
@@ -647,7 +747,7 @@ if not names:
 
 # Ensure we have df_ret_wide for fallback μ/cov estimates
 try:
-    df_ret_wide  # noqa: F821
+    df_ret_wide = locals().get("df_ret_wide", st.session_state.get("returns_wide"))
 except NameError:
     df_ret_wide = st.session_state.get("returns_wide", None)
 
@@ -655,11 +755,12 @@ except NameError:
 # ---------- Fallback helpers ----------
 def _fallback_mu_from_returns(df_ret_wide_obj, names_list):
     """Mean return per asset (NaN-safe). Returns np.ndarray."""
-    import numpy as _np
+
     if df_ret_wide_obj is None or not names_list:
         return _np.full(len(names_list), _np.nan, float)
     try:
         import polars as pl  # type: ignore
+
         if isinstance(df_ret_wide_obj, pl.DataFrame):
             R = df_ret_wide_obj.select(names_list).to_numpy()
         else:
@@ -671,11 +772,12 @@ def _fallback_mu_from_returns(df_ret_wide_obj, names_list):
 
 def _fallback_cov_from_returns(df_ret_wide_obj, names_list):
     """NaN-safe sample covariance from returns. Returns (N,N) array (or tiny I if needed)."""
-    import numpy as _np
+
     if df_ret_wide_obj is None or not names_list:
         return _np.array([[]], dtype=float)[:0, :0]
     try:
         import polars as pl  # type: ignore
+
         if isinstance(df_ret_wide_obj, pl.DataFrame):
             R = df_ret_wide_obj.select(names_list).to_numpy()
         else:
@@ -689,8 +791,8 @@ def _fallback_cov_from_returns(df_ret_wide_obj, names_list):
     C = _np.cov(R, rowvar=False)
     C = _np.nan_to_num(C, nan=0.0, posinf=0.0, neginf=0.0)
     C = 0.5 * (C + C.T)  # symmetrize
+
     try:
-        import numpy.linalg as _la
         eigmin = _np.min(_la.eigvalsh(C))
         if eigmin < 1e-12:
             C = C + _np.eye(C.shape[0]) * (1e-12 - eigmin + 1e-12)
@@ -712,7 +814,7 @@ except Exception:
 
 # ---------- Ensure Sigma (covariance) is defined ----------
 try:
-    Sigma  # noqa: F821
+    Sigma = locals().get("Sigma", None)
 except NameError:
     Sigma = None
 
@@ -761,14 +863,17 @@ def _align_mu_by_names(names_list, mu_obj):
     - Labeled Polars/Pandas → match by ticker.
     - Raw array/list → pad/truncate to len(names_list).
     """
-    import numpy as _np
+
     try:
         import polars as pl  # type: ignore
+
         if isinstance(mu_obj, pl.DataFrame):
             cols = set(mu_obj.columns)
             tk_col = "ticker" if "ticker" in cols else list(mu_obj.columns)[0]
             mu_col = "mu" if "mu" in cols else [c for c in mu_obj.columns if c != tk_col][0]
-            mapping = {str(t): float(v) for t, v in zip(mu_obj[tk_col].to_list(), mu_obj[mu_col].to_list())}
+            mapping = {
+                str(t): float(v) for t, v in zip(mu_obj[tk_col].to_list(), mu_obj[mu_col].to_list())
+            }
             return _np.array([mapping.get(t, _np.nan) for t in names_list], float)
         if isinstance(mu_obj, pl.Series):
             pass
@@ -776,9 +881,12 @@ def _align_mu_by_names(names_list, mu_obj):
         pass
     try:
         import pandas as pd  # type: ignore
+
         if isinstance(mu_obj, pd.DataFrame):
             tk_col = "ticker" if "ticker" in mu_obj.columns else mu_obj.columns[0]
-            mu_col = "mu" if "mu" in mu_obj.columns else [c for c in mu_obj.columns if c != tk_col][0]
+            mu_col = (
+                "mu" if "mu" in mu_obj.columns else [c for c in mu_obj.columns if c != tk_col][0]
+            )
             mapping = dict(zip(mu_obj[tk_col].astype(str), mu_obj[mu_col].astype(float)))
             return _np.array([mapping.get(t, _np.nan) for t in names_list], float)
         if isinstance(mu_obj, pd.Series):
@@ -808,11 +916,13 @@ def _safe_float(x, default):
     except Exception:
         return float(default)
 
+
 def _safe_bool(x, default):
     try:
         return bool(x)
     except Exception:
         return bool(default)
+
 
 meta = st.session_state.get("risk_meta", None)
 if meta is None or not isinstance(meta, dict) or "params" not in meta:
@@ -863,11 +973,12 @@ st.session_state["risk_timestamp"] = datetime.now(UTC).isoformat()
 
 
 # ---------- Diagnostics: condition number & eigenvalues (safe) ----------
-import numpy.linalg as _la
+
+
 try:
     if Sigma is None or getattr(Sigma, "size", 0) == 0:
-        eigvals = np.array([], dtype=float)
-        cond_post = np.inf
+        eigvals = _np.array([], dtype=float)
+        cond_post = _np.inf
     else:
         Sigma_np = np.asarray(Sigma, dtype=float)
         Sigma_np = 0.5 * (Sigma_np + Sigma_np.T)
@@ -915,19 +1026,24 @@ with colw:
         cols_csv = names
     buf_cov_csv = io.StringIO()
     pl.DataFrame(Sigma_csv, schema=cols_csv).write_csv(buf_cov_csv)
-    st.download_button("Download Σ (CSV wide)", buf_cov_csv.getvalue(), file_name="covariance.csv", mime="text/csv")
+    st.download_button(
+        "Download Σ (CSV wide)", buf_cov_csv.getvalue(), file_name="covariance.csv", mime="text/csv"
+    )
 
 # JSON metadata export
 with colm:
     meta_blob = json.dumps(
         {**meta, "exported_at_utc": datetime.now(UTC).isoformat()},
-        ensure_ascii=False, indent=2, sort_keys=True, default=_json_default
+        ensure_ascii=False,
+        indent=2,
+        sort_keys=True,
+        default=_json_default,
     )
     st.download_button(
         f"Download risk_model_{meta['fingerprint']}.json",
         meta_blob.encode("utf-8"),
         file_name=f"risk_model_{meta['fingerprint']}.json",
-        mime="application/json"
+        mime="application/json",
     )
 
 # Diagnostic warnings for matrix conditioning

@@ -41,7 +41,10 @@ def build_onehot_exposure(
         F = len(cats_sorted)
         M = np.zeros((F, N), dtype=float)
         # mapa por ticker
-        m = {row["ticker"].upper(): str(row[c]).upper() if row[c] is not None else None for row in df.to_dicts()}
+        m = {
+            row["ticker"].upper(): str(row[c]).upper() if row[c] is not None else None
+            for row in df.to_dicts()
+        }
         for j, t in enumerate(names_upper):
             v = m.get(t)
             if v is None:

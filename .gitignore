@@ -18,3 +18,14 @@ data/cache/
 venv/
 .logs/
 *.log
+.coverage
+.coverageger
+.htmlcov/
+
+# Coverage artifacts
+.coverage*
+coverage.xml
+htmlcov/
+
+# runtime logs
+logs/

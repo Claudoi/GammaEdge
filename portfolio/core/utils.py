@@ -29,7 +29,8 @@ def ensure_psd(S: np.ndarray, eps: float = 1e-10, clip: bool = True) -> np.ndarr
         S = (V * w) @ V.T
 
     # Re-simetriza por seguridad
-    return 0.5 * (S + S.T)
+    S_out: np.ndarray = np.asarray(0.5 * (S + S.T), dtype=float)
+    return S_out
 
 
 def cond_number(S: np.ndarray) -> float:
@@ -136,7 +137,9 @@ def clean_returns_matrix(returns_wide: pl.DataFrame) -> pl.DataFrame:
         n_null = df.select(pl.col(c).is_null().sum()).item()
         if n_null < df.height:
             keep.append(c)
-    df = df.select([c for c in keep if c in returns_wide.columns] + ([] if "date" not in df.columns else []))
+    df = df.select(
+        [c for c in keep if c in returns_wide.columns] + ([] if "date" not in df.columns else [])
+    )
 
     # Filtro filas con finitos en todas las series numéricas
     numeric_cols = [c for c in df.columns if c != "date"]

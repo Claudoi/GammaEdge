@@ -1,0 +1,28 @@
+# .coveragerc
+[run]
+branch = True
+source =
+    portfolio
+
+omit =
+    # módulos aún no integrados o de bajo valor de cobertura actual
+    portfolio/optim/*
+    portfolio/io/*
+    portfolio/features/*
+    portfolio/core/logger.py
+    portfolio/core/metrics.py
+    portfolio/core/opt_helpers.py
+    portfolio/backtest/engine.py
+    portfolio/backtest/scenarios.py
+
+[report]
+exclude_lines =
+    pragma: no cover
+    if TYPE_CHECKING:
+    if __name__ == "__main__":
+    raise NotImplementedError
+    except ImportError:
+fail_under = 60
+show_missing = True
+precision = 2
+skip_covered = True

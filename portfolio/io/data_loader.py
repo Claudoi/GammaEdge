@@ -11,6 +11,7 @@ import polars as pl
 import yfinance as yf
 
 from portfolio.core.compat import dataclass_compat as dataclass
+
 from .cache import load_df, save_df
 
 logger = logging.getLogger(__name__)
@@ -36,20 +37,11 @@ class PriceLoadConfig:
             "schema": self.schema_version,
         }
 
-    def cache_key(self) -> dict[str, Any]:
-        # clave determinista para cache
-        return {
-            "tickers": ",".join(self.tickers),
-            "start": self.start,
-            "end": self.end,
-            "interval": self.interval,
-            "adjust": self.adjust,
-            "schema": self.schema_version,
-        }
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers internos
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def _normalize_tickers(tickers: Iterable[str]) -> tuple[str, ...]:
     tks = tuple(sorted({str(t).strip().upper() for t in tickers if str(t).strip()}))
@@ -58,7 +50,9 @@ def _normalize_tickers(tickers: Iterable[str]) -> tuple[str, ...]:
     return tks
 
 
-def _to_polars_long_from_pandas_close(df_close: pd.DataFrame) -> pl.DataFrame:
+def _to_polars_long_from_pandas_close(
+    df_close: pd.DataFrame | pd.Series,
+) -> pl.DataFrame:
     """
     Espera un DataFrame de pandas con columnas = tickers y una columna temporal 'Date' en el índice
     o ya reseteada como 'date'. Devuelve Polars largo: [date, ticker, price].
@@ -83,14 +77,18 @@ def _to_polars_long_from_pandas_close(df_close: pd.DataFrame) -> pl.DataFrame:
     # melt → largo
     value_cols = [c for c in pl_df.columns if c != "date"]
     df_long = (
-        pl_df.melt(id_vars=["date"], value_vars=value_cols, variable_name="ticker", value_name="price")
-             .drop_nulls()
-             .with_columns([
-                 pl.col("date").cast(pl.Datetime),
-                 pl.col("ticker").cast(pl.Utf8),
-                 pl.col("price").cast(pl.Float64),
-             ])
-             .sort(["ticker", "date"])
+        pl_df.melt(
+            id_vars=["date"], value_vars=value_cols, variable_name="ticker", value_name="price"
+        )
+        .drop_nulls()
+        .with_columns(
+            [
+                pl.col("date").cast(pl.Datetime),
+                pl.col("ticker").cast(pl.Utf8),
+                pl.col("price").cast(pl.Float64),
+            ]
+        )
+        .sort(["ticker", "date"])
     )
     return df_long
 
@@ -118,28 +116,34 @@ def _fetch_yfinance_close(
         progress=False,
     )
 
+    # Asegura DataFrame (yfinance puede devolver Series en algunos casos)
+    if isinstance(df, pd.Series):
+        df = df.to_frame()
+
     # Casos:
     # 1) Múltiples tickers → df["Close"] es DataFrame columnas=tickers
-    # 2) Un solo ticker   → df["Close"] es Series; convertimos a DataFrame
+    # 2) Un solo ticker    → df["Close"] es Series; convertimos a DataFrame
     # 3) A veces ya no hay "Close": si el slicing falla, intentamos localizarlo
     try:
-        close = df["Close"]
-        if isinstance(close, pd.Series):
-            # Nombre de la serie puede ser 'Close'; necesitamos el ticker real
-            # Si es un ticker único, podemos usar tickers[0]
-            close = close.to_frame(name=tickers[0])
+        close_obj = df["Close"]
+        if isinstance(close_obj, pd.Series):
+            close_df = close_obj.to_frame(name=tickers[0])
+        else:
+            close_df = close_obj  # ya es DataFrame
     except Exception:  # pragma: no cover
         # fallback robusto: buscar columnas que terminen en 'Close'
         if isinstance(df.columns, pd.MultiIndex):
-            close = df.xs("Close", axis=1, level=-1, drop_level=True)
+            close_df = df.xs("Close", axis=1, level=-1, drop_level=True)
+            if isinstance(close_df, pd.Series):
+                close_df = close_df.to_frame(name=tickers[0])
         else:
             # último recurso: si ya viene en forma simple, asumimos que son cierres
-            close = df
+            close_df = df if isinstance(df, pd.DataFrame) else df.to_frame()
 
     # Limpieza básica
-    close = close.dropna(how="all")
-    close.index.name = "Date"
-    return close.reset_index()
+    close_df = close_df.dropna(how="all")
+    close_df.index.name = "Date"
+    return close_df.reset_index()
 
 
 def _validate_long_prices(df_long: pl.DataFrame) -> None:
@@ -157,12 +161,8 @@ def _validate_long_prices(df_long: pl.DataFrame) -> None:
     # Monotonicidad de fechas por ticker
     sample = (
         df_long.sort(["ticker", "date"])
-               .group_by("ticker")
-               .agg(
-                   (pl.col("date").diff().dt.total_milliseconds() < 0)
-                   .sum()
-                   .alias("backwards_steps")
-               )
+        .group_by("ticker")
+        .agg((pl.col("date").diff().dt.total_milliseconds() < 0).sum().alias("backwards_steps"))
     )
     backwards_total = int(sample["backwards_steps"].sum())
     if backwards_total > 0:
@@ -178,6 +178,7 @@ def _validate_long_prices(df_long: pl.DataFrame) -> None:
 # API pública
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def get_prices_long(
     tickers: Iterable[str],
     start: str,
@@ -190,26 +191,6 @@ def get_prices_long(
 ) -> pl.DataFrame:
     """
     Carga precios de cierre ajustados y devuelve un DataFrame **Polars** en formato largo.
-
-    Parameters
-    ----------
-    tickers : Iterable[str]
-        Lista/iterable de símbolos (se normalizan a mayúsculas y se deduplican).
-    start, end : str
-        Fechas (YYYY-MM-DD o ISO). Se pasan tal cual a yfinance.
-    interval : str
-        '1d', '1wk', '1mo', etc.
-    adjust : bool
-        Usa precios ajustados (dividendos/splits). Recomendado True.
-    force_refresh : bool
-        Ignora caché y re-descarga.
-    use_cache : bool
-        Usa caché (load_df/save_df) con clave determinista.
-
-    Returns
-    -------
-    pl.DataFrame
-        Columnas: ['date' (Datetime), 'ticker' (Utf8), 'price' (Float64)]
     """
     t0 = time.perf_counter()
     tks = _normalize_tickers(tickers)
@@ -236,8 +217,7 @@ def get_prices_long(
     raw_close_pd = _fetch_yfinance_close(tks, cfg.start, cfg.end, cfg.interval, cfg.adjust)
     df_long = _to_polars_long_from_pandas_close(raw_close_pd)
 
-    # Validación y limpieza final
-    # (elimina duplicados exactos si existieran)
+    # Validación y limpieza final (elimina duplicados exactos si existieran)
     df_long = df_long.unique(subset=["date", "ticker"], keep="last")
     _validate_long_prices(df_long)
 
@@ -265,20 +245,7 @@ def get_prices_wide(
 ) -> pl.DataFrame | pd.DataFrame:
     """
     Igual que `get_prices_long` pero devuelve una matriz **ancha** (columnas por ticker).
-
-    Returns
-    -------
-    pl.DataFrame | pd.DataFrame
-        Si `as_pandas=True`, devuelve pandas (ancho) para compatibilidad con librerías legacy.
-        Por defecto devuelve Polars (ancho) con columnas: ['date', T1, T2, ...]
     """
-    """cfg = {
-        "interval": interval,
-        "adjust": adjust,
-        "force_refresh": force_refresh,
-        "use_cache": use_cache,
-    }"""
-    
     df_long = get_prices_long(
         tickers=tickers,
         start=start,

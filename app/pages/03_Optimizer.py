@@ -47,11 +47,23 @@ from portfolio.viz.plot_utils import (
     efficient_frontier,
     equity_and_drawdown,
     risk_contributions_bar,
+    show_plot,
     te_frontier,
     turnover_vs_gamma,
     weights_bar,
     weights_path_gammas,
 )
+
+
+def _opt_key(tag: str) -> str:
+    """
+    Genera claves únicas y legibles para todos los plots de la página Optimizer.
+    Evita StreamlitDuplicateElementId al re-renderizar.
+    """
+    st.session_state.setdefault("_opt_key_seq", 0)
+    st.session_state["_opt_key_seq"] += 1
+    return f"opt-{tag}-{st.session_state['_opt_key_seq']}"
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Page config
@@ -64,7 +76,9 @@ st.title("🚀 Optimizer")
 # ─────────────────────────────────────────────────────────────────────
 required_keys = ("cov_mat", "mu_vec", "asset_names", "returns_wide")
 if not all(k in st.session_state for k in required_keys):
-    st.warning("Risk Model artifacts not found. Go to **02_RiskModel** and export to session first.")
+    st.warning(
+        "Risk Model artifacts not found. Go to **02_RiskModel** and export to session first."
+    )
     st.stop()
 
 Sigma = np.asarray(st.session_state["cov_mat"], dtype=float)
@@ -96,13 +110,20 @@ with st.sidebar:
     if N > 0 and (N * w_min > 1.0 or N * w_max < 1.0):
         w_min = min(w_min, 1.0 / N)
         w_max = max(w_max, 1.0 / N)
-        st.info(f"Box constraints adjusted to be feasible: w_min≤{1.0/N:.4f}≤w_max")
+        st.info(f"Box constraints adjusted to be feasible: w_min≤{1.0 / N:.4f}≤w_max")
 
     rf = st.number_input("rf (annualized)", -0.5, 0.5, 0.0, 0.001, format="%.3f")
 
     mode = st.selectbox(
         "Optimizer",
-        ["Mean-Variance (L2)", "Mean-Variance (L1)", "Risk Parity", "HRP", "CVaR", "Active (TE penalized)"],
+        [
+            "Mean-Variance (L2)",
+            "Mean-Variance (L1)",
+            "Risk Parity",
+            "HRP",
+            "CVaR",
+            "Active (TE penalized)",
+        ],
         index=0,
     )
 
@@ -112,7 +133,9 @@ with st.sidebar:
     if bench_kind == "Equal-Weight":
         w_bench = np.full(N, 1.0 / max(N, 1))
     else:
-        w_bench_str = st.text_area("Custom weights (comma-separated)", value=",".join([f"{1/max(N,1):.6f}"] * N))
+        w_bench_str = st.text_area(
+            "Custom weights (comma-separated)", value=",".join([f"{1 / max(N, 1):.6f}"] * N)
+        )
         try:
             w_bench = np.array([float(x) for x in w_bench_str.split(",")], dtype=float)
             if w_bench.shape != (N,):
@@ -140,7 +163,9 @@ with st.sidebar:
                 X, fac_labels = build_onehot_exposure(names, dfm, cols=("sector", "country"))
 
         if X is not None and X.size > 0:
-            rho_expo = st.number_input("ρ (penalty weight for active exposures)", 0.0, 1e6, 1000.0, 10.0)
+            rho_expo = st.number_input(
+                "ρ (penalty weight for active exposures)", 0.0, 1e6, 1000.0, 10.0
+            )
             lb_val = st.number_input("Lower bound per factor (active)", -1.0, 1.0, -0.05, 0.01)
             ub_val = st.number_input("Upper bound per factor (active)", -1.0, 1.0, 0.05, 0.01)
             lb = np.full(X.shape[0], lb_val)
@@ -163,7 +188,11 @@ logger.log("sigma_psd", cond=cond_number(Sigma))
 # Clean returns for methods that need R
 R_clean_pl: pl.DataFrame = clean_returns_matrix(df_ret_wide)
 cols_available = [c for c in names if c in R_clean_pl.columns]
-R_np = R_clean_pl.select(cols_available).to_numpy() if cols_available else np.zeros((0, 0), dtype=float)
+R_np = (
+    R_clean_pl.select(cols_available).to_numpy()
+    if cols_available
+    else np.zeros((0, 0), dtype=float)
+)
 logger.log("returns_cleaned", n_rows=int(R_clean_pl.height), n_cols=int(len(R_clean_pl.columns)))
 
 # ─────────────────────────────────────────────────────────────────────
@@ -175,7 +204,9 @@ diag: dict = {}
 if mode == "Mean-Variance (L2)":
     gamma = st.slider("γ (risk aversion)", 0.1, 200.0, 10.0, 0.1)
     lam2 = st.slider("λ (L2 turnover to bench)", 0.0, 100.0, 0.0, 0.1)
-    w_out = pgd_box_simplex_l2(mu, Sigma, gamma, w_min=w_min, w_max=w_max, lam_turnover=lam2, w_ref=w_bench)
+    w_out = pgd_box_simplex_l2(
+        mu, Sigma, gamma, w_min=w_min, w_max=w_max, lam_turnover=lam2, w_ref=w_bench
+    )
     w_out = project_to_box_simplex(w_out, w_min, w_max)
     validate_weights(w_out, w_min, w_max)
     logger.log("solution_ok", algo="MV_L2", gamma=gamma, lam2=lam2)
@@ -183,7 +214,9 @@ if mode == "Mean-Variance (L2)":
 elif mode == "Mean-Variance (L1)":
     gamma = st.slider("γ (risk aversion)", 0.1, 200.0, 10.0, 0.1)
     lam1 = st.slider("λ (L1 turnover to bench)", 0.0, 10.0, 0.0, 0.01)
-    w_out = pgd_box_simplex_l1(mu, Sigma, gamma, w_min=w_min, w_max=w_max, lam_l1=lam1, w_ref=w_bench)
+    w_out = pgd_box_simplex_l1(
+        mu, Sigma, gamma, w_min=w_min, w_max=w_max, lam_l1=lam1, w_ref=w_bench
+    )
     w_out = project_to_box_simplex(w_out, w_min, w_max)
     validate_weights(w_out, w_min, w_max)
     logger.log("solution_ok", algo="MV_L1", gamma=gamma, lam1=lam1)
@@ -200,14 +233,20 @@ elif mode == "Risk Parity":
         w_out = project_to_box_simplex(w_out, w_min, w_max)
 
 elif mode == "HRP":
-    w_out = hrp_safe(hrp_func=hrp_weights, cov=Sigma, method="ward", optimal=True, w_min=w_min, w_max=w_max)
+    w_out = hrp_safe(
+        hrp_func=hrp_weights, cov=Sigma, method="ward", optimal=True, w_min=w_min, w_max=w_max
+    )
     w_out = project_to_box_simplex(w_out, w_min, w_max)
     validate_weights(w_out, w_min, w_max)
     logger.log("solution_ok", algo="HRP")
 
 elif mode == "CVaR":
-    alpha = st.slider("α (CVaR)", 0.80, 0.995, st.session_state.get("cvar_alpha", 0.95), 0.005, key="cvar_alpha")
-    lam_l1 = st.slider("λ L1 turnover", 0.0, 5.0, st.session_state.get("cvar_lam1", 0.0), 0.01, key="cvar_lam1")
+    alpha = st.slider(
+        "α (CVaR)", 0.80, 0.995, st.session_state.get("cvar_alpha", 0.95), 0.005, key="cvar_alpha"
+    )
+    lam_l1 = st.slider(
+        "λ L1 turnover", 0.0, 5.0, st.session_state.get("cvar_lam1", 0.0), 0.01, key="cvar_lam1"
+    )
     try:
         w_out = solve_cvar_with_fallback(
             R=R_np,
@@ -226,7 +265,9 @@ elif mode == "CVaR":
         logger.log("solution_ok", algo="CVaR", alpha=alpha, lam_l1=lam_l1)
     except Exception as e:
         logger.log("fallback", algo="CVaR", reason=str(e))
-        w_out = pgd_box_simplex_l2(mu, Sigma, gamma=10.0, w_min=w_min, w_max=w_max, lam_turnover=0.0, w_ref=w_bench)
+        w_out = pgd_box_simplex_l2(
+            mu, Sigma, gamma=10.0, w_min=w_min, w_max=w_max, lam_turnover=0.0, w_ref=w_bench
+        )
         w_out = project_to_box_simplex(w_out, w_min, w_max)
 
 elif mode == "Active (TE penalized)":
@@ -254,7 +295,14 @@ elif mode == "Active (TE penalized)":
     if w_out is not None:
         w_out = project_to_box_simplex(w_out, w_min, w_max)
         validate_weights(w_out, w_min, w_max)
-    logger.log("solution_ok", algo="ActiveTE", gamma=gamma, lam2=lam2, iters=iters, use_expos=bool(use_expos))
+    logger.log(
+        "solution_ok",
+        algo="ActiveTE",
+        gamma=gamma,
+        lam2=lam2,
+        iters=iters,
+        use_expos=bool(use_expos),
+    )
 
 # ─────────────────────────────────────────────────────────────────────
 # Results / plots
@@ -262,20 +310,30 @@ elif mode == "Active (TE penalized)":
 if w_out is not None:
     c1, c2 = st.columns([2, 1])
     with c1:
-        st.plotly_chart(weights_bar(w_out, names, sort=True, topn=min(40, N)), width="stretch")
+        show_plot(
+            weights_bar(w_out, names, sort=True, topn=min(40, N)),
+            key=_opt_key("weights-bar"),
+        )
     with c2:
         rc = risk_contributions(w_out, Sigma)
-        st.plotly_chart(risk_contributions_bar(rc, names, sort=True, topn=min(30, N)), width="stretch")
+        show_plot(
+            risk_contributions_bar(rc, names, sort=True, topn=min(30, N)),
+            key=_opt_key("rc-bar"),
+        )
 
     # Portfolio stats (core.metrics)
     mu_p, sigma_p, sharpe = portfolio_stats(w_out, mu, Sigma, rf=rf)
-    st.caption(f"μ={mu_p:.4f} · σ={sigma_p:.4f} · Sharpe={sharpe:.3f} · Gini(weights)={gini(w_out):.3f}")
+    st.caption(
+        f"μ={mu_p:.4f} · σ={sigma_p:.4f} · Sharpe={sharpe:.3f} · Gini(weights)={gini(w_out):.3f}"
+    )
 
     # Export weights — defensive projection before exporting
     w_export = project_to_box_simplex(w_out, w_min, w_max)
     buf = io.StringIO()
     pl.DataFrame({"ticker": names, "weight": w_export}).write_csv(buf)
-    st.download_button("Download weights.csv", buf.getvalue(), file_name="weights.csv", mime="text/csv")
+    st.download_button(
+        "Download weights.csv", buf.getvalue(), file_name="weights.csv", mime="text/csv"
+    )
 
     # Active diagnostics: γ-sweep and TE frontier
     if mode == "Active (TE penalized)" and diag:
@@ -308,9 +366,19 @@ if w_out is not None:
         Ws_arr = stack_Ws(Ws_proj, N)
         logger.log("gamma_sweep_done", n_gammas=len(gammas))
 
-        st.plotly_chart(weights_path_gammas(Ws_arr, gammas, names, topn=min(25, N)), width="stretch")
-        st.plotly_chart(turnover_vs_gamma(Ws_arr, w_bench, gammas), width="stretch")
-        st.plotly_chart(te_frontier(mu, Sigma, w_bench, Ws_arr), width="stretch")
+        show_plot(
+            weights_path_gammas(Ws_arr, gammas, names, topn=min(25, N)),
+            key=_opt_key("weights-path-gamma"),
+        )
+        show_plot(
+            turnover_vs_gamma(Ws, w_bench, gammas),
+            key=_opt_key("turnover-vs-gamma"),
+        )
+        show_plot(
+            te_frontier(mu, Sigma, w_bench, Ws_arr),
+            key=_opt_key("te-frontier"),
+            config={"displayModeBar": True, "scrollZoom": True},
+        )
 
 # ─────────────────────────────────────────────────────────────────────
 # Efficient Frontier (closed-form vs box-projected)
@@ -327,12 +395,14 @@ try:
         r_lo, r_hi = -0.1, 0.1  # conservative fallback if μ is flat
 
     # 2) Closed-form frontier (short allowed)
-    risks_closed, rets_closed = frontier_closed_form(mu_valid, Sigma, r_min=r_lo, r_max=r_hi, npts=100)
+    risks_closed, rets_closed = frontier_closed_form(
+        mu_valid, Sigma, r_min=r_lo, r_max=r_hi, npts=100
+    )
 
     # 3) Box frontier (long-only with box)
     if not box_feasible(N, w_min, w_max):
         st.warning(
-            f"Box infeasible: N*w_min={N*w_min:.3f}, N*w_max={N*w_max:.3f}. "
+            f"Box infeasible: N*w_min={N * w_min:.3f}, N*w_max={N * w_max:.3f}. "
             "Adjust bounds so N*w_min ≤ 1 ≤ N*w_max."
         )
         risks_box = rets_box = None
@@ -369,7 +439,7 @@ try:
         minvar_point=(s_mvp, r_mvp),
         title="Efficient Frontier",
     )
-    st.plotly_chart(fig, width="stretch")
+    show_plot(fig, key=_opt_key("custom-fig"))
 
 except Exception as e:
     st.warning(f"Frontier plot skipped: {e}")
@@ -382,7 +452,10 @@ st.subheader("Backtest (quick)")
 
 freq = st.selectbox("Rebalance frequency", ["1mo", "1w", "3mo"], index=0)
 lbk = st.number_input("Lookback (periods)", min_value=30, max_value=2000, value=252, step=10)
-cost = st.number_input("Cost (bps per turnover)", min_value=0.0, max_value=100.0, value=2.0, step=0.5)
+cost = st.number_input(
+    "Cost (bps per turnover)", min_value=0.0, max_value=100.0, value=2.0, step=0.5
+)
+
 
 def allocator(win: pl.DataFrame) -> np.ndarray:
     """Allocator used inside the rolling backtest; long-only with PSD covariance and safe numerics."""
@@ -401,13 +474,24 @@ def allocator(win: pl.DataFrame) -> np.ndarray:
         except Exception:
             w = np.full(N, 1.0 / max(N, 1))
     elif mode == "HRP":
-        w = hrp_safe(hrp_func=hrp_weights, cov=Sigma_win, method="ward", optimal=True, w_min=w_min, w_max=w_max)
+        w = hrp_safe(
+            hrp_func=hrp_weights,
+            cov=Sigma_win,
+            method="ward",
+            optimal=True,
+            w_min=w_min,
+            w_max=w_max,
+        )
     elif mode == "CVaR":
         alpha = st.session_state.get("cvar_alpha", 0.95)
         lam_l1 = st.session_state.get("cvar_lam1", 0.0)
         R_win_pl = clean_returns_matrix(win)
         cols_used_win = [c for c in names if c in R_win_pl.columns]
-        R_win = R_win_pl.select(cols_used_win).to_numpy() if cols_used_win else np.zeros((0, 0), dtype=float)
+        R_win = (
+            R_win_pl.select(cols_used_win).to_numpy()
+            if cols_used_win
+            else np.zeros((0, 0), dtype=float)
+        )
         w = solve_cvar_with_fallback(
             R=R_win,
             cols_used=cols_used_win,
@@ -449,6 +533,7 @@ def allocator(win: pl.DataFrame) -> np.ndarray:
 
     return project_to_box_simplex(w, w_min, w_max)
 
+
 bt = backtest_rebalanced(
     df_ret_wide,
     lookback=int(lbk),
@@ -460,12 +545,13 @@ bt = backtest_rebalanced(
 
 # ---- Equity & drawdown (safe) ----
 try:
-    st.plotly_chart(
+    show_plot(
         equity_and_drawdown(bt["dates"], bt["equity"], title="Equity & Drawdown"),
-        width="stretch",
+        key=_opt_key("equity-drawdown"),
     )
 except Exception as e:
     st.info(f"Could not plot equity/drawdown: {e}")
+
 
 # ---- Turnover mean (robust to different engine outputs) ----
 def _turnover_mean(turnover_obj) -> float:
@@ -478,6 +564,7 @@ def _turnover_mean(turnover_obj) -> float:
             return float(turnover_obj.select(pl.col("turnover").mean()).item())
         # Pandas
         import pandas as pd  # local import to avoid hard dep
+
         if isinstance(turnover_obj, pd.DataFrame) and "turnover" in turnover_obj.columns:
             return float(turnover_obj["turnover"].mean())
         # Fallback: vector/array
@@ -488,8 +575,13 @@ def _turnover_mean(turnover_obj) -> float:
     except Exception:
         return float("nan")
 
+
 mean_to = _turnover_mean(bt.get("turnover"))
-st.caption(f"Mean turnover per rebalance: {mean_to:.3f}" if np.isfinite(mean_to) else "Turnover not available.")
+st.caption(
+    f"Mean turnover per rebalance: {mean_to:.3f}"
+    if np.isfinite(mean_to)
+    else "Turnover not available."
+)
 
 # ---- Quick backtest metrics (from equity) ----
 try:
@@ -499,7 +591,9 @@ try:
     sig_bt = float(np.nanstd(ret_bt, ddof=1)) if ret_bt.size > 1 else np.nan
     sharpe_bt = mu_bt / sig_bt if (sig_bt is not None and sig_bt > 1e-12) else np.nan
     cvar_bt = cvar_estimate(ret_bt, alpha=0.95) if ret_bt.size else np.nan
-    st.caption(f"Backtest: μ={mu_bt:.4f} · σ={sig_bt:.4f} · Sharpe={sharpe_bt:.3f} · CVaR(0.95)={cvar_bt:.4f}")
+    st.caption(
+        f"Backtest: μ={mu_bt:.4f} · σ={sig_bt:.4f} · Sharpe={sharpe_bt:.3f} · CVaR(0.95)={cvar_bt:.4f}"
+    )
 except Exception:
     pass
 
@@ -514,6 +608,8 @@ if w_out is not None and mode == "CVaR":
             R_eval = R_clean_pl.select(cols_used_eval).to_numpy()
             port_rets = R_eval @ W_eval
             cvar_ins = cvar_estimate(port_rets, alpha=st.session_state.get("cvar_alpha", 0.95))
-            st.caption(f"CVaR in-sample (α={st.session_state.get('cvar_alpha', 0.95):.3f}) = {cvar_ins:.4f}")
+            st.caption(
+                f"CVaR in-sample (α={st.session_state.get('cvar_alpha', 0.95):.3f}) = {cvar_ins:.4f}"
+            )
     except Exception:
         pass

@@ -1,17 +1,17 @@
 # portfolio/backtest/scenarios.py
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Callable, Dict, List, Optional, Sequence, Tuple, Union
-from datetime import datetime, date
+from datetime import date, datetime
+from typing import Any, Callable
 
 import numpy as np
-import polars as pl
 import pandas as pd
+import polars as pl
 
-from portfolio.backtest.engine import backtest_rebalanced
 from portfolio.backtest import metrics as bt_metrics
-
+from portfolio.backtest.engine import backtest_rebalanced
 
 __all__ = [
     "ShockSpec",
@@ -36,19 +36,21 @@ class ShockSpec:
     cov_scale : scale factor for cross-sectional deviations from the mean
     crash     : optional (row_index, add_return) one-day additive gap
     """
-    mean_shift: Optional[float] = None
+
+    mean_shift: float | None = None
     cov_scale: float = 1.0
-    crash: Optional[Tuple[int, float]] = None
+    crash: tuple[int, float] | None = None
 
 
 @dataclass
 class ScenarioConfig:
     """Configuration for a scenario backtest."""
+
     name: str
     B: int = 0
     block: int = 10
     seed: int = 42
-    shock: Optional[ShockSpec] = None
+    shock: ShockSpec | None = None
 
 
 # ---------------------------------------------------------------------
@@ -56,7 +58,7 @@ class ScenarioConfig:
 # ---------------------------------------------------------------------
 def apply_shock_map_to_wide(
     df_wide: pl.DataFrame,
-    shock_map: Dict[str, Union[float, Tuple[int, float]]],
+    shock_map: dict[str, float | tuple[int, float]],
 ) -> pl.DataFrame:
     """
     Apply additive shocks to a wide return DataFrame.
@@ -75,51 +77,57 @@ def apply_shock_map_to_wide(
     out = df_wide
 
     # 1) Cross-sectional deviation scaling
-    cov_scale = float(shock_map.get("__cov_scale__", 1.0))  # type: ignore
+    cov_scale_val = shock_map.get("__cov_scale__")
+    cov_scale = float(cov_scale_val) if isinstance(cov_scale_val, (int, float)) else 1.0
     if abs(cov_scale - 1.0) > 1e-12:
         X = out.select(cols).to_numpy()
+        X = np.nan_to_num(X, nan=0.0, posinf=0.0, neginf=0.0)
         mu = np.nanmean(X, axis=1, keepdims=True)
-        X = np.nan_to_num(X, nan=0.0)
         X_scaled = mu + cov_scale * (X - mu)
-        out = out.with_columns(**{c: pl.Series(X_scaled[:, j]) for j, c in enumerate(cols)})
+        out = out.with_columns(
+            [pl.Series(name=c, values=X_scaled[:, j]) for j, c in enumerate(cols)]
+        )
 
     # 2) Mean shift
-    mean_shift = shock_map.get("__mean__", None)
-    if mean_shift is not None:
-        ms = float(mean_shift)  # type: ignore
-        out = out.with_columns(**{c: (pl.col(c).fill_null(0.0) + ms) for c in cols})
+    mean_shift_val = shock_map.get("__mean__")
+    if isinstance(mean_shift_val, (int, float)):
+        ms = float(mean_shift_val)
+        out = out.with_columns([(pl.col(c).fill_null(0.0) + ms).alias(c) for c in cols])
 
     # 3) One-day crash
-    crash = shock_map.get("__crash__", None)
-    if crash is not None:
-        idx, add_ret = crash  # type: ignore
-        idx = int(idx)
-        add_ret = float(add_ret)
+    crash_val = shock_map.get("__crash__")
+    if isinstance(crash_val, tuple) and len(crash_val) == 2:
+        idx, add_ret = int(crash_val[0]), float(crash_val[1])
         if 0 <= idx < out.height:
-            out = out.with_row_count("rowid")
-            out = out.with_columns([
-                pl.when(pl.col("rowid") == idx)
-                  .then(pl.col(c).fill_null(0.0) + add_ret)
-                  .otherwise(pl.col(c))
-                  .alias(c)
-                for c in cols
-            ]).drop("rowid")
+            out = (
+                out.with_row_count("rowid")
+                .with_columns(
+                    [
+                        pl.when(pl.col("rowid") == idx)
+                        .then(pl.col(c).fill_null(0.0) + add_ret)
+                        .otherwise(pl.col(c))
+                        .alias(c)
+                        for c in cols
+                    ]
+                )
+                .drop("rowid")
+            )
 
     # 4) Column-specific additive shifts
     for k, v in shock_map.items():
         if k in {"__mean__", "__cov_scale__", "__crash__", "date"}:
             continue
-        if k in out.columns:
-            out = out.with_columns(pl.col(k).fill_null(0.0) + float(v))  # type: ignore
+        if (k in out.columns) and isinstance(v, (int, float)):
+            out = out.with_columns((pl.col(k).fill_null(0.0) + float(v)).alias(k))
 
-    return out
+    return out.with_columns(pl.col("date").cast(pl.Datetime))
 
 
-def apply_shock(df_wide: pl.DataFrame, shock: Optional[ShockSpec]) -> pl.DataFrame:
+def apply_shock(df_wide: pl.DataFrame, shock: ShockSpec | None) -> pl.DataFrame:
     """Convenience wrapper to apply a ShockSpec to a Polars wide return frame."""
     if shock is None:
         return df_wide
-    shock_map: Dict[str, Union[float, Tuple[int, float]]] = {}
+    shock_map: dict[str, float | tuple[int, float]] = {}
     if shock.mean_shift is not None:
         shock_map["__mean__"] = float(shock.mean_shift)
     if float(shock.cov_scale) != 1.0:
@@ -132,7 +140,7 @@ def apply_shock(df_wide: pl.DataFrame, shock: Optional[ShockSpec]) -> pl.DataFra
 # ---------------------------------------------------------------------
 # Historical slice and bootstrap
 # ---------------------------------------------------------------------
-def _parse_to_py_datetime(x: Union[str, datetime, date]) -> datetime:
+def _parse_to_py_datetime(x: str | datetime | date) -> datetime:
     """Parse input into a Python datetime (timezone-naive)."""
     if isinstance(x, datetime):
         return x.replace(tzinfo=None)
@@ -145,9 +153,9 @@ def _parse_to_py_datetime(x: Union[str, datetime, date]) -> datetime:
 
 def historical_slice_returns(
     df_wide: pl.DataFrame,
-    start: Union[str, datetime, date],
-    end: Union[str, datetime, date],
-    tickers: Optional[List[str]] = None,
+    start: str | datetime | date,
+    end: str | datetime | date,
+    tickers: list[str] | None = None,
 ) -> pl.DataFrame:
     """
     Extract an inclusive historical time slice from a wide returns DataFrame.
@@ -166,17 +174,14 @@ def historical_slice_returns(
     # Ensure proper temporal dtype on 'date'
     date_dtype = df_wide.schema.get("date")
     if date_dtype not in (pl.Date, pl.Datetime):
-        # If it's string/int, try to cast sensibly to Datetime
-        df_wide = df_wide.with_columns(pl.col("date").str.strptime(pl.Datetime, strict=False, fmt=None))
+        df_wide = df_wide.with_columns(pl.col("date").cast(pl.Datetime))
 
     # After possible cast, re-check dtype
     date_dtype = df_wide.schema.get("date")
     if date_dtype == pl.Date:
-        # Compare using pl.Date literals
         start_lit = pl.lit(start_ts.date(), dtype=pl.Date)
         end_lit = pl.lit(end_ts.date(), dtype=pl.Date)
     else:
-        # Treat everything else as Datetime (naive)
         start_lit = pl.lit(start_ts, dtype=pl.Datetime)
         end_lit = pl.lit(end_ts, dtype=pl.Datetime)
 
@@ -186,28 +191,39 @@ def historical_slice_returns(
 
     # Filter inclusive window and sort
     out = (
-        df_wide
-        .select(cols)
+        df_wide.select(cols)
         .filter((pl.col("date") >= start_lit) & (pl.col("date") <= end_lit))
         .sort("date")
     )
 
     if out.height == 0:
         raise ValueError("historical_slice_returns: empty slice.")
-    return out
+    return out.with_columns(pl.col("date").cast(pl.Datetime))
 
 
 def block_bootstrap_indices(T: int, block: int, seed: int) -> np.ndarray:
     """Generate block bootstrap indices for synthetic paths."""
     rng = np.random.default_rng(seed)
-    idx: List[int] = []
+    idx: list[int] = []
     i = 0
     while i < T:
-        start = rng.integers(0, max(T - block, 1))
+        start = int(rng.integers(0, max(T - block, 1)))
         take = min(block, T - i)
         idx.extend(range(start, start + take))
         i += take
     return np.array(idx, dtype=int)
+
+
+# ---------------------------------------------------------------------
+# Helper: normalize any metrics object to Polars
+# ---------------------------------------------------------------------
+def _as_polars_df(m_any: Any) -> pl.DataFrame:
+    """Best-effort conversion of metrics to Polars DataFrame."""
+    if isinstance(m_any, pl.DataFrame):
+        return m_any
+    if isinstance(m_any, pd.DataFrame):
+        return pl.from_pandas(m_any)
+    return pl.DataFrame({"CAGR": [np.nan], "Sharpe": [np.nan], "MaxDD": [np.nan]})
 
 
 # ---------------------------------------------------------------------
@@ -221,8 +237,10 @@ def run_scenarios(
     rebalance_freq: str,
     cost_bps: float,
     bench_weights: np.ndarray,
-    compute_metrics: Callable[[Dict], Union[pl.DataFrame, "pd.DataFrame"]] = bt_metrics.compute_backtest_metrics,
-) -> List[Dict[str, Union[str, Dict, pl.DataFrame]]]:
+    compute_metrics: Callable[
+        [dict], pl.DataFrame | pd.DataFrame
+    ] = bt_metrics.compute_backtest_metrics,
+) -> list[dict[str, str | dict | pl.DataFrame]]:
     """
     Run a list of ScenarioConfig objects and return:
         [{'name': str, 'bt': dict, 'metrics': pl.DataFrame}, ...]
@@ -231,17 +249,27 @@ def run_scenarios(
       and return the last backtest object for plotting.
     - If B == 0, run a single shocked (or unshocked) path.
     """
-    results: List[Dict[str, Union[str, Dict, pl.DataFrame]]] = []
+    results: list[dict[str, str | dict | pl.DataFrame]] = []
     T = df_ret_wide.height
 
     for cfg in cfgs:
-        if cfg.B and cfg.B > 0:
-            agg_metrics: List[pl.DataFrame] = []
-            last_bt: Optional[Dict] = None
+        if cfg.B > 0:
+            agg_metrics: list[pl.DataFrame] = []
+            last_bt: dict | None = None
 
             for b in range(cfg.B):
                 idx = block_bootstrap_indices(T, max(2, int(cfg.block)), int(cfg.seed) + b)
-                df_b = df_ret_wide[idx]
+
+                # Selección preservando el orden del bootstrap (sin usar .take):
+                # Creamos DF de índices (rowid) + posición y hacemos join
+                idx_df = pl.DataFrame({"rowid": idx.tolist(), "pos": np.arange(len(idx))})
+                df_b = (
+                    df_ret_wide.with_row_count("rowid")
+                    .join(idx_df, on="rowid", how="inner")
+                    .sort("pos")
+                    .drop(["rowid", "pos"])
+                )
+
                 df_b = apply_shock(df_b, cfg.shock)
 
                 alloc = allocator_factory()
@@ -254,33 +282,29 @@ def run_scenarios(
                     bench_weights=bench_weights,
                 )
                 last_bt = bt
+
+                # Metrics → Polars deterministically
                 try:
-                    m = compute_metrics(bt)
+                    m_any = compute_metrics(bt)
                 except Exception:
-                    m = pl.DataFrame({"CAGR": [np.nan], "Sharpe": [np.nan], "MaxDD": [np.nan]})
-                # Ensure Polars
-                if not isinstance(m, pl.DataFrame):
-                    try:
-                        import pandas as pd
-                        if isinstance(m, pd.DataFrame):
-                            m = pl.from_pandas(m)
-                    except Exception:
-                        m = pl.DataFrame({"CAGR": [np.nan], "Sharpe": [np.nan], "MaxDD": [np.nan]})
+                    m_any = pl.DataFrame({"CAGR": [np.nan], "Sharpe": [np.nan], "MaxDD": [np.nan]})
+
+                m = _as_polars_df(m_any)
                 agg_metrics.append(m)
 
             # Average scalar metrics across replications
             cols = list({c for m in agg_metrics for c in m.columns})
-            avg_row: Dict[str, float] = {}
+            avg_row: dict[str, float] = {}
             for c in cols:
-                vals: List[float] = []
+                vals: list[float] = []
                 for m in agg_metrics:
-                    try:
-                        if c in m.columns and m.height > 0:
-                            v = m.get_column(c)[0]
+                    if c in m.columns and m.height > 0:
+                        v = m.get_column(c)[0]
+                        try:
                             vals.append(float(v) if np.isfinite(v) else np.nan)
-                        else:
+                        except Exception:
                             vals.append(np.nan)
-                    except Exception:
+                    else:
                         vals.append(np.nan)
                 if vals:
                     avg_row[c] = float(np.nanmean(vals))
@@ -300,19 +324,13 @@ def run_scenarios(
                 allocator=alloc,
                 bench_weights=bench_weights,
             )
-            try:
-                m = compute_metrics(bt)
-            except Exception:
-                m = pl.DataFrame({"CAGR": [np.nan], "Sharpe": [np.nan], "MaxDD": [np.nan]})
-            # Ensure Polars
-            if not isinstance(m, pl.DataFrame):
-                try:
-                    import pandas as pd
-                    if isinstance(m, pd.DataFrame):
-                        m = pl.from_pandas(m)
-                except Exception:
-                    m = pl.DataFrame({"CAGR": [np.nan], "Sharpe": [np.nan], "MaxDD": [np.nan]})
 
+            try:
+                m_any = compute_metrics(bt)
+            except Exception:
+                m_any = pl.DataFrame({"CAGR": [np.nan], "Sharpe": [np.nan], "MaxDD": [np.nan]})
+
+            m = _as_polars_df(m_any)
             results.append({"name": cfg.name, "bt": bt, "metrics": m})
 
     return results

@@ -6,9 +6,9 @@ import hashlib
 import json
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -24,16 +24,19 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 # Versión de esquema de artefactos: si cambias estructura/semántica, súbela
 SCHEMA_VERSION = "v1"
 
-# Compresión por defecto para Parquet (rápida y con buen ratio)
-ParquetCompression = Literal["lz4","uncompressed","snappy","gzip","lzo","brotli","zstd"]
+# Compresión “global” preferida (rápida y con buen ratio)
+# Nota: esta lista incluye valores que Polars acepta y pandas podría no aceptar.
+ParquetCompression = Literal["lz4", "uncompressed", "snappy", "gzip", "lzo", "brotli", "zstd"]
 PARQUET_COMPRESSION: ParquetCompression = "zstd"
+
+# Subconjunto que pandas (pyarrow/fastparquet) reconoce por tipo en mypy
+PandasParquetCompression = Literal["snappy", "gzip", "brotli", "lz4", "zstd"]
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers: hashing, paths, atomic writes, file locks
 # ──────────────────────────────────────────────────────────────────────────────
 
-# portfolio/io/cache.py
 
 def _normalize_for_hash(obj: Any) -> Any:
     """
@@ -43,10 +46,8 @@ def _normalize_for_hash(obj: Any) -> Any:
     """
     if isinstance(obj, Mapping):
         return {
-            str(k): _normalize_for_hash(v)
-            for k, v in sorted(obj.items(), key=lambda x: str(x[0]))
+            str(k): _normalize_for_hash(v) for k, v in sorted(obj.items(), key=lambda x: str(x[0]))
         }
-    # 👇 En Py3.9 usa la tupla de tipos, no `list | tuple | set`
     if isinstance(obj, (list, tuple, set)):  # noqa: UP038
         return [_normalize_for_hash(v) for v in obj]
     if isinstance(obj, (str, int, float, bool)) or obj is None:  # noqa: UP038
@@ -80,12 +81,13 @@ def _atomic_write_bytes(path: Path, data: bytes) -> None:
 
 
 @contextlib.contextmanager
-def _file_lock(lock_path: Path, timeout: float = 10.0, poll: float = 0.05):
+def _file_lock(lock_path: Path, timeout: float = 10.0, poll: float = 0.05) -> Iterator[None]:
     """
     Lock muy simple basado en archivo .lock.
     Evita condiciones de carrera en escrituras concurrentes.
     """
     deadline = time.time() + timeout
+    fd: int | None = None
     while True:
         try:
             # O_EXCL + O_CREAT aseguran exclusión
@@ -124,22 +126,41 @@ def invalidate(kind: str, cfg: Mapping[str, Any], ext: str = "parquet") -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Mapeo de compresión global → compresión aceptada por pandas
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def _pandas_compression_from(
+    comp: ParquetCompression,
+) -> PandasParquetCompression | None:
+    """
+    Pandas/pyarrow no acepta "uncompressed" ni "lzo" como literales de compresión.
+    - Para "uncompressed"/"lzo", devolvemos None (sin compresión).
+    - Para el resto, mapeamos 1:1.
+    """
+    if comp in ("snappy", "gzip", "brotli", "lz4", "zstd"):
+        # cast garantiza a mypy que el valor pertenece al literal reducido
+        return cast(PandasParquetCompression, comp)
+    return None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Pandas API (retro-compat)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def save_df(kind: str, cfg: Mapping[str, Any], df: pd.DataFrame) -> Path:
     """
-    Guarda pandas.DataFrame a parquet (pyarrow) con compresión Zstd usando escritura atómica.
+    Guarda pandas.DataFrame a parquet (pyarrow) con escritura atómica.
+    Usa el mapeo de compresión compatible con pandas.
     """
     p = cache_path(kind, cfg, ext="parquet")
     lock = p.with_suffix(p.suffix + ".lock")
     with _file_lock(lock):
-        # usamos to_parquet en buffer para conservar atomicidad
-        # pandas no expone fácilmente escritura a bytes; usamos pyarrow vía to_parquet en fichero temporal
-        # así que persistimos a .tmp y renombramos
         tmp = p.with_suffix(p.suffix + ".tmp")
         p.parent.mkdir(parents=True, exist_ok=True)
-        df.to_parquet(tmp, engine="pyarrow", compression=PARQUET_COMPRESSION, index=False)
+        comp_pd = _pandas_compression_from(PARQUET_COMPRESSION)
+        df.to_parquet(tmp, engine="pyarrow", compression=comp_pd, index=False)
         os.replace(tmp, p)
     return p
 
@@ -158,7 +179,17 @@ def load_df(kind: str, cfg: Mapping[str, Any]) -> pd.DataFrame | None:
 # Polars API (nativa y rápida)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def save_pl(kind: str, cfg: Mapping[str, Any], df: pl.DataFrame, compression: ParquetCompression = PARQUET_COMPRESSION) -> Path:
+
+def save_pl(
+    kind: str,
+    cfg: Mapping[str, Any],
+    df: pl.DataFrame,
+    compression: ParquetCompression = PARQUET_COMPRESSION,
+) -> Path:
+    """
+    Guarda Polars DataFrame a Parquet; Polars acepta más valores de compresión
+    (p. ej., 'uncompressed', 'lzo') que pandas.
+    """
     p = cache_path(kind, cfg, ext="parquet")
     lock = p.with_suffix(p.suffix + ".lock")
     with _file_lock(lock):
@@ -180,6 +211,7 @@ def load_pl(kind: str, cfg: Mapping[str, Any]) -> pl.DataFrame | None:
 # NumPy matrices/arrays (ideal para Σ, fronteras, etc.)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def save_np(kind: str, cfg: Mapping[str, Any], arr: np.ndarray, compressed: bool = True) -> Path:
     ext = "npz" if compressed else "npy"
     p = cache_path(kind, cfg, ext=ext)
@@ -200,9 +232,9 @@ def load_np(kind: str, cfg: Mapping[str, Any]) -> np.ndarray | None:
     p_npy = cache_path(kind, cfg, ext="npy")
     if p_npz.exists():
         with np.load(p_npz) as f:
-            return f["data"]
+            return cast(np.ndarray, f["data"])
     if p_npy.exists():
-        return np.load(p_npy)
+        return cast(np.ndarray, np.load(p_npy))
     return None
 
 
@@ -210,10 +242,13 @@ def load_np(kind: str, cfg: Mapping[str, Any]) -> np.ndarray | None:
 # JSON (metadatos ligeros)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def save_json(kind: str, cfg: Mapping[str, Any], obj: Mapping[str, Any]) -> Path:
     p = cache_path(kind, cfg, ext="json")
     lock = p.with_suffix(p.suffix + ".lock")
-    data = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+    data = json.dumps(obj, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode(
+        "utf-8"
+    )
     with _file_lock(lock):
         _atomic_write_bytes(p, data)
     return p
@@ -224,4 +259,4 @@ def load_json(kind: str, cfg: Mapping[str, Any]) -> dict[str, Any] | None:
     if not p.exists():
         return None
     with open(p, "rb") as f:
-        return json.loads(f.read().decode("utf-8"))
+        return cast(dict[str, Any], json.loads(f.read().decode("utf-8")))

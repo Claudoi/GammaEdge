@@ -6,7 +6,7 @@ from scipy.optimize import linprog
 
 
 def cvar_minimization(
-    R: np.ndarray,                 # (T, N) returns (periodic)
+    R: np.ndarray,  # (T, N) returns (periodic)
     alpha: float = 0.95,
     *,
     w_min: float = 0.0,
@@ -58,19 +58,21 @@ def cvar_minimization(
     for t in range(T):
         row = np.zeros(n_var)
         row[n_w + n_z + t] = -1.0
-        A.append(row); b.append(0.0)
+        A.append(row)
+        b.append(0.0)
 
     # u_t ≥ -R_t w - ζ ⇒ -u_t - R_t w - ζ ≤ 0
     for t in range(T):
         row = np.zeros(n_var)
-        row[:n_w] = R[t, :]     # = R_t
-        row[n_w] = -1.0          # -ζ
+        row[:n_w] = R[t, :]  # = R_t
+        row[n_w] = -1.0  # -ζ
         row[n_w + n_z + t] = -1.0  # -u_t
-        A.append(row); b.append(0.0)
+        A.append(row)
+        b.append(0.0)
 
     # Caja w_min ≤ w_i ≤ w_max
     lb = np.full(n_var, -np.inf)
-    ub = np.full(n_var,  np.inf)
+    ub = np.full(n_var, np.inf)
     for i in range(N):
         lb[i] = w_min
         ub[i] = w_max
@@ -87,13 +89,15 @@ def cvar_minimization(
             row = np.zeros(n_var)
             row[i] = -1.0
             row[n_w + n_z + n_u + i] = 1.0
-            A.append(row); b.append(-float(w_ref[i]))
+            A.append(row)
+            b.append(-float(w_ref[i]))
         # d_i ≥ -(w_i - w_ref_i) ⇒  w_i + d_i ≥  w_ref_i  ⇒ -w_i - d_i ≤ -w_ref_i
         for i in range(N):
             row = np.zeros(n_var)
             row[i] = -1.0
             row[n_w + n_z + n_u + i] = -1.0
-            A.append(row); b.append(-float(w_ref[i]))
+            A.append(row)
+            b.append(-float(w_ref[i]))
         # d_i ≥ 0
         for i in range(N):
             lb[n_w + n_z + n_u + i] = 0.0
@@ -103,13 +107,22 @@ def cvar_minimization(
     A_eq[0, :n_w] = 1.0
     b_eq = np.array([budget], dtype=float)
 
-    res = linprog(c, A_ub=np.array(A), b_ub=np.array(b), A_eq=A_eq, b_eq=b_eq, bounds=list(zip(lb, ub, strict=False)), method="highs")
+    res = linprog(
+        c,
+        A_ub=np.array(A),
+        b_ub=np.array(b),
+        A_eq=A_eq,
+        b_eq=b_eq,
+        bounds=list(zip(lb, ub)),
+        method="highs",
+    )
+
     if not res.success:
         raise RuntimeError(f"CVaR LP failed: {res.message}")
 
-    w_opt = res.x[:N]
-    # normaliza por si redondeos
+    w_opt = np.asarray(res.x[:N], dtype=np.float64)  # 👈 ensure proper type
     s = float(np.sum(w_opt))
     if s != 0:
         w_opt = w_opt / s * budget
-    return w_opt
+
+    return np.asarray(w_opt, dtype=np.float64)

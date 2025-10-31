@@ -4,10 +4,7 @@ import numpy as np
 
 
 def portfolio_stats(
-    w: np.ndarray,
-    mu: np.ndarray,
-    Sigma: np.ndarray,
-    rf: float = 0.0
+    w: np.ndarray, mu: np.ndarray, Sigma: np.ndarray, rf: float = 0.0
 ) -> tuple[float, float, float]:
     """
     Devuelve (mu_p, sigma_p, sharpe).
@@ -44,10 +41,7 @@ def gini(x: np.ndarray) -> float:
     return float(g)
 
 
-def cvar_estimate(
-    port_rets: np.ndarray,
-    alpha: float = 0.95
-) -> float:
+def cvar_estimate(port_rets: np.ndarray, alpha: float = 0.95) -> float:
     """
     Estimación in-sample del CVaR (cola izquierda).
     Devuelve la media de la cola de pérdidas <= VaR_(alpha).

@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import contextlib
-from typing import Literal
+from typing import Literal, cast
 
 import numpy as np
 import pandas as pd
@@ -16,11 +16,14 @@ ReturnKind = Literal["log", "simple"]
 @dataclass(frozen=True, slots=True)  # 👈 Usas el decorador compat
 class Periodicity:
     """Escalas típicas."""
+
     per_year: int  # 252, 52, 12 ...
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers: long ↔ wide
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def long_to_wide(
     df_long: pl.DataFrame,
@@ -35,28 +38,25 @@ def long_to_wide(
     return df_long.pivot(values=value_col, index=index, on=columns).sort(index)
 
 
-def wide_to_long(
-    df_wide: pl.DataFrame, value_name: str, index: str = "date"
-) -> pl.DataFrame:
+def wide_to_long(df_wide: pl.DataFrame, value_name: str, index: str = "date") -> pl.DataFrame:
     """
     Convierte un DF ancho (date + tickers) a largo (date|ticker|value_name).
     """
     if index not in df_wide.columns:
         raise ValueError(f"'{index}' column not found in wide df")
     value_cols = [c for c in df_wide.columns if c != index]
-    return (
-        df_wide.melt(
-            id_vars=[index],
-            value_vars=value_cols,
-            variable_name="ticker",
-            value_name=value_name,
-        )
-        .sort(["ticker", index])
-    )
+    return df_wide.melt(
+        id_vars=[index],
+        value_vars=value_cols,
+        variable_name="ticker",
+        value_name=value_name,
+    ).sort(["ticker", index])
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Internos: garantías de dtype/orden temporal
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def _ensure_dt_sorted(df: pl.DataFrame, time_col: str = "date") -> pl.DataFrame:
     """
@@ -70,9 +70,11 @@ def _ensure_dt_sorted(df: pl.DataFrame, time_col: str = "date") -> pl.DataFrame:
         df = df.with_columns(pl.col(time_col).cast(pl.Datetime))
     return df.sort([time_col])
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Resample de precios (largo) y retornos
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def resample_prices_last(df_prices_long: pl.DataFrame, every: str = "1w") -> pl.LazyFrame:
     """
@@ -98,16 +100,16 @@ def resample_prices_last(df_prices_long: pl.DataFrame, every: str = "1w") -> pl.
 
     # Compatibilidad: usar by=["ticker"] y label="right"
     lf = (
-    df.lazy()
-    .group_by_dynamic(  # type: ignore[call-arg]
-        index_column="date",
-        every=every,
-        by=["ticker"],
-        closed="right",
-        label="right",
-    )
-    .agg(pl.col("price").last().alias("price"))
-    .sort(["ticker", "date"])
+        df.lazy()
+        .group_by_dynamic(  # type: ignore[call-arg]
+            index_column="date",
+            every=every,
+            by=["ticker"],
+            closed="right",
+            label="right",
+        )
+        .agg(pl.col("price").last().alias("price"))
+        .sort(["ticker", "date"])
     )
 
     return lf
@@ -128,7 +130,7 @@ def compute_returns_from_prices_long(
     if kind == "log":
         ret_expr = (pl.col("price") / pl.col("price").shift(1)).log()
     elif kind == "simple":
-        ret_expr = (pl.col("price") / pl.col("price").shift(1) - 1.0)
+        ret_expr = pl.col("price") / pl.col("price").shift(1) - 1.0
     else:
         raise ValueError("kind must be 'log' or 'simple'")
 
@@ -162,11 +164,15 @@ def compute_returns_from_prices_wide(
     out = out.drop_nulls(subset=[tickers[0]])  # descarta la primera fila de referencia
     return out.collect()
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Winsorización por ticker (largo y ancho)
 # ──────────────────────────────────────────────────────────────────────────────
 
-def winsorize_long(df_ret_long: pl.DataFrame, ret_col: str = "ret", q: float = 0.01) -> pl.DataFrame:
+
+def winsorize_long(
+    df_ret_long: pl.DataFrame, ret_col: str = "ret", q: float = 0.01
+) -> pl.DataFrame:
     """
     Recorta colas por percentiles por ticker (default 1%).
     Devuelve columnas: ['date','ticker','ret_w'].
@@ -214,9 +220,11 @@ def winsorize_wide(df_ret_wide: pl.DataFrame, q: float = 0.01) -> pl.DataFrame:
         exprs.append(pl.col(t).clip(lo, hi).alias(t))
     return lf.with_columns(exprs).collect()
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Conversión de frecuencia de retornos (log vs simple)
 # ──────────────────────────────────────────────────────────────────────────────
+
 
 def infer_return_kind(df_ret_wide: pl.DataFrame, sample_cols: int | None = 5) -> ReturnKind:
     """
@@ -270,19 +278,20 @@ def returns_to_frequency_wide(
     )
     return out.collect()
 
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Estadísticos, annualización y reportes
 # ──────────────────────────────────────────────────────────────────────────────
 
 
-
-
 def annualize_mean(mu_periodic: np.ndarray | pl.Series, period: Periodicity) -> np.ndarray:
-    return np.asarray(mu_periodic) * float(period.per_year)
+    arr = np.asarray(mu_periodic, dtype=np.float64)
+    return cast(np.ndarray, arr * float(period.per_year))
 
 
 def annualize_vol(sigma_periodic: np.ndarray | pl.Series, period: Periodicity) -> np.ndarray:
-    return np.asarray(sigma_periodic) * np.sqrt(float(period.per_year))
+    arr = np.asarray(sigma_periodic, dtype=np.float64)
+    return cast(np.ndarray, arr * np.sqrt(float(period.per_year)))
 
 
 def summary_stats(
@@ -332,7 +341,11 @@ def summary_stats(
         n_na = tmp.select(f"{t}__n_na").item()
 
         n_obs = (n_total - n_na) if (n_total is not None and n_na is not None) else None
-        sharpe = ((mean - risk_free) / stdv) if (stdv is not None and stdv > 0 and mean is not None) else None
+        sharpe = (
+            ((mean - risk_free) / stdv)
+            if (stdv is not None and stdv > 0 and mean is not None)
+            else None
+        )
         missing_pct = (n_na / n_total * 100.0) if n_total else None
 
         rows.append((t, mean, stdv, skew, kurt, sharpe, n_obs, missing_pct))
@@ -384,6 +397,7 @@ def missing_report_wide(df: pl.DataFrame) -> pl.DataFrame:
 # Compatibilidad pandas (por si tienes celdas/notebooks antiguos)
 # ──────────────────────────────────────────────────────────────────────────────
 
+
 def simple_returns_pd(prices: pd.DataFrame) -> pd.DataFrame:
     """
     Retornos simples: (P_t / P_{t-1} - 1), saltando la primera fila.
@@ -401,34 +415,29 @@ def simple_returns_pd(prices: pd.DataFrame) -> pd.DataFrame:
 
 
 def log_returns_pd(prices: pd.DataFrame) -> pd.DataFrame:
+    """
+    Log returns: ln(P_t / P_{t-1}), skipping the first row.
+    """
+    if prices.empty:
+        return prices
     df = prices.sort_index()
-    out = np.log(df).diff().iloc[1:]
-    return out
+    ratio = df.div(df.shift(1))
+    out = ratio.apply(np.log).iloc[1:]
+    return pd.DataFrame(out)
 
 
 def to_frequency_pd(returns: pd.DataFrame, freq: str) -> pd.DataFrame:
-    """
-    Agrega retornos a frecuencia `freq` respetando composición:
-      - log-like: suma
-      - simple-like: (1+r).prod - 1
-    Requiere DateTimeIndex para `resample`.
-    """
     if returns.empty:
         return returns
 
     df = returns.copy()
 
-    # Garantiza DateTimeIndex para resample
     if not isinstance(df.index, pd.DatetimeIndex):
-        # Intento conservador: si hay una columna 'date' en el índice, úsala
-        # o como último recurso, conviértelo.
         try:
             df.index = pd.to_datetime(df.index, utc=False)
         except Exception:
-            # Si no se puede, devolvemos sin agrupar para no romper
             return df
 
-    # Heurística de tipo (igual que antes)
     is_log_like = (df <= -1.0).any().any() or (df.abs().median() > 0.25).any()
 
     if is_log_like:
@@ -436,7 +445,7 @@ def to_frequency_pd(returns: pd.DataFrame, freq: str) -> pd.DataFrame:
     else:
         out = (1.0 + df).resample(freq).prod(min_count=1) - 1.0
 
-    return out.dropna(how="all")
+    return pd.DataFrame(out.dropna(how="all"))
 
 
 def winsorize_pd(returns: pd.DataFrame, q: float = 0.01) -> pd.DataFrame:
@@ -447,6 +456,7 @@ def winsorize_pd(returns: pd.DataFrame, q: float = 0.01) -> pd.DataFrame:
 
 def simple_returns(prices: pd.DataFrame) -> pd.DataFrame:
     return simple_returns_pd(prices)
+
 
 def to_frequency(returns: pd.DataFrame, freq: str) -> pd.DataFrame:
     return to_frequency_pd(returns, freq)
