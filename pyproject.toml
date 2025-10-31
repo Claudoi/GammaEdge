@@ -107,6 +107,7 @@ quote-style = "preserve"
 # ── MYPY ───────────────────────────────────────────────────────────────────────
 [tool.mypy]
 python_version = "3.11"
+files = ["portfolio", "api"]
 ignore_missing_imports = true
 strict_optional = true
 warn_unused_ignores = true
@@ -119,6 +120,7 @@ exclude = [
   "^notebooks/.*",
   "^docs/.*",
   "^data/.*",
+  "^app/.*",
 ]
 
 [[tool.mypy.overrides]]
