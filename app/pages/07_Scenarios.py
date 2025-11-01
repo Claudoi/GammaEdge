@@ -1,4 +1,4 @@
-# app/pages/06_Scenarios.py
+# app/pages/07_Scenarios.py
 from __future__ import annotations
 
 import inspect
@@ -56,17 +56,34 @@ st.caption(
 
 
 # ─────────────────────────────────────────────────────────────────────
+# Plot helper: centraliza compat con Streamlit >=1.39
+# ─────────────────────────────────────────────────────────────────────
+def show_plot(fig, *, key: str | None = None, width: str = "stretch", height: int | None = None):
+    """
+    Renderiza un Plotly Figure sin kwargs deprecados.
+    - width: 'stretch' o 'content'
+    - height: px opcional
+    - config: centralizado aquí para evitar avisos
+    """
+    config = {
+        "displayModeBar": True,
+        "responsive": True,
+        "scrollZoom": True,
+        # añade aquí más opciones si las necesitas
+    }
+    return st.plotly_chart(fig, key=key, width=width, height=height, config=config)
+
+
+# ─────────────────────────────────────────────────────────────────────
 # Helpers (robust + NaN-safe)
 # ─────────────────────────────────────────────────────────────────────
 def next_key(prefix: str = "plt") -> str:
-    """Unique Streamlit keys to avoid duplicate-ID errors."""
     st.session_state.setdefault("_auto_key_counter", 0)
     st.session_state["_auto_key_counter"] += 1
     return f"{prefix}-{st.session_state['_auto_key_counter']}"
 
 
 def _to_numpy_2d(x) -> np.ndarray:
-    """Force 2D float array and sanitize NaNs/infs."""
     arr = np.asarray(x, dtype=float)
     if arr.ndim == 1:
         arr = arr.reshape(-1, 1)
@@ -74,7 +91,6 @@ def _to_numpy_2d(x) -> np.ndarray:
 
 
 def _safe_metrics(bt_obj: dict[str, Any]) -> pl.DataFrame:
-    """Compute metrics via repo metrics; fallback to equity-derived if needed."""
     try:
         return bt_metrics.compute_backtest_metrics(bt_obj)
     except Exception:
@@ -93,7 +109,6 @@ def _safe_metrics(bt_obj: dict[str, Any]) -> pl.DataFrame:
 def _extract_metric_scalar(
     dfm: pl.DataFrame | pd.DataFrame, name: str, default: float = np.nan
 ) -> float:
-    """Extract scalar metric by name from a 1-row frame; case-insensitive."""
     try:
         if isinstance(dfm, pl.DataFrame) and dfm.height > 0:
             if name in dfm.columns:
@@ -118,12 +133,7 @@ def _extract_metric_scalar(
 
 
 def _ensure_turnover_with_drift(bt: dict, df_wide: pl.DataFrame) -> tuple[list, np.ndarray]:
-    """
-    If engine doesn't provide 'turnover', reconstruct it:
-    - Drift previous weights with realized returns up to next rebalance date.
-    - Turnover_k = 0.5 * || w_target(k) - w_pre_trade(k) ||_1
-    """
-    # 1) Prefer engine-provided turnover if present
+    # 1) intenta usar la serie del engine si existe
     to_obj = bt.get("turnover")
     if to_obj is not None:
         try:
@@ -154,9 +164,9 @@ def _ensure_turnover_with_drift(bt: dict, df_wide: pl.DataFrame) -> tuple[list, 
         except Exception:
             pass
 
-    # 2) Reconstruct via drift between rebalances
+    # 2) reconstrucción por drift entre rebalances
     rb_dates = list(bt.get("rebalance_dates", []))
-    W_reb = np.asarray(bt.get("weights", []), float)  # (K, N)
+    W_reb = np.asarray(bt.get("weights", []), float)
     tick = list(bt.get("tickers", []))
     if W_reb.size == 0 or len(rb_dates) != W_reb.shape[0] or df_wide is None:
         return [], np.array([], float)
@@ -166,7 +176,6 @@ def _ensure_turnover_with_drift(bt: dict, df_wide: pl.DataFrame) -> tuple[list, 
     if miss:
         df_wide = df_wide.with_columns(**{c: pl.lit(0.0, dtype=pl.Float64) for c in miss})
     df_wide = df_wide.select(["date", *tick]).sort("date")
-
     idx_map = {d: i for i, d in enumerate(df_wide.get_column("date").to_list())}
 
     def _norm(w: np.ndarray) -> np.ndarray:
@@ -218,6 +227,7 @@ if N == 0 or df_ret_wide.height < 10:
     st.error("Dataset too small for scenarios.")
     st.stop()
 
+
 # ─────────────────────────────────────────────────────────────────────
 # Sidebar — core params
 # ─────────────────────────────────────────────────────────────────────
@@ -253,10 +263,9 @@ with st.sidebar:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Allocator factory (no turnover budget here)
+# Allocator factory (no turnover budget)
 # ─────────────────────────────────────────────────────────────────────
 def _cov_ewma(R: np.ndarray, lam: float = 0.94) -> np.ndarray:
-    """EWMA covariance with PSD safeguard."""
     if R.size == 0:
         return np.eye(0)
     T, N_ = R.shape
@@ -284,7 +293,6 @@ def _get_cov(win: pl.DataFrame, cols: list[str]) -> np.ndarray:
 
 
 def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
-    """Map a rolling window to weights under box+simplex constraints."""
     if kind == "Equal-Weight":
 
         def base_alloc(win: pl.DataFrame) -> np.ndarray:
@@ -337,7 +345,7 @@ def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
             cols = [c for c in win.columns if c != "date"]
             Sigma_w = _get_cov(win, cols)
             w_bench = np.full(len(cols), 1.0 / max(len(cols), 1))
-            mu_eff = 2.0 * (Sigma_w @ w_bench)  # proxy for tracking-error min
+            mu_eff = 2.0 * (Sigma_w @ w_bench)
             w = pgd_box_simplex_l2(
                 mu_eff, Sigma_w, gamma=1.0, w_min=w_min, w_max=w_max, lam_turnover=0.0
             )
@@ -354,16 +362,9 @@ def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Engine wrapper (auto-detects param names; attaches diagnostics)
+# Engine wrapper
 # ─────────────────────────────────────────────────────────────────────
 def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
-    """
-    Call the engine with a recording allocator:
-    - captures every window end-date and computed weights
-    - if engine returns no/constant weights, we override with recorded ones
-    - attaches diagnostics (_alloc_hook/_ret_hook, recorder stats)
-    """
-    # --- 1) build base allocator ---
     base_alloc = make_allocator(alloc_kind)
 
     class _Recorder:
@@ -374,13 +375,11 @@ def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
 
         def __call__(self, win: pl.DataFrame) -> np.ndarray:
             self.calls += 1
-            # window end-date = last date of the window
             try:
                 d_last = win.get_column("date")[-1]
             except Exception:
                 d_last = None
             w = np.asarray(base_alloc(win), float).ravel()
-            # store normalized
             s = float(np.sum(w))
             w = w / s if s > 1e-12 else w
             self.dates.append(d_last)
@@ -390,7 +389,6 @@ def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
         def as_array(self) -> np.ndarray:
             if not self.weights:
                 return np.zeros((0, 0), float)
-            # pad ragged just in case (shouldn’t happen)
             Nmax = max(len(w) for w in self.weights)
             W = np.zeros((len(self.weights), Nmax), float)
             for i, w in enumerate(self.weights):
@@ -399,7 +397,6 @@ def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
 
     rec = _Recorder()
 
-    # --- 2) resolve engine signature & kwargs (same logic as before) ---
     bench_w = np.full(N, 1.0 / max(N, 1))
     df_arg = df_wide.select(["date", *tickers]).sort("date")
     sig = inspect.signature(backtest_rebalanced)
@@ -409,7 +406,7 @@ def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
         "cost_bps": float(cost_bps),
         "bench_weights": bench_w,
     }
-    # returns arg
+
     for rn in ["df_ret_wide", "returns_wide", "df_returns", "returns", "R_wide", "data"]:
         if rn in sig.parameters:
             kw[rn] = df_arg
@@ -419,7 +416,6 @@ def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
         kw["df_ret_wide"] = df_arg
         ret_hook = "fallback(df_ret_wide)"
 
-    # allocator arg
     for an in ["allocator", "allocator_factory", "weights_func", "strategy"]:
         if an in sig.parameters:
             kw[an] = (lambda: rec) if an == "allocator_factory" else rec
@@ -429,19 +425,15 @@ def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
         kw["allocator"] = rec
         alloc_hook = "fallback(allocator)"
 
-    # --- 3) run engine ---
     bt = backtest_rebalanced(**kw)
     if not isinstance(bt, dict):
         bt = dict(bt)
 
-    # --- 4) attach diagnostics & recorder dumps ---
     bt["_alloc_hook"] = alloc_hook
     bt["_ret_hook"] = ret_hook
     bt["_alloc_calls"] = rec.calls
 
-    # engine weights
     W_eng = np.asarray(bt.get("weights", []), float)
-    # recorded weights
     W_rec = rec.as_array()
 
     def _is_constant_panel(W: np.ndarray) -> bool:
@@ -450,40 +442,32 @@ def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
         dif = np.max(np.abs(W[1:] - W[:-1]), axis=1)
         return float(np.max(dif)) <= 1e-12
 
-    # If engine didn’t store weights OR panel is constant but recorder shows variation → override
     if (W_eng.ndim != 2 or W_eng.size == 0 or _is_constant_panel(W_eng)) and (
         W_rec.ndim == 2 and W_rec.size > 0 and not _is_constant_panel(W_rec)
     ):
         bt["weights"] = W_rec
-        # adopt recorder dates as rebalance_dates if sensible
         if rec.dates and len(rec.dates) == W_rec.shape[0]:
             bt["rebalance_dates"] = rec.dates
-        # keep original tickers if present; else assume current ticker list
         bt.setdefault("tickers", tickers)
 
-    # Always attach recorded series for transparency
     bt["_weights_recorded"] = W_rec
     bt["_rebalance_dates_recorded"] = rec.dates
-
     return bt
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Baseline (reference) — run once
+# Baseline (reference)
 # ─────────────────────────────────────────────────────────────────────
 st.subheader("Baseline (reference)")
 with st.spinner("Running baseline..."):
     df_base = df_ret_wide.select(["date", *tickers]).sort("date")
     base_bt = _run_engine(df_base)
 
-# Main equity + drawdown
-st.plotly_chart(
+show_plot(
     equity_and_drawdown(base_bt["dates"], base_bt["equity"], title="Baseline · Equity & Drawdown"),
-    width="stretch",
     key=next_key("baseline-ed"),
 )
 
-# Metrics (safe)
 try:
     base_m = bt_metrics.compute_backtest_metrics(base_bt)
 except Exception:
@@ -495,27 +479,22 @@ st.dataframe(
     key=next_key("baseline-metrics"),
 )
 
-# Weights heatmap
-st.plotly_chart(
+show_plot(
     plot_weights_heatmap(
         base_bt["dates"], base_bt["tickers"], base_bt["weights"], title="Baseline · Weights"
     ),
-    width="stretch",
     key=next_key("baseline-weights"),
 )
 
-# Turnover (robust reconstruction if needed)
 dates_to, vals_to = _ensure_turnover_with_drift(base_bt, df_base)
 if vals_to.size > 0 and len(dates_to) == vals_to.size:
-    st.plotly_chart(
+    show_plot(
         plot_turnover(dates_to, vals_to, title="Baseline · Turnover"),
-        width="stretch",
         key=next_key("baseline-turnover"),
     )
 else:
     st.caption("Turnover series not available for Baseline.")
 
-# Rebalance diagnostics
 with st.expander("Rebalance diagnostics", expanded=False):
     st.write(f"Allocator hook used by engine: **{base_bt.get('_alloc_hook', '?')}**")
     st.write(f"Returns hook used by engine: **{base_bt.get('_ret_hook', '?')}**")
@@ -533,13 +512,11 @@ with st.expander("Rebalance diagnostics", expanded=False):
             )
         if diffs.size and 0 < float(np.max(diffs)) < 5e-3:
             st.info(
-                "Weights move is very small (<0.5%). If the heatmap looks flat, "
-                "try a tighter color clamp in the compare heatmap (zmax_abs≈0.01)."
+                "Weights move is very small (<0.5%). If the heatmap looks flat, try a tighter color clamp in the compare heatmap (zmax_abs≈0.01)."
             )
     else:
         st.write("No weights captured from engine.")
 
-# Data sanity checks (detect degenerate inputs)
 with st.expander("Data sanity checks", expanded=False):
     try:
         cols = [c for c in df_base.columns if c != "date"]
@@ -574,10 +551,8 @@ with st.expander("Data sanity checks", expanded=False):
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Scenarios — settings (sidebar) + run + comparisons
+# Scenarios — settings + run + comparisons
 # ─────────────────────────────────────────────────────────────────────
-
-# Sidebar controls for scenarios
 with st.sidebar:
     st.markdown("---")
     st.header("Scenario settings")
@@ -618,7 +593,6 @@ with st.sidebar:
         "Crash size (bps)", -5000.0, 5000.0, -500.0, 10.0, help="e.g., −500 bps = −5% one-day gap."
     )
 
-# Build scenario list only if there is a real shock/config difference
 cfgs: list[ScenarioConfig] = []
 mean_shift = (mean_shift_bps / 10_000.0) if abs(mean_shift_bps) > 1e-12 else None
 crash_tuple = (int(crash_day), crash_drop_bps / 10_000.0) if crash_enable else None
@@ -640,7 +614,6 @@ else:
     )
 
 
-# Helper to flatten 1-row metrics frames
 def _flatten_metrics_row(m: pl.DataFrame | pd.DataFrame) -> dict[str, float]:
     out: dict[str, float] = {}
     try:
@@ -685,7 +658,6 @@ def _flatten_metrics_row(m: pl.DataFrame | pd.DataFrame) -> dict[str, float]:
     return out
 
 
-# Run scenarios (only alternative vs baseline)
 if cfgs:
     st.markdown("---")
     st.subheader("Scenario comparison vs Baseline")
@@ -693,7 +665,7 @@ if cfgs:
     with st.spinner("Running scenarios…"):
         results = run_scenarios(
             cfgs,
-            df_ret_wide=df_base,  # keep baseline chronology for fair comparison
+            df_ret_wide=df_base,
             allocator_factory=lambda: make_allocator(alloc_kind),
             lookback=int(lookback),
             rebalance_freq=rebalance_freq,
@@ -701,7 +673,6 @@ if cfgs:
             bench_weights=np.full(N, 1.0 / max(N, 1)),
         )
 
-    # Metrics comparison table
     rows: list[dict] = []
     for res in results:
         m = res.get("metrics", None)
@@ -712,15 +683,13 @@ if cfgs:
         df_comp = pl.DataFrame(rows, orient="row")
         st.dataframe(df_comp.to_pandas(), width="stretch", key=next_key("sc-metrics-table"))
 
-        # ΔCAGR vs baseline, if present
         base_cagr = _extract_metric_scalar(base_m, "CAGR", default=np.nan)
         if np.isfinite(base_cagr) and "CAGR" in df_comp.columns:
             fig_delta = plot_metric_delta_bars(
                 df_comp.to_pandas(), baseline_value=base_cagr, metric_col="CAGR"
             )
-            st.plotly_chart(fig_delta, width="stretch", key=next_key("delta-cagr"))
+            show_plot(fig_delta, key=next_key("delta-cagr"))
 
-    # Detailed charts per scenario
     for idx, res in enumerate(results):
         bt = res.get("bt", {})
         sc_name = str(res.get("name", f"Scenario {idx + 1}"))
@@ -728,8 +697,7 @@ if cfgs:
 
         st.subheader(f"Scenario: {sc_name}")
 
-        # Equity & drawdown comparisons
-        st.plotly_chart(
+        show_plot(
             plot_equity_compare(
                 base_bt["dates"],
                 base_bt["equity"],
@@ -737,10 +705,9 @@ if cfgs:
                 name_a="Baseline",
                 name_b=sc_name,
             ),
-            width="stretch",
             key=next_key(f"{sec_prefix}-equity-compare"),
         )
-        st.plotly_chart(
+        show_plot(
             plot_drawdown_compare(
                 base_bt["dates"],
                 base_bt["equity"],
@@ -748,11 +715,9 @@ if cfgs:
                 name_a="Baseline",
                 name_b=sc_name,
             ),
-            width="stretch",
             key=next_key(f"{sec_prefix}-dd-compare"),
         )
 
-        # Weights delta heatmap (Scenario vs Baseline)
         try:
             w_a = _to_numpy_2d(base_bt.get("weights", []))
             w_b = _to_numpy_2d(bt.get("weights", np.zeros_like(w_a)))
@@ -764,19 +729,16 @@ if cfgs:
                 name_a="Baseline",
                 name_b=sc_name,
                 mode="delta",
-                # If moves are tiny, a tighter clamp reveals structure
                 zmax_abs=(0.01 if alloc_kind in {"Risk Parity", "HRP"} else 0.05),
             )
-            st.plotly_chart(fig_wcmp, width="stretch", key=next_key(f"{sec_prefix}-weights-delta"))
+            show_plot(fig_wcmp, key=next_key(f"{sec_prefix}-weights-delta"))
         except Exception as e:
             st.caption(f"Weight comparison heatmap skipped: {e}")
 
 
 # ─────────────────────────────────────────────────────────────────────
-# Optional blocks: Beta-correlated shock, Historical slice, Tornado
+# Optional: Beta-correlated, Historical slice, Tornado
 # ─────────────────────────────────────────────────────────────────────
-
-# --- Sidebar controls for optional analyses ---
 with st.sidebar:
     st.markdown("---")
     st.header("Beta-correlated shock")
@@ -808,7 +770,6 @@ with st.sidebar:
 def _rolling_beta_last_window(
     df_wide: pl.DataFrame, index_col: str, lookback: int
 ) -> dict[str, float]:
-    """CAPM betas in the last window vs chosen index; NaN-safe."""
     df = df_wide.sort("date")
     win = df if df.height <= lookback else df.tail(lookback)
     cols = [c for c in win.columns if c != "date"]
@@ -829,7 +790,6 @@ def _rolling_beta_last_window(
     return betas
 
 
-# Beta-correlated shock
 if use_beta:
     st.markdown("---")
     st.subheader("Beta-correlated shock")
@@ -838,46 +798,41 @@ if use_beta:
         shock_map = {asset: beta * float(index_move) for asset, beta in betas.items()}
         df_beta = apply_shock_map_to_wide(df_base, shock_map)
         bt_beta = _run_engine(df_beta)
-        st.plotly_chart(
+        show_plot(
             equity_and_drawdown(
                 bt_beta["dates"],
                 bt_beta["equity"],
                 title=f"Beta shock: {index_col} move {index_move:+.1%}",
             ),
-            width="stretch",
             key=next_key("beta-ed"),
         )
         st.dataframe(_safe_metrics(bt_beta).to_pandas(), width="stretch")
     except Exception as e:
         st.info(f"Beta shock skipped: {e}")
 
-# Historical slice
 if use_hist:
     st.markdown("---")
     st.subheader("Historical slice (replay)")
     try:
         df_slice = historical_slice_returns(df_base, hist_start, hist_end, tickers=tickers)
         bt_slice = _run_engine(df_slice)
-        st.plotly_chart(
+        show_plot(
             equity_and_drawdown(
                 bt_slice["dates"],
                 bt_slice["equity"],
                 title=f"Historical slice {hist_start} → {hist_end}",
             ),
-            width="stretch",
             key=next_key("hist-ed"),
         )
         st.dataframe(_safe_metrics(bt_slice).to_pandas(), width="stretch")
     except Exception as e:
         st.info(f"Historical slice skipped: {e}")
 
-# ─────────────────────────────────────────────────────────────────────
-# Tornado sensitivity — engine-first; equal-weight fallback (always renders)
-# ─────────────────────────────────────────────────────────────────────
 
-
+# ─────────────────────────────────────────────────────────────────────
+# Tornado sensitivity
+# ─────────────────────────────────────────────────────────────────────
 def _cagr_from_portfolio_returns(rp: np.ndarray) -> float:
-    """Compute CAGR from a daily return series."""
     rp = np.asarray(rp, dtype=float)
     if rp.size < 2:
         return float("nan")
@@ -886,7 +841,6 @@ def _cagr_from_portfolio_returns(rp: np.ndarray) -> float:
 
 
 def _cagr_equal_weight(df_wide: pl.DataFrame) -> float:
-    """Equal-weight portfolio metric; independent from engine."""
     cols = [c for c in df_wide.columns if c != "date"]
     if not cols:
         return float("nan")
@@ -896,7 +850,6 @@ def _cagr_equal_weight(df_wide: pl.DataFrame) -> float:
 
 
 def _try_engine_cagr(df_wide: pl.DataFrame) -> float:
-    """Attempt CAGR via engine; return NaN if unusable (to enable fallback)."""
     try:
         bt = _run_engine(df_wide)
         eq = np.asarray(bt.get("equity", []), float)
@@ -912,7 +865,6 @@ if do_tornado:
     st.markdown("---")
     st.subheader("One-at-a-time sensitivity (Tornado)")
     try:
-        # Base metric: engine → fallback to equal-weight
         base_cagr = _extract_metric_scalar(base_m, "CAGR", default=np.nan)
         if not np.isfinite(base_cagr):
             base_cagr = _try_engine_cagr(df_base)
@@ -923,7 +875,6 @@ if do_tornado:
         engine_effective = False
 
         for tk in tickers:
-            # Down shock
             df_down = apply_shock_map_to_wide(df_base, {tk: -abs(float(delta))})
             met_down = _try_engine_cagr(df_down)
             if not np.isfinite(met_down):
@@ -931,7 +882,6 @@ if do_tornado:
             else:
                 engine_effective = True
 
-            # Up shock
             df_up = apply_shock_map_to_wide(df_base, {tk: +abs(float(delta))})
             met_up = _try_engine_cagr(df_up)
             if not np.isfinite(met_up):
@@ -940,28 +890,18 @@ if do_tornado:
                 engine_effective = True
 
             sens_rows.append(
-                {
-                    "asset": tk,
-                    "metric": "CAGR",
-                    "base": base_cagr,
-                    "down": met_down,
-                    "up": met_up,
-                }
+                {"asset": tk, "metric": "CAGR", "base": base_cagr, "down": met_down, "up": met_up}
             )
 
         df_sens = pd.DataFrame(sens_rows)
         fig_tornado = plot_tornado_sensitivity(
-            df_sens,
-            metric_label="CAGR",
-            down_label="Down",
-            up_label="Up",
+            df_sens, metric_label="CAGR", down_label="Down", up_label="Up"
         )
-        st.plotly_chart(fig_tornado, width="stretch", key=next_key("tornado"))
+        show_plot(fig_tornado, key=next_key("tornado"))
 
         if not engine_effective:
             st.caption(
-                "Tornado shown using **engine-agnostic fallback (equal-weight)** "
-                "because the engine did not reflect shocks. Check the diagnostics expander above."
+                "Tornado shown using **engine-agnostic fallback (equal-weight)** because the engine did not reflect shocks. Check the diagnostics expander above."
             )
 
         with st.expander("Download sensitivity (CSV)", expanded=False):
@@ -990,7 +930,6 @@ try:
             mime="text/csv",
             key=next_key("dl-base-metrics"),
         )
-    # Scenario metrics (if table was created in Part 2)
     if "df_comp" in locals() and isinstance(df_comp, pl.DataFrame) and df_comp.height > 0:
         st.download_button(
             "Download scenario metrics (CSV)",
