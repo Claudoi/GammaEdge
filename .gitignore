@@ -27,3 +27,4 @@ venv/
 coverage.xml
 htmlcov/
 results/logs/
+logs/
