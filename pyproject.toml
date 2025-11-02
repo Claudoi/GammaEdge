@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "gammaedge"
-version = "2.0.0"
+version = "2.1.0-dev"
 description = "Portfolio optimization, risk analytics, and backtesting platform"
 authors = ["Tu Nombre <tu@email.com>"]
 readme = "README.md"
