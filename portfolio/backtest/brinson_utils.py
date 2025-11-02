@@ -1,38 +1,60 @@
+# portfolio/backtest/brinson_utils.py
+
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Iterable
 from datetime import datetime
 
+import numpy as np
 import pandas as pd
 import polars as pl
+
+__all__ = [
+    "ensure_datetime",
+    "coerce_brinson_timeseries_to_long",
+    "to_pandas_2d_returns",
+    "align_columns",
+]
 
 
 # ────────────────────────────────────────────────────────────────────
 # ensure_datetime: robusto a Object/NaT, con tipado limpio
 # ────────────────────────────────────────────────────────────────────
 def ensure_datetime(df: pl.DataFrame, col: str = "date") -> pl.DataFrame:
+    """Garantiza que df[col] sea pl.Datetime con valores válidos (no todo null)."""
+    if col not in df.columns:
+        return df
+
     dt = df.schema.get(col)
     if dt == pl.Datetime:
         return df
 
-    # Intento directo
+    # 1) Si viene como string, intenta strptime primero (mejor que cast).
+    if dt == pl.Utf8:
+        try:
+            df2 = df.with_columns(pl.col(col).str.strptime(pl.Datetime, strict=False))
+            # Acepta solo si realmente hay algún valor no nulo
+            if (
+                df2.schema.get(col) == pl.Datetime
+                and df2.select(pl.col(col).is_not_null().any()).item()
+            ):
+                return df2
+        except Exception:
+            pass
+
+    # 2) Intento de cast directo; acepta solo si no queda todo a null.
     try:
         df1 = df.with_columns(pl.col(col).cast(pl.Datetime, strict=False))
-        if df1.schema.get(col) == pl.Datetime:
+        if (
+            df1.schema.get(col) == pl.Datetime
+            and df1.select(pl.col(col).is_not_null().any()).item()
+        ):
             return df1
     except Exception:
         pass
 
-    # Parse desde string
-    try:
-        df2 = df.with_columns(
-            pl.col(col).cast(pl.Utf8, strict=False).str.strptime(pl.Datetime, strict=False)
-        )
-        if df2.schema.get(col) == pl.Datetime:
-            return df2
-    except Exception:
-        pass
-
-    # Fallback robusto vía pandas
+    # 3) Fallback robusto vía pandas
     try:
         s = df.get_column(col)
         pd_dt = pd.to_datetime(list(s), errors="coerce")
@@ -40,57 +62,58 @@ def ensure_datetime(df: pl.DataFrame, col: str = "date") -> pl.DataFrame:
             x.to_pydatetime() if not pd.isna(x) else None for x in pd_dt
         ]
         ser = pl.Series(col, py_vals).cast(pl.Datetime, strict=False)
-        return df.with_columns(ser)
+        df3 = df.with_columns(ser)
+        return df3
     except Exception:
         return df
 
 
 # ────────────────────────────────────────────────────────────────────
-# coerce_brinson_timeseries_to_long: soporta long/group_id, long/group,
-# wide metric_{gid}, e “inyecta” group_id=0 cuando es global-only.
-# Además: joins robustos para evitar date_right por discrepancias.
+# Brinson: coerción a formato largo estándar
 # ────────────────────────────────────────────────────────────────────
+
+
 def coerce_brinson_timeseries_to_long(df: pl.DataFrame) -> pl.DataFrame:
     """
-    Normaliza el timeseries de Brinson al formato largo estándar:
-      ['date', 'group_id', 'alloc', 'select', 'interact', 'total']
+    Normaliza a ['date', 'group_id', 'alloc', 'select', 'interact', 'total'].
+    Soporta:
+      - Formato largo con 'group_id'
+      - Formato largo con 'group' (etiquetas -> ids)
+      - Formato ancho con columnas tipo 'alloc_0', 'alloc_1', etc.
+    Regla clave: sólo conserva pares (date, group_id) realmente presentes en los datos.
     """
+    # Asegura que 'date' sea Datetime desde el inicio (evita NaT/None posteriores)
+    if "date" in df.columns:
+        df = ensure_datetime(df, "date")
+
     cols = set(df.columns)
     metrics = ["alloc", "select", "interact", "total"]
     need = {"date", *metrics}
 
-    # 0) global-only (inyecta group_id=0)
+    # 0) Global-only (inyecta group_id = 0)
     if need.issubset(cols) and "group_id" not in cols and "group" not in cols:
         out0 = (
             df.select(list(need))
             .with_columns(pl.lit(0).alias("group_id"))
             .select(["date", "group_id"] + metrics)
         )
-        return ensure_datetime(out0, "date").with_columns(
-            pl.col("group_id").cast(pl.Int64, strict=False)
-        )
+        return out0.with_columns(pl.col("group_id").cast(pl.Int64, strict=False))
 
-    # 1) long con group_id
+    # 1) Largo con group_id
     if {"group_id", *need}.issubset(cols):
         out1 = df.select(["date", "group_id"] + metrics)
-        out1 = ensure_datetime(out1, "date").with_columns(
-            pl.col("group_id").cast(pl.Int64, strict=False)
-        )
-        return out1
+        return out1.with_columns(pl.col("group_id").cast(pl.Int64, strict=False))
 
-    # 2) long con group (labels string)
+    # 2) Largo con group (labels string -> ids)
     if {"group", *need}.issubset(cols):
         uniq = sorted([g for g in df.get_column("group").unique().to_list() if g is not None])
         mapping: dict[str, int] = {g: i for i, g in enumerate(uniq)}
         df2 = df.with_columns(
             pl.col("group").map_elements(lambda g: mapping.get(g, -1)).alias("group_id")
         ).select(["date", "group_id"] + metrics)
-        df2 = ensure_datetime(df2, "date").with_columns(
-            pl.col("group_id").cast(pl.Int64, strict=False)
-        )
-        return df2
+        return df2.with_columns(pl.col("group_id").cast(pl.Int64, strict=False))
 
-    # 3) wide metric_{gid}
+    # 3) Ancho metric_{gid}: melt por métrica, concat y pivot (sin joins)
     pattern_cols: dict[str, list[str]] = {}
     for m in metrics:
         cs = [c for c in df.columns if c.startswith(m + "_") or c.startswith(m + "_g")]
@@ -103,64 +126,130 @@ def coerce_brinson_timeseries_to_long(df: pl.DataFrame) -> pl.DataFrame:
     if any(pattern_cols[m] for m in metrics):
 
         def _parse_gid(name: str) -> int:
-            # sufijo tras '_' o trailing digits; soporta 'm_g0', 'm_0', 'm0'
+            # 'm_g0', 'm_0', 'm0' -> 0
             tail = name.split("_", 1)[-1] if "_" in name else name[len(name.rstrip("0123456789")) :]
             if tail.startswith(("g", "G")):
                 tail = tail[1:]
             digits = "".join(ch for ch in tail if ch.isdigit())
             return int(digits) if digits else -1
 
-        long_parts: list[pl.DataFrame] = []
+        long_rows: list[pl.DataFrame] = []
         for m in metrics:
             cs = pattern_cols[m]
             if not cs:
                 continue
-            melted = df.select(["date"] + cs).melt(
-                id_vars="date", variable_name="col", value_name=m
-            )
-            melted = melted.with_columns(
-                pl.col(m).cast(pl.Float64, strict=False),
-                pl.col("col").map_elements(_parse_gid).alias("group_id"),
-            ).drop("col")
-            # Normaliza claves antes de juntar
-            melted = ensure_datetime(melted, "date").with_columns(
-                pl.col("group_id").cast(pl.Int64, strict=False)
-            )
-            long_parts.append(melted.select(["date", "group_id", m]))
 
-        # Ensambla con joins robustos: coalesce y drop de sufijos si aparecen
-        out = long_parts[0]
-        for part in long_parts[1:]:
-            out = out.join(part, on=["date", "group_id"], how="outer", suffix="_r")
-            # saneo defensivo de claves duplicadas
-            if "date_r" in out.columns:
-                out = out.with_columns(
-                    pl.coalesce([pl.col("date"), pl.col("date_r")]).alias("date")
-                ).drop("date_r")
-            if "date_right" in out.columns:
-                out = out.with_columns(
-                    pl.coalesce([pl.col("date"), pl.col("date_right")]).alias("date")
-                ).drop("date_right")
-            if "group_id_r" in out.columns:
-                out = out.with_columns(
-                    pl.coalesce([pl.col("group_id"), pl.col("group_id_r")]).alias("group_id")
-                ).drop("group_id_r")
-            if "group_id_right" in out.columns:
-                out = out.with_columns(
-                    pl.coalesce([pl.col("group_id"), pl.col("group_id_right")]).alias("group_id")
-                ).drop("group_id_right")
+            melted = (
+                df.select(["date"] + cs)
+                .melt(id_vars="date", variable_name="col", value_name="value")
+                .with_columns(
+                    pl.col("value").cast(pl.Float64, strict=False),
+                    pl.col("col").map_elements(_parse_gid).alias("group_id"),
+                    pl.lit(m).alias("metric"),
+                )
+                .drop("col")
+            )
+            # Conserva sólo observaciones reales
+            melted = melted.filter(pl.col("value").is_not_null())
 
-        out = out.select(["date", "group_id"] + [m for m in metrics if m in out.columns])
-        out = ensure_datetime(out, "date").with_columns(
-            pl.col("group_id").cast(pl.Int64, strict=False)
+            # Compacta por seguridad (si hubiera duplicados accidentales)
+            melted = melted.group_by(["date", "group_id", "metric"]).agg(
+                pl.col("value").first().alias("value")
+            )
+
+            long_rows.append(melted)
+
+        if not long_rows:
+            raise ValueError("No wide metric_* columns found.")
+
+        stacked = pl.concat(long_rows, how="vertical_relaxed").with_columns(
+            pl.col("group_id").cast(pl.Int64, strict=False),
+            pl.col("metric").cast(pl.Utf8, strict=False),
         )
-        # Asegura que todas las métricas existan, aunque vengan ausentes del wide
+
+        # Pivot a ancho: una fila por (date, group_id), columnas = métricas
+        out = stacked.pivot(
+            values="value",
+            index=["date", "group_id"],
+            on="metric",
+            aggregate_function="first",
+        ).sort(["date", "group_id"])
+
+        # Garantiza que existan todas las métricas como columnas
         for m in metrics:
             if m not in out.columns:
                 out = out.with_columns(pl.lit(None).cast(pl.Float64).alias(m))
+
         return out.select(["date", "group_id"] + metrics)
 
+    # Si no encaja en ninguno de los formatos soportados:
     raise ValueError(
         "Unsupported Brinson timeseries format: neither {group_id, group} nor wide metric_* columns found. "
         f"Available columns: {sorted(df.columns)}"
     )
+
+
+# ────────────────────────────────────────────────────────────────────
+# Helpers: coerción de retornos 2D y alineación de columnas
+# ────────────────────────────────────────────────────────────────────
+def to_pandas_2d_returns(obj: object) -> pd.DataFrame:
+    """
+    Convierte diferentes entradas a un DataFrame de pandas 2D con floats (retornos).
+    Acepta:
+      - pandas.DataFrame (con o sin 'date' como columna)
+      - polars.DataFrame (con o sin 'date')
+      - np.ndarray / secuencias 2D
+    - Elimina/ignora 'date' como columna y la usa como índice si es parseable.
+    - Reemplaza NaN/±inf por 0.0 para evitar explosiones.
+    """
+    # Pandas
+    if isinstance(obj, pd.DataFrame):
+        df = obj.copy()
+        if "date" in df.columns:
+            if not isinstance(df.index, pd.DatetimeIndex):
+                with contextlib.suppress(Exception):
+                    df.index = pd.to_datetime(df["date"])
+            df = df.drop(columns=["date"])
+        df = df.select_dtypes(include=[np.number]).astype(float)
+        df = df.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        return df
+
+    # Polars
+    if isinstance(obj, pl.DataFrame):
+        df_pl = obj
+        if "date" in df_pl.columns:
+            pdf = df_pl.to_pandas()
+            with contextlib.suppress(Exception):
+                pdf.index = pd.to_datetime(pdf["date"])
+            if "date" in pdf.columns:
+                pdf = pdf.drop(columns=["date"])
+        else:
+            pdf = df_pl.to_pandas()
+        pdf = pdf.select_dtypes(include=[np.number]).astype(float)
+        pdf = pdf.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        return pdf
+
+    # Numpy / secuencias
+    try:
+        arr = np.asarray(obj, dtype=float)
+        if arr.ndim == 1:
+            arr = arr.reshape(-1, 1)
+        cols = [f"c{i}" for i in range(arr.shape[1])]
+        pdf = pd.DataFrame(arr, columns=cols)
+        pdf = pdf.replace([np.inf, -np.inf], np.nan).fillna(0.0)
+        return pdf
+    except Exception as _:
+        raise AttributeError("Unsupported input for to_pandas_2d_returns(...)")  # noqa: B904
+
+
+def align_columns(cols_a: Iterable[str], cols_b: Iterable[str]) -> list[str]:
+    """
+    Devuelve la intersección de columnas preservando el orden de `cols_a`.
+    Si la intersección es vacía, intenta el orden de `cols_b`.
+    """
+    set_b = set(cols_b)
+    out = [c for c in cols_a if c in set_b]
+    if not out:
+        set_a = set(cols_a)
+        out = [c for c in cols_b if c in set_a]
+    return out
