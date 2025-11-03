@@ -1,41 +1,65 @@
 # portfolio/attribution/brinson.py
-
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 import polars as pl
 
-# We reuse the robust normalizer you just fixed.
 from portfolio.backtest.brinson_utils import coerce_brinson_timeseries_to_long
 
-
-@dataclass(frozen=True)
-class BrinsonResult:
-    """Container for Brinson time-series output."""
-
-    df: pl.DataFrame  # columns: date, group_id, alloc, select, interact, total
+BRINSON_METRICS = ["alloc", "select", "interact", "total"]
 
 
-def _validate_long_schema(df: pl.DataFrame) -> None:
-    needed = {"date", "group_id", "alloc", "select", "interact", "total"}
-    missing = needed.difference(df.columns)
-    if missing:
-        raise ValueError(f"Missing required columns: {sorted(missing)}")
-
-
-def compute_brinson_timeseries(frame: pl.DataFrame) -> BrinsonResult:
+@dataclass
+class BrinsonAttribution:
     """
-    Normalize any supported input to Brinson long format and return it.
+    Contenedor sencillo para resultados de Brinson.
 
-    This is a thin, predictable wrapper around `coerce_brinson_timeseries_to_long` so
-    higher layers can depend on a stable function name in the attribution module.
+    - timeseries: dataframe largo (date, group_id, métricas).
+    - by_group: agregado por group_id.
+    - total: fila única con el total del periodo.
     """
-    # 1) Normalize to the canonical long format you just stabilized.
-    long_df = coerce_brinson_timeseries_to_long(frame)
 
-    # 2) Validate schema for downstream consumers.
-    _validate_long_schema(long_df)
+    timeseries: pl.DataFrame
+    by_group: pl.DataFrame
+    total: pl.DataFrame
 
-    # 3) Return as a structured result (keeps API future-proof).
-    return BrinsonResult(df=long_df)
+
+def _build_agg_exprs(how: Literal["sum", "mean"]) -> list[pl.Expr]:
+    if how == "sum":
+        return [pl.col(m).sum().alias(m) for m in BRINSON_METRICS]
+    if how == "mean":
+        return [pl.col(m).mean().alias(m) for m in BRINSON_METRICS]
+    msg = f"Unsupported aggregation '{how}'. Use 'sum' or 'mean'."
+    raise ValueError(msg)
+
+
+def compute_brinson_attribution(
+    df: pl.DataFrame,
+    how: Literal["sum", "mean"] = "sum",
+) -> BrinsonAttribution:
+    """
+    Normaliza cualquier timeseries "tipo Brinson" y devuelve:
+
+    - timeseries: formato largo estándar vía `coerce_brinson_timeseries_to_long`.
+    - by_group: agregado por group_id (sum o mean).
+    - total: métricas agregadas sobre todo el periodo.
+
+    Parameters
+    ----------
+    df:
+        DataFrame de entrada, en cualquiera de los formatos soportados
+        por `coerce_brinson_timeseries_to_long` (global-only, long, wide).
+    how:
+        Agregación para `by_group`: "sum" (por defecto) o "mean".
+    """
+    ts = coerce_brinson_timeseries_to_long(df)
+
+    agg_exprs = _build_agg_exprs(how)
+
+    by_group = ts.group_by("group_id").agg(agg_exprs).sort("group_id")
+
+    total = ts.select([pl.col(m).sum().alias(m) for m in BRINSON_METRICS])
+
+    return BrinsonAttribution(timeseries=ts, by_group=by_group, total=total)

@@ -1,34 +1,65 @@
 # portfolio/attribution/euler.py
-
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
+import pandas as pd
 
 
-def euler_risk_contributions(weights: np.ndarray, cov: np.ndarray) -> np.ndarray:
+def euler_risk_contributions(
+    weights: Sequence[float] | pd.Series,
+    cov: np.ndarray | pd.DataFrame,
+) -> pd.Series:
     """
-    Euler risk contributions for a covariance risk model.
+    Calcula las Euler risk contributions para una cartera con volatilidad:
 
-    RC_i = w_i * (Sigma w)_i
-    Sum(RC) = w^T Sigma w   (portfolio variance)
+        σ_p = sqrt(wᵀ Σ w)
+
+    Usando la descomposición de Euler:
+
+        RC_i = w_i * (Σ w)_i / σ_p
+
+    donde Σ es la matriz de covarianzas.
 
     Parameters
     ----------
-    weights : array-like, shape (n,)
-        Portfolio weights.
-    cov : array-like, shape (n, n)
-        Covariance matrix (symmetric PSD).
+    weights:
+        Pesos de la cartera (long-only o no). Puede ser sequence o pd.Series.
+    cov:
+        Matriz de covarianzas (numpy o pandas DataFrame) de dimensión NxN.
 
     Returns
     -------
-    rc : ndarray, shape (n,)
-        Euler risk contributions per asset.
+    pandas.Series
+        Serie con las contribuciones al riesgo por activo, que suman σ_p.
     """
-    w = np.asarray(weights, dtype=float).reshape(-1)
-    S = np.asarray(cov, dtype=float)
-    if S.shape[0] != S.shape[1] or S.shape[0] != w.shape[0]:
-        raise ValueError("Shape mismatch between weights and covariance")
+    w = np.asarray(weights, dtype=float).reshape(-1, 1)
+    sigma = np.asarray(cov, dtype=float)
 
-    marg = S @ w  # marginal contributions
-    rc = w * marg  # Euler contributions
-    return rc
+    n = w.shape[0]
+    if sigma.shape != (n, n):
+        msg = f"Covariance matrix must be {n}x{n}, got {sigma.shape}."
+        raise ValueError(msg)
+
+    port_var = float(w.T @ sigma @ w)
+    if port_var <= 0.0:
+        msg = "Portfolio variance must be positive for Euler decomposition."
+        raise ValueError(msg)
+    port_sigma = float(np.sqrt(port_var))
+
+    # Σ w → marginal contributions
+    marginal = sigma @ w  # (n, 1)
+
+    # Euler RC = w_i * MC_i / σ_p
+    contrib = (w * marginal) / port_sigma
+    contrib = contrib.ravel()
+
+    if isinstance(weights, pd.Series):
+        index = weights.index
+    elif isinstance(cov, pd.DataFrame):
+        index = cov.index
+    else:
+        index = np.arange(n)
+
+    return pd.Series(contrib, index=index, name="risk_contribution")

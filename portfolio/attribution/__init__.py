@@ -1,8 +1,10 @@
-# portfolio/attribution/__init__.py
-from .brinson import compute_brinson_timeseries
-from .euler import euler_risk_contributions
+from __future__ import annotations
+
+from portfolio.attribution.brinson import BrinsonAttribution, compute_brinson_attribution
+from portfolio.attribution.euler import euler_risk_contributions
 
 __all__ = [
-    "compute_brinson_timeseries",
+    "compute_brinson_attribution",
+    "BrinsonAttribution",
     "euler_risk_contributions",
 ]
