@@ -29,12 +29,15 @@ class BrinsonAttribution:
 
 
 def _build_agg_exprs(how: Literal["sum", "mean"]) -> list[pl.Expr]:
+    """Devuelve las expresiones de agregación para las métricas Brinson.
+
+    `how` está restringido a "sum" o "mean" a nivel de tipos, así que no
+    necesitamos un branch de error en tiempo de ejecución.
+    """
     if how == "sum":
         return [pl.col(m).sum().alias(m) for m in BRINSON_METRICS]
-    if how == "mean":
-        return [pl.col(m).mean().alias(m) for m in BRINSON_METRICS]
-    msg = f"Unsupported aggregation '{how}'. Use 'sum' or 'mean'."
-    raise ValueError(msg)
+    # En este punto, por el tipo, solo puede ser "mean".
+    return [pl.col(m).mean().alias(m) for m in BRINSON_METRICS]
 
 
 def compute_brinson_attribution(
@@ -49,39 +52,12 @@ def compute_brinson_attribution(
     - total: métricas agregadas sobre todo el periodo.
     """
     ts = coerce_brinson_timeseries_to_long(df)
-
     agg_exprs = _build_agg_exprs(how)
 
     by_group = ts.group_by("group_id").agg(agg_exprs).sort("group_id")
     total = ts.select([pl.col(m).sum().alias(m) for m in BRINSON_METRICS])
 
     return BrinsonAttribution(timeseries=ts, by_group=by_group, total=total)
-
-
-def _extract_contrib_frame(result: object) -> pl.DataFrame:
-    """
-    Normaliza la salida de `compute_portfolio_contributions` a un DataFrame.
-
-    Soporta:
-      - Devolver directamente un `pl.DataFrame`
-      - Devolver un contenedor tipo AttributionResult con atributos:
-        `contributions`, `frame`, `df` o `data` que sean DataFrame.
-    """
-    if isinstance(result, pl.DataFrame):
-        return result
-
-    for attr in ("contributions", "frame", "df", "data"):
-        if hasattr(result, attr):
-            candidate = getattr(result, attr)
-            if isinstance(candidate, pl.DataFrame):
-                return candidate
-
-    msg = (
-        "compute_portfolio_contributions(...) must return either a Polars "
-        "DataFrame, or an object with a 'contributions'/'frame'/'df'/'data' "
-        "attribute holding a Polars DataFrame."
-    )
-    raise TypeError(msg)
 
 
 def _call_portfolio_contributions_from_long(
@@ -94,33 +70,30 @@ def _call_portfolio_contributions_from_long(
     A partir de un df *largo* (date, asset, w, r) construye los dataframes
     anchos que espera `compute_portfolio_contributions` y devuelve un df
     largo con contribuciones por (date, asset).
-
-    Salida: columnas ['date', 'asset', 'contribution'].
     """
     if "asset" not in df.columns:
         msg = "Expected a long dataframe with an 'asset' column."
         raise ValueError(msg)
 
-    # 1) Pivot a formato ancho para pesos y retornos
+    # 1) Pivot a formato ancho para pesos y retornos (usa `on=` para contentar a mypy)
     weights_wide = (
         df.select([date_col, "asset", weights_col])
-        .pivot(index=date_col, columns="asset", values=weights_col)
+        .pivot(values=weights_col, index=date_col, on="asset")
         .sort(date_col)
     )
 
     returns_wide = (
         df.select([date_col, "asset", returns_col])
-        .pivot(index=date_col, columns="asset", values=returns_col)
+        .pivot(values=returns_col, index=date_col, on="asset")
         .sort(date_col)
     )
 
     # 2) Llamada al engine en formato ancho
-    result = compute_portfolio_contributions(
+    contrib_wide = compute_portfolio_contributions(
         weights=weights_wide,
         returns=returns_wide,
         date_col=date_col,
-    )
-    contrib_wide = _extract_contrib_frame(result)
+    ).contributions
 
     # 3) Volver a largo: (date, asset, contribution)
     contrib_long = contrib_wide.melt(
@@ -141,18 +114,19 @@ def run_brinson_engine(
     """
     Integra un dataframe largo estilo Brinson con el engine de atribución.
 
-    Entrada esperada (mínimo):
-        ['date', 'asset', weights_col, returns_col]
-
-    Devuelve el dataframe original enriquecido con la columna 'contribution'
-    por (date, asset), calculada vía `compute_portfolio_contributions`.
+    Devuelve el dataframe original enriquecido con las contribuciones
+    por activo/fecha que calcula `compute_portfolio_contributions`.
     """
-    contributions = _call_portfolio_contributions_from_long(
+    contrib_long = _call_portfolio_contributions_from_long(
         df=df,
         weights_col=weights_col,
         returns_col=returns_col,
         date_col=date_col,
     )
 
-    # Unimos por (date, asset) para no duplicar columnas.
-    return df.join(contributions, on=[date_col, "asset"], how="left")
+    out = df.join(
+        contrib_long,
+        on=[date_col, "asset"],
+        how="left",
+    )
+    return out
