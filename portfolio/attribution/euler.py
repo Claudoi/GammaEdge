@@ -1,10 +1,14 @@
 # portfolio/attribution/euler.py
+
 from __future__ import annotations
 
 from collections.abc import Sequence
 
 import numpy as np
 import pandas as pd
+import polars as pl
+
+from portfolio.attribution.engine import compute_portfolio_contributions
 
 
 def euler_risk_contributions(
@@ -21,18 +25,6 @@ def euler_risk_contributions(
         RC_i = w_i * (Σ w)_i / σ_p
 
     donde Σ es la matriz de covarianzas.
-
-    Parameters
-    ----------
-    weights:
-        Pesos de la cartera (long-only o no). Puede ser sequence o pd.Series.
-    cov:
-        Matriz de covarianzas (numpy o pandas DataFrame) de dimensión NxN.
-
-    Returns
-    -------
-    pandas.Series
-        Serie con las contribuciones al riesgo por activo, que suman σ_p.
     """
     w = np.asarray(weights, dtype=float).reshape(-1, 1)
     sigma = np.asarray(cov, dtype=float)
@@ -63,3 +55,87 @@ def euler_risk_contributions(
         index = np.arange(n)
 
     return pd.Series(contrib, index=index, name="risk_contribution")
+
+
+def _extract_contrib_frame(result: object) -> pl.DataFrame:
+    """
+    Igual que en brinson: normaliza la salida del engine a un DataFrame.
+    """
+    if isinstance(result, pl.DataFrame):
+        return result
+
+    for attr in ("contributions", "frame", "df", "data"):
+        if hasattr(result, attr):
+            candidate = getattr(result, attr)
+            if isinstance(candidate, pl.DataFrame):
+                return candidate
+
+    msg = (
+        "compute_portfolio_contributions(...) must return either a Polars "
+        "DataFrame, or an object with a 'contributions'/'frame'/'df'/'data' "
+        "attribute holding a Polars DataFrame."
+    )
+    raise TypeError(msg)
+
+
+def _call_portfolio_contributions_from_long(
+    df: pl.DataFrame,
+    weights_col: str,
+    returns_col: str,
+    date_col: str,
+) -> pl.DataFrame:
+    """
+    Parte de df *largo* (date, asset, w, r) y usa el engine de atribución
+    en formato ancho por factor/asset. Devuelve:
+
+        ['date', 'asset', 'contribution']
+    """
+    if "asset" not in df.columns:
+        msg = "Expected a long dataframe with an 'asset' column."
+        raise ValueError(msg)
+
+    weights_wide = (
+        df.select([date_col, "asset", weights_col])
+        .pivot(index=date_col, columns="asset", values=weights_col)
+        .sort(date_col)
+    )
+
+    returns_wide = (
+        df.select([date_col, "asset", returns_col])
+        .pivot(index=date_col, columns="asset", values=returns_col)
+        .sort(date_col)
+    )
+
+    result = compute_portfolio_contributions(
+        weights=weights_wide,
+        returns=returns_wide,
+        date_col=date_col,
+    )
+    contrib_wide = _extract_contrib_frame(result)
+
+    contrib_long = contrib_wide.melt(
+        id_vars=date_col,
+        variable_name="asset",
+        value_name="contribution",
+    )
+
+    return contrib_long
+
+
+def run_euler_engine(
+    df: pl.DataFrame,
+    factor_weights_col: str = "w",
+    factor_returns_col: str = "r",
+    date_col: str = "date",
+) -> pl.DataFrame:
+    """
+    Wrapper fino para reutilizar el engine de atribución en un contexto
+    de factores/Euler a partir de un df largo.
+    """
+    contributions = _call_portfolio_contributions_from_long(
+        df=df,
+        weights_col=factor_weights_col,
+        returns_col=factor_returns_col,
+        date_col=date_col,
+    )
+    return df.join(contributions, on=[date_col, "asset"], how="left")
