@@ -28,16 +28,15 @@ class BrinsonReport(TypedDict):
     total: pl.DataFrame
 
 
-def _to_polars_timeseries(df: BrinsonInputFrame) -> pl.DataFrame:
+def _to_polars_timeseries(df: object) -> pl.DataFrame:
     """
-    Normaliza un dataframe de entrada (pandas o polars) a polars.DataFrame.
+    Normaliza un dataframe de entrada a polars.DataFrame.
 
-    Reglas:
-    - Si es polars.DataFrame, se devuelve tal cual.
-    - Si es pandas.DataFrame:
-        - Si el índice es DatetimeIndex y no hay columna 'date',
-          se resetea el índice y se renombra a 'date'.
-        - En caso contrario, se usa tal cual y se convierte a polars.
+    Soporta:
+    - polars.DataFrame
+    - pandas.DataFrame (con manejo especial de DatetimeIndex)
+
+    Para cualquier otro tipo lanza TypeError en tiempo de ejecución.
     """
     if isinstance(df, pl.DataFrame):
         return df
@@ -81,6 +80,7 @@ def build_brinson_attribution_report(
     how:
         Tipo de agregación para by_group: "sum" (por defecto) o "mean".
     """
+    # En la API pública seguimos siendo estrictos: BrinsonInputFrame.
     ts_pl = _to_polars_timeseries(timeseries)
 
     result: BrinsonAttribution = compute_brinson_attribution(ts_pl, how=how)
