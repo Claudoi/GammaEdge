@@ -1,3 +1,5 @@
+# portfolio/backtest/attribution_reporting.py
+
 from __future__ import annotations
 
 from typing import Literal, TypedDict, Union
@@ -11,6 +13,7 @@ from portfolio.attribution.brinson import (
     compute_brinson_attribution,
 )
 
+# Alias útil para documentación / tipos de alto nivel
 BrinsonInputFrame = Union[pl.DataFrame, pd.DataFrame]
 
 
@@ -28,7 +31,7 @@ class BrinsonReport(TypedDict):
     total: pl.DataFrame
 
 
-def _to_polars_timeseries(df: BrinsonInputFrame) -> pl.DataFrame:
+def _to_polars_timeseries(df: object) -> pl.DataFrame:
     """
     Normaliza un dataframe de entrada (pandas o polars) a polars.DataFrame.
 
@@ -38,6 +41,7 @@ def _to_polars_timeseries(df: BrinsonInputFrame) -> pl.DataFrame:
         - Si el índice es DatetimeIndex y no hay columna 'date',
           se resetea el índice y se renombra a 'date'.
         - En caso contrario, se usa tal cual y se convierte a polars.
+    - Para cualquier otro tipo se lanza TypeError en tiempo de ejecución.
     """
     if isinstance(df, pl.DataFrame):
         return df
