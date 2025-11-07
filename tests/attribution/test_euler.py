@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from portfolio.attribution.euler import euler_risk_contributions
 
@@ -19,7 +20,6 @@ def test_euler_risk_contributions_basic_2x2():
 
     rc = euler_risk_contributions(w, cov)
 
-    # Propiedades básicas:
     # 1) mismo índice que los pesos
     assert list(rc.index) == ["A", "B"]
 
@@ -33,3 +33,23 @@ def test_euler_risk_contributions_basic_2x2():
 
     # 3) ninguna contribución negativa en este ejemplo (todo positivo)
     assert (rc.values > 0).all()
+
+
+def test_euler_raises_on_wrong_cov_shape():
+    """Debe fallar si la matriz de covarianzas no es NxN compatible con w."""
+    w = pd.Series([0.5, 0.5], index=["A", "B"])
+    # Matriz 3x3 incompatible con 2 pesos
+    cov = np.eye(3)
+
+    with pytest.raises(ValueError):
+        euler_risk_contributions(w, cov)
+
+
+def test_euler_raises_on_non_positive_variance():
+    """Debe fallar si la varianza de cartera no es estrictamente positiva."""
+    w = pd.Series([0.5, 0.5], index=["A", "B"])
+    # Covarianza cero ⇒ varianza 0
+    cov = np.zeros((2, 2))
+
+    with pytest.raises(ValueError):
+        euler_risk_contributions(w, cov)
