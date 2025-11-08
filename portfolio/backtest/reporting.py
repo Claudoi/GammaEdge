@@ -4,12 +4,16 @@ from __future__ import annotations
 import base64
 import io
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import numpy as np
 import plotly.graph_objects as go
 import polars as pl
 
+from portfolio.backtest.attribution_reporting import (
+    BrinsonReport,
+    build_brinson_attribution_report,
+)
 from portfolio.core.compat import dataclass_compat as dataclass
 
 from .attribution import (
@@ -257,6 +261,19 @@ def build_backtest_report(
 
     meta = {"title": title, "n_days": len(dates), "n_assets": len(tickers)}
     return BacktestReport(tables=tables, figures=figures, meta=meta)
+
+
+def build_brinson_attribution_section(
+    timeseries: Any,
+    how: Literal["sum", "mean"] = "sum",
+) -> BrinsonReport:
+    """
+    Construye la sección de atribución tipo Brinson para un informe de backtest.
+
+    Es un thin-wrapper sobre ``build_brinson_attribution_report`` para mantener
+    una API consistente en :mod:`portfolio.backtest.reporting`.
+    """
+    return build_brinson_attribution_report(timeseries, how=how)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
