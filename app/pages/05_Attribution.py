@@ -60,6 +60,7 @@ st.caption(
     "Generate HTML and PDF reports with equity, drawdown, weights, attribution and benchmark context."
 )
 
+
 # ---------------------------------------------------------------------
 # Inputs from previous pages (expected in session_state)
 # ---------------------------------------------------------------------
@@ -83,6 +84,7 @@ if not isinstance(df_ret_wide, pl.DataFrame):
     df_ret_wide = pl.from_pandas(df_ret_wide)
 df_ret_wide = _ensure_datetime(df_ret_wide, "date")
 
+
 # ---------------------------------------------------------------------
 # Extract BT artifacts
 # ---------------------------------------------------------------------
@@ -99,7 +101,8 @@ if not dates_bt_any or equity.size == 0 or W_reb.size == 0 or not tickers:
 # Coerce BT dates to Datetime (consistent con df_ret_wide['date'])
 dates_bt = _coerce_dates_list(dates_bt_any)
 
-# ---------------------------------------------------------------------
+
+# --------------------------------------------
 # Align returns to backtest date grid and expand weights to daily
 # ---------------------------------------------------------------------
 # 1) returns solo en fechas del backtest (dtypes compatibles)
@@ -128,6 +131,7 @@ daily_W = bt_attr.expand_rebalance_weights(
 if Wb_daily_session is None:
     st.session_state["Wb_daily"] = daily_W
 
+
 # ---------------------------------------------------------------------
 # Build unified BacktestReport (tables + figs)
 # ---------------------------------------------------------------------
@@ -139,6 +143,7 @@ report: BacktestReport = build_backtest_report(
     title="GammaEdge Backtest",
 )
 
+
 # ---------------------------------------------------------------------
 # Display meta info (benchmark & groups)
 # ---------------------------------------------------------------------
@@ -148,6 +153,7 @@ bench_scheme = (bench_meta or {}).get("scheme", "Equal-Weight")
 colA.metric("Benchmark Scheme", bench_scheme)
 colB.metric("Groups mapped", f"{len(group_map) if isinstance(group_map, dict) else 0}")
 colC.metric("Period", f"{str(dates_bt[0])[:10]} → {str(dates_bt[-1])[:10]}")
+
 
 # ---------------------------------------------------------------------
 # Show figures
@@ -169,10 +175,12 @@ if isinstance(df_brinson, pl.DataFrame) and "date" in df_brinson.columns:
             viz.plot_brinson_cumulative(df_brinson, title="Brinson–Fachler (Cumulative)"),
             use_container_width=True,
         )
+
         st.plotly_chart(
             viz.plot_brinson_cumulative_components(df_brinson),
             use_container_width=True,
         )
+
     except Exception as e:
         st.info(f"Brinson figures skipped: {e}")
 
@@ -184,6 +192,7 @@ st.subheader("📊 Tables")
 for name, df in report.tables.items():
     st.write(f"**{name}**")
     st.dataframe(df, use_container_width=True)
+
 
 # ---------------------------------------------------------------------
 # Build context for export
@@ -216,6 +225,7 @@ ctx = build_context(
     df_brinson=df_brinson_ctx,
     extra_metrics=extra_metrics,
 )
+
 
 # ---------------------------------------------------------------------
 # Export buttons: HTML + PDF
