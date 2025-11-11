@@ -79,9 +79,11 @@ def show_plot(
     if st_obj is None:
         import streamlit as st
 
-        st.plotly_chart(fig, config=cfg, key=key)  # <-- pasa key
+        target = st
     else:
-        st_obj.plotly_chart(fig, config=cfg, key=key)
+        target = st_obj
+
+    target.plotly_chart(fig, config=cfg, key=key)
 
 
 def fig_to_html(
@@ -2226,5 +2228,130 @@ def plot_weights_compare_heatmap(
         yaxis_title="Date",
         template="plotly_white",
         margin=dict(t=60, r=10, b=40, l=60),
+    )
+    return fig
+
+
+# ============================================================================
+# 26) Plots de Brinson avanzados
+# ============================================================================
+
+
+def plot_brinson_group_bar(
+    df: pl.DataFrame | pd.DataFrame, *, title: str = "Brinson attribution by group"
+) -> go.Figure:
+    pdf = _to_pandas(df)
+    if "group" in pdf.columns:
+        group_col = "group"
+    elif "group_id" in pdf.columns:
+        group_col = "group_id"
+    else:
+        raise ValueError("Expected a 'group' or 'group_id' column in Brinson group dataframe.")
+    metrics = [c for c in ("alloc", "select", "interact", "total") if c in pdf.columns]
+    if not metrics:
+        raise ValueError(
+            "No Brinson metric columns found (expected one of: 'alloc', 'select', 'interact', 'total')."
+        )
+    x = pdf[group_col].astype(str)
+    fig = go.Figure()
+    for m in metrics:
+        fig.add_bar(
+            x=x,
+            y=pdf[m],
+            name=m.capitalize(),
+            hovertemplate=f"Group: %{{x}}<br>{m}: %{{y:.4f}}<extra></extra>",
+        )
+    fig.update_layout(
+        title=title,
+        xaxis_title="Group",
+        yaxis_title="Contribution",
+        barmode="group",
+        template="plotly_white",
+        legend_title_text="Component",
+    )
+    return fig
+
+
+def plot_brinson_timeseries(
+    df: DataFrameLike,
+    title: str = "Brinson timeseries",
+    *,
+    metric: str | None = None,
+) -> go.Figure:
+    pdf = _to_pandas(df).copy()
+
+    if "date" in pdf.columns:
+        pdf["date"] = pd.to_datetime(pdf["date"])
+        pdf = pdf.sort_values("date")
+
+    metrics = [m for m in ["alloc", "select", "interact", "total"] if m in pdf.columns]
+    if metric is not None and metric in metrics:
+        metrics = [metric]
+
+    fig = go.Figure()
+    for m in metrics:
+        fig.add_trace(
+            go.Scatter(
+                x=pdf["date"],
+                y=pdf[m],
+                mode="lines",
+                name=m.capitalize(),
+            )
+        )
+
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Attribution",
+        template="plotly_dark",
+    )
+    return fig
+
+
+def plot_euler_contributions(
+    df: pl.DataFrame | pd.DataFrame | pd.Series,
+    *,
+    title: str = "Euler risk contributions",
+    top_n: int | None = None,
+) -> go.Figure:
+    if isinstance(df, pd.Series):
+        pdf = df.to_frame(name="risk_contribution")
+        pdf["asset"] = pdf.index.astype(str)
+    elif isinstance(df, pl.DataFrame):
+        pdf = df.to_pandas()
+    elif isinstance(df, pd.DataFrame):
+        pdf = df.copy()
+    else:
+        raise TypeError(
+            "Unsupported type for Euler contributions: expected pandas.Series, pandas.DataFrame or polars.DataFrame."
+        )
+    if "risk_contribution" in pdf.columns:
+        contrib_col = "risk_contribution"
+    elif "contribution" in pdf.columns:
+        contrib_col = "contribution"
+    else:
+        raise ValueError("Expected a 'risk_contribution' or 'contribution' column for Euler plot.")
+    if "asset" in pdf.columns:
+        asset_col = "asset"
+    elif "ticker" in pdf.columns:
+        asset_col = "ticker"
+    else:
+        pdf["asset"] = pdf.index.astype(str)
+        asset_col = "asset"
+    pdf = pdf[[asset_col, contrib_col]].copy()
+    pdf = pdf.dropna(subset=[contrib_col])
+    pdf["abs_contrib"] = pdf[contrib_col].abs()
+    pdf = pdf.sort_values("abs_contrib", ascending=False)
+    if top_n is not None and top_n > 0:
+        pdf = pdf.head(top_n)
+    fig = go.Figure(
+        go.Bar(
+            x=pdf[asset_col],
+            y=pdf[contrib_col],
+            hovertemplate="Asset: %{x}<br>Contribution: %{y:.6f}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=title, xaxis_title="Asset", yaxis_title="Risk contribution", template="plotly_white"
     )
     return fig
