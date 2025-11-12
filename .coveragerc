@@ -16,6 +16,8 @@ omit =
     portfolio/backtest/scenarios.py
     # omitimos temporalmente attribution (baja cobertura, gran peso)
     portfolio/backtest/attribution.py
+    # excluir plots/UI (no afectan a la lógica de negocio y arrastran la cobertura)
+    portfolio/viz/plot_utils.py
 
 [report]
 exclude_lines =
