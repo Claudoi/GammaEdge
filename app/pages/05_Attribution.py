@@ -1,3 +1,4 @@
+# app/pages/05_Attribution.py
 from __future__ import annotations
 
 import os
@@ -8,6 +9,7 @@ import pandas as pd
 import polars as pl
 import streamlit as st
 
+# Repo root for local imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from portfolio.attribution.euler import euler_risk_contributions
@@ -48,6 +50,7 @@ st.caption(
     "with exportable HTML/PDF reports."
 )
 
+# Inputs expected desde páginas previas
 bt = st.session_state.get("bt")
 df_ret_wide = st.session_state.get("df_ret_wide", st.session_state.get("returns_wide"))
 group_map = st.session_state.get("group_map")
@@ -63,10 +66,12 @@ if bt is None or df_ret_wide is None:
     )
     st.stop()
 
+# Normaliza returns a Polars + Datetime
 if not isinstance(df_ret_wide, pl.DataFrame):
     df_ret_wide = pl.from_pandas(df_ret_wide)
 df_ret_wide = _ensure_datetime(df_ret_wide, "date")
 
+# Artefactos del backtest
 dates_bt_any = list(bt.get("dates", []))
 equity = np.asarray(bt.get("equity", []), dtype=float)
 tickers = list(bt.get("tickers", []))
@@ -79,8 +84,10 @@ if not dates_bt_any or equity.size == 0 or W_reb.size == 0 or not tickers:
 
 dates_bt = _coerce_dates_list(dates_bt_any)
 
+# Alinea returns a la malla del backtest
 df_ret_bt = df_ret_wide.filter(pl.col("date").is_in(dates_bt)).unique(subset=["date"]).sort("date")
 
+# Valida dimensiones y rebalance_dates
 if W_reb.ndim == 2:
     K, N = W_reb.shape
 else:
@@ -96,15 +103,18 @@ if len(rb_dates_list) != K:
     step = max(len(dates_bt) // max(K, 1), 1)
     rb_dates_list = dates_bt[::step][:K]
 
+# Expande pesos a diario
 daily_W = bt_attr.expand_rebalance_weights(
     dates=df_ret_bt.get_column("date").to_list(),
     rb_dates=rb_dates_list,
     W_reb=W_reb,
 )
 
+# Guarda benchmark weights por defecto si no existe en sesión
 if Wb_daily_session is None:
     st.session_state["Wb_daily"] = daily_W
 
+# Construye BacktestReport (figuras + tablas)
 report: BacktestReport = build_backtest_report(
     df_ret_wide=df_ret_bt,
     daily_weights=daily_W,
@@ -116,6 +126,7 @@ report: BacktestReport = build_backtest_report(
 df_asset_total = report.tables.get("contrib_asset_total")
 df_group_total = report.tables.get("contrib_group_total")
 
+# Normaliza df_brinson para UI y export
 df_brinson_ctx: pl.DataFrame | None = None
 if isinstance(df_brinson, pl.DataFrame) and "date" in df_brinson.columns:
     try:
@@ -124,6 +135,7 @@ if isinstance(df_brinson, pl.DataFrame) and "date" in df_brinson.columns:
     except Exception:
         df_brinson_ctx = None
 
+# Contexto superior
 st.markdown("### 🧭 Context Summary")
 colA, colB, colC = st.columns(3)
 bench_scheme = (bench_meta or {}).get("scheme", "Equal-Weight")
@@ -131,6 +143,7 @@ colA.metric("Benchmark Scheme", bench_scheme)
 colB.metric("Groups mapped", f"{len(group_map) if isinstance(group_map, dict) else 0}")
 colC.metric("Period", f"{str(dates_bt[0])[:10]} → {str(dates_bt[-1])[:10]}")
 
+# Figuras core
 st.markdown("### 📈 Core Charts")
 col1, col2 = st.columns(2)
 viz.show_plot(report.figures["equity"], st_obj=col1, key="equity")
@@ -138,6 +151,7 @@ viz.show_plot(report.figures["drawdown"], st_obj=col2, key="drawdown")
 viz.show_plot(report.figures["weights"], key="weights")
 viz.show_plot(report.figures["top_contrib"], key="top_contrib")
 
+# Brinson
 if df_brinson_ctx is not None:
     try:
         st.markdown("### 🧱 Brinson Performance Attribution")
@@ -168,8 +182,8 @@ if df_brinson_ctx is not None:
     except Exception as e:
         st.info(f"Brinson figures skipped: {e}")
 
+# Euler RC último día
 st.markdown("### 🧮 Euler Risk Contributions (last day)")
-
 try:
     if df_ret_bt.width > 1 and daily_W.shape[0] > 0:
         ret_pdf = df_ret_bt.select(pl.exclude("date")).to_pandas()
@@ -185,11 +199,13 @@ try:
 except Exception as e:
     st.info(f"Euler risk contributions not available: {e}")
 
+# Tablas
 st.subheader("📊 Tables")
 for name, df in report.tables.items():
     st.write(f"**{name}**")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(df, width="stretch")
 
+# Contexto para export
 period_start = str(dates_bt[0]) if dates_bt else "—"
 period_end = str(dates_bt[-1]) if dates_bt else "—"
 
@@ -209,6 +225,7 @@ ctx = build_context(
     extra_metrics=extra_metrics,
 )
 
+# Export
 st.subheader("📤 Export")
 
 figures: list[ReportFigure] = [
@@ -250,6 +267,7 @@ try:
 except Exception:
     st.info("PDF export not available: {e}\nInstall dependencies: plotly[kaleido], reportlab")
 
+# Guardado opcional en ./reports
 save_to_disk = st.checkbox("Save also to ./reports", value=False)
 if save_to_disk:
     os.makedirs("reports", exist_ok=True)
