@@ -13,6 +13,7 @@ import streamlit as st
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 from portfolio.attribution.euler import euler_risk_contributions
+from portfolio.attribution.factor_decomposition import euler_factor_contributions
 from portfolio.backtest import attribution as bt_attr
 from portfolio.backtest.brinson_utils import ensure_datetime as _ensure_datetime
 from portfolio.backtest.kpis import compute_kpis
@@ -182,15 +183,16 @@ if df_brinson_ctx is not None:
     except Exception as e:
         st.info(f"Brinson figures skipped: {e}")
 
-# Euler RC último día
+# Euler RC último día (asset-level)
 st.markdown("### 🧮 Euler Risk Contributions (last day)")
+cov_last = None
 try:
     if df_ret_bt.width > 1 and daily_W.shape[0] > 0:
         ret_pdf = df_ret_bt.select(pl.exclude("date")).to_pandas()
-        cov = ret_pdf.cov()
+        cov_last = ret_pdf.cov()
         w_last = daily_W[-1]
         w_series = pd.Series(w_last, index=tickers)
-        rc = euler_risk_contributions(w_series, cov)
+        rc = euler_risk_contributions(w_series, cov_last)
         df_euler = rc.rename("risk_contribution").reset_index().rename(columns={"index": "asset"})
         fig_euler = viz.plot_euler_contributions(df_euler)
         viz.show_plot(fig_euler, key="euler_last_day")
@@ -198,6 +200,81 @@ try:
         st.info("Not enough data to compute Euler risk contributions.")
 except Exception as e:
     st.info(f"Euler risk contributions not available: {e}")
+    cov_last = None
+
+# Factor Decomposition (Euler sobre factores PCA)
+st.markdown("### 🧩 Factor Decomposition (Euler, PCA factors)")
+
+with st.expander("Show factor risk decomposition"):
+    if df_ret_bt.width <= 1 or daily_W.shape[0] == 0:
+        st.info("Not enough data to compute factor decomposition.")
+    else:
+        try:
+            # Usamos la misma matriz de retornos que para el Euler asset-level
+            ret_pdf = df_ret_bt.select(pl.exclude("date")).to_pandas()
+            Sigma_assets = ret_pdf.cov().astype(float)
+
+            n_assets = Sigma_assets.shape[0]
+            if n_assets < 2:
+                st.info("Need at least 2 assets for PCA factor model.")
+            else:
+                max_factors = min(5, n_assets)
+                n_factors = st.slider(
+                    "Number of PCA factors",
+                    min_value=1,
+                    max_value=max_factors,
+                    value=min(3, max_factors),
+                    step=1,
+                )
+
+                # Eigen-decomposition (symmetric PSD matrix)
+                eigvals, eigvecs = np.linalg.eigh(Sigma_assets.values)
+                idx = np.argsort(eigvals)[::-1]  # descending
+                eigvals = eigvals[idx]
+                eigvecs = eigvecs[:, idx]
+
+                lam = np.clip(eigvals[:n_factors], a_min=0.0, a_max=None)
+                factors = [f"PC{i + 1}" for i in range(n_factors)]
+
+                B = eigvecs[:, :n_factors]  # shape (N_assets, n_factors)
+                B_df = pd.DataFrame(B, index=Sigma_assets.index.tolist(), columns=factors)
+                Sigma_f_df = pd.DataFrame(
+                    np.diag(lam),
+                    index=factors,
+                    columns=factors,
+                )
+
+                # Alineamos pesos con las filas de B_df
+                w_last = daily_W[-1]
+                w_series = pd.Series(w_last, index=tickers, name="w").astype(float)
+
+                common_assets = [a for a in w_series.index if a in B_df.index]
+                if not common_assets:
+                    st.info("No overlap between portfolio tickers and PCA factor model assets.")
+                else:
+                    w_aligned = w_series.loc[common_assets]
+                    B_aligned = B_df.loc[common_assets]
+
+                    fact = euler_factor_contributions(w_aligned, B_aligned, Sigma_f_df)
+                    sigma_p = fact["sigma_p"]
+                    factor_rc = fact["factor_rc"]
+                    asset_factor_rc = fact["asset_factor_rc"]
+
+                    st.caption(f"Portfolio sigma (PCA factor model): {sigma_p:.6f}")
+
+                    fig_bar = viz.plot_factor_rc_bar(
+                        factor_rc,
+                        title="Factor RC (Euler, PCA factors)",
+                    )
+                    viz.show_plot(fig_bar, key="factor_rc_bar")
+
+                    fig_hm = viz.plot_factor_rc_heatmap(
+                        asset_factor_rc,
+                        title="Asset × Factor RC (Euler, PCA factors)",
+                    )
+                    viz.show_plot(fig_hm, key="factor_rc_heatmap")
+        except Exception as e:
+            st.info(f"Factor decomposition not available: {e}")
 
 # Tablas
 st.subheader("📊 Tables")
