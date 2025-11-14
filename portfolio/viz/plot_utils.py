@@ -2355,3 +2355,69 @@ def plot_euler_contributions(
         title=title, xaxis_title="Asset", yaxis_title="Risk contribution", template="plotly_white"
     )
     return fig
+
+
+def plot_factor_rc_bar(
+    factor_rc: pd.Series | pd.DataFrame,
+    *,
+    title: str = "Factor risk contributions",
+) -> go.Figure:
+    """
+    Bar chart for Euler factor risk contributions.
+
+    Accepts:
+    - pandas.Series with index=factors
+    - pandas.DataFrame (we use the first column)
+    """
+    if isinstance(factor_rc, pd.DataFrame):
+        s = pd.Series(dtype=float) if factor_rc.shape[1] == 0 else factor_rc.iloc[:, 0]
+    else:
+        s = factor_rc
+
+    s = s.astype(float)
+
+    fig = go.Figure(
+        go.Bar(
+            x=s.index.astype(str),
+            y=s.values,
+            hovertemplate="Factor: %{x}<br>Contribution: %{y:.6f}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title=title,
+        xaxis_title="Factor",
+        yaxis_title="Risk contribution",
+        template="plotly_white",
+    )
+    return fig
+
+
+def plot_factor_rc_heatmap(
+    asset_factor_rc: pd.DataFrame,
+    *,
+    title: str = "Asset × Factor RC",
+) -> go.Figure:
+    """
+    Heatmap for asset × factor Euler risk contributions.
+
+    asset_factor_rc: DataFrame index=assets, columns=factors.
+    """
+    df = asset_factor_rc.astype(float)
+
+    fig = px.imshow(
+        df.values,
+        x=df.columns.astype(str),
+        y=df.index.astype(str),
+        aspect="auto",
+        color_continuous_scale="RdBu",
+        origin="upper",
+        labels=dict(color="RC"),
+    )
+    fig.update_layout(
+        title=title,
+        xaxis_title="Factor",
+        yaxis_title="Asset",
+        template="plotly_white",
+        margin=dict(t=60, r=10, b=40, l=60),
+    )
+    return fig
