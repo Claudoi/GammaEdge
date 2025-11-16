@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import os
 import sys
+from typing import Any
 
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import polars as pl
 import streamlit as st
 
@@ -28,7 +30,7 @@ from portfolio.backtest.reporting import (
 from portfolio.viz import plot_utils as viz
 
 
-def _coerce_dates_list(dates_any: list) -> list:
+def _coerce_dates_list(dates_any: list[Any]) -> list[Any]:
     if dates_any is None or len(dates_any) == 0:
         return []
     df = pl.DataFrame({"date": dates_any})
@@ -36,7 +38,7 @@ def _coerce_dates_list(dates_any: list) -> list:
     return df.get_column("date").to_list()
 
 
-def _safe_metrics_to_dict(metrics_df_obj) -> dict[str, float] | None:
+def _safe_metrics_to_dict(metrics_df_obj: Any) -> dict[str, float] | None:
     try:
         pdf = metrics_df_obj.to_pandas() if hasattr(metrics_df_obj, "to_pandas") else metrics_df_obj
         return {str(k): float(v) for k, v in zip(pdf.iloc[:, 0], pdf.iloc[:, 1], strict=False)}
@@ -59,7 +61,6 @@ metrics_df = st.session_state.get("metrics_df")
 df_brinson = st.session_state.get("df_brinson")
 bench_meta = st.session_state.get("bench_meta")
 Wb_daily_session = st.session_state.get("Wb_daily")
-groups_idx = st.session_state.get("groups_idx")
 
 if bt is None or df_ret_wide is None:
     st.warning(
@@ -152,10 +153,12 @@ viz.show_plot(report.figures["drawdown"], st_obj=col2, key="drawdown")
 viz.show_plot(report.figures["weights"], key="weights")
 viz.show_plot(report.figures["top_contrib"], key="top_contrib")
 
-# Variables para export de figuras adicionales
-fig_euler_last_day = None
-fig_factor_bar = None
-fig_factor_hm = None
+# Variables para export de figuras y tablas adicionales
+fig_euler_last_day: go.Figure | None = None
+fig_factor_bar: go.Figure | None = None
+fig_factor_hm: go.Figure | None = None
+euler_last_day_rows: list[dict[str, Any]] | None = None
+factor_rc_rows: list[dict[str, Any]] | None = None
 
 # Brinson
 if df_brinson_ctx is not None:
@@ -174,7 +177,6 @@ if df_brinson_ctx is not None:
         if df_group_total is not None:
             fig_brinson_group = viz.plot_brinson_group_bar(
                 df_group_total,
-                metric="contrib_total",
                 title="Brinson — Contribution by Group",
             )
             viz.show_plot(fig_brinson_group, key="brinson_group")
@@ -210,7 +212,7 @@ try:
         )
         top_n_euler = col_e2.slider(
             "Top assets",
-            min_value=5,
+            min_value=1,
             max_value=min(25, len(df_euler)),
             value=min(10, len(df_euler)),
             step=1,
@@ -224,12 +226,37 @@ try:
             top_n=top_n_euler,
         )
         viz.show_plot(fig_euler_last_day, key="euler_last_day")
+
+        # Tabla compacta para contexto (Euler last day)
+        try:
+            sigma_euler = float(rc.sum())
+            df_export = df_euler.copy()
+            if sigma_euler > 0.0:
+                df_export["rc_pct"] = df_export["risk_contribution"] / sigma_euler
+            else:
+                df_export["rc_pct"] = np.nan
+
+            df_export = df_export.reindex(
+                df_export["risk_contribution"].abs().sort_values(ascending=False).index
+            ).head(15)
+            euler_last_day_rows = []
+            for _, row in df_export.iterrows():
+                euler_last_day_rows.append(
+                    {
+                        "asset": str(row["asset"]),
+                        "rc": float(row["risk_contribution"]),
+                        "rc_pct": (float(row["rc_pct"]) if pd.notna(row["rc_pct"]) else None),
+                    }
+                )
+        except Exception:
+            euler_last_day_rows = None
     else:
         st.info("Not enough data to compute Euler risk contributions.")
 except Exception as e:
     st.info(f"Euler risk contributions not available: {e}")
     cov_last = None
     fig_euler_last_day = None
+    euler_last_day_rows = None
 
 # Factor Decomposition (Euler sobre factores PCA)
 st.markdown("### 🧩 Factor Decomposition (Euler, PCA factors)")
@@ -295,7 +322,10 @@ with st.expander("Show factor risk decomposition"):
                     as_percent_factor = col_f1.checkbox(
                         "Show factor RC in %",
                         value=True,
-                        help="Normalize factor and asset × factor risk contributions by portfolio sigma.",
+                        help=(
+                            "Normalize factor and asset × factor risk contributions "
+                            "by portfolio sigma."
+                        ),
                         key="factor_as_percent",
                     )
                     top_n_factors = col_f2.slider(
@@ -323,10 +353,47 @@ with st.expander("Show factor risk decomposition"):
                         sigma_p=sigma_p,
                     )
                     viz.show_plot(fig_factor_hm, key="factor_rc_heatmap")
+
+                    # Tabla compacta para contexto (Factor RC)
+                    try:
+                        # factor_rc debería ser un pd.Series indexado por factor
+                        if isinstance(factor_rc, pd.DataFrame):
+                            if factor_rc.shape[1] == 0:
+                                s = pd.Series(dtype=float)
+                            else:
+                                s = factor_rc.iloc[:, 0]
+                        else:
+                            s = factor_rc
+
+                        df_factor = s.rename("rc").to_frame().reset_index()
+                        df_factor.columns = ["factor", "rc"]
+                        if sigma_p > 0.0:
+                            df_factor["rc_pct"] = df_factor["rc"] / float(sigma_p)
+                        else:
+                            df_factor["rc_pct"] = np.nan
+
+                        df_factor = df_factor.reindex(
+                            df_factor["rc"].abs().sort_values(ascending=False).index
+                        ).head(10)
+
+                        factor_rc_rows = []
+                        for _, row in df_factor.iterrows():
+                            factor_rc_rows.append(
+                                {
+                                    "factor": str(row["factor"]),
+                                    "rc": float(row["rc"]),
+                                    "rc_pct": (
+                                        float(row["rc_pct"]) if pd.notna(row["rc_pct"]) else None
+                                    ),
+                                }
+                            )
+                    except Exception:
+                        factor_rc_rows = None
         except Exception as e:
             st.info(f"Factor decomposition not available: {e}")
             fig_factor_bar = None
             fig_factor_hm = None
+            factor_rc_rows = None
 
 # Tablas
 st.subheader("📊 Tables")
@@ -352,6 +419,8 @@ ctx = build_context(
     df_group_total=df_group_total,
     df_brinson=df_brinson_ctx,
     extra_metrics=extra_metrics,
+    euler_last_day=euler_last_day_rows,
+    factor_rc=factor_rc_rows,
 )
 
 # Export

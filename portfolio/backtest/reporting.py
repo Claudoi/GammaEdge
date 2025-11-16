@@ -414,6 +414,8 @@ def build_context(
     df_group_total: pl.DataFrame | None,
     df_brinson: pl.DataFrame | None,
     extra_metrics: dict[str, Any] | None = None,
+    euler_last_day: list[dict[str, Any]] | None = None,
+    factor_rc: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """
     Build a serialisable context for the report.
@@ -463,6 +465,12 @@ def build_context(
         )
         ctx["brinson_last"] = tail[0] if tail else {}
 
+    if euler_last_day:
+        ctx["euler_last_day"] = euler_last_day
+
+    if factor_rc:
+        ctx["factor_rc"] = factor_rc
+
     return ctx
 
 
@@ -476,6 +484,7 @@ _HTML_SHELL = """<!doctype html>
     body {{ font-family: -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif; margin: 24px; }}
     h1 {{ margin: 0 0 8px 0; }}
     h2 {{ margin-top: 28px; border-bottom: 1px solid #eee; padding-bottom: 4px; }}
+    h3 {{ margin-top: 20px; margin-bottom: 6px; }}
     .meta {{ color: #555; margin-bottom: 16px; }}
     table {{ border-collapse: collapse; width: 100%; margin: 10px 0; font-size: 14px; }}
     th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
@@ -532,19 +541,76 @@ def _render_tables_block(ctx: dict[str, Any]) -> str:
         blocks.append(_render_table_dicts("Group Totals", ctx["group_totals"]))
     if ctx.get("brinson_last"):
         blocks.append(_render_table_dicts("Brinson (last cumulative)", [ctx["brinson_last"]]))
+    if ctx.get("euler_last_day"):
+        blocks.append(_render_table_dicts("Euler RC (last day)", ctx["euler_last_day"]))
+    if ctx.get("factor_rc"):
+        blocks.append(_render_table_dicts("Factor RC (PCA)", ctx["factor_rc"]))
     return "\n".join(blocks)
 
 
+# ──────────────────────────────────────────────────────────────────────────────
+# Figure sectioning helpers (Performance / Brinson / Euler / Factors)
+# ──────────────────────────────────────────────────────────────────────────────
+
+_SECTION_ORDER: list[str] = [
+    "Performance Overview",
+    "Performance Attribution (Brinson)",
+    "Risk Attribution (Euler)",
+    "Factor Decomposition (PCA)",
+    "Other Figures",
+]
+
+
+def _classify_figure_section(title: str) -> str:
+    """Map a figure title to a logical report section."""
+    lt = title.lower()
+
+    if any(k in lt for k in ("equity", "drawdown", "weight", "top contrib", "top contributor")):
+        return "Performance Overview"
+
+    if "brinson" in lt:
+        return "Performance Attribution (Brinson)"
+
+    if "euler" in lt:
+        return "Risk Attribution (Euler)"
+
+    if any(k in lt for k in ("factor", "pca")):
+        return "Factor Decomposition (PCA)"
+
+    return "Other Figures"
+
+
 def _render_figures_block(fig_srcs: list[tuple[str, str]]) -> str:
-    """fig_srcs: list of (title, img_src_data_uri)."""
+    """
+    Render figures grouped by logical sections.
+
+    fig_srcs: list of (title, img_src_data_uri).
+    """
     if not fig_srcs:
         return "<p>No figures.</p>"
-    parts = []
+
+    # Group by section name, preserving input order
+    grouped: dict[str, list[tuple[str, str]]] = {name: [] for name in _SECTION_ORDER}
     for title, src in fig_srcs:
-        parts.append(
-            f'<div class="imgwrap"><img alt="{title}" src="{src}" style="max-width:100%;height:auto;"/><div class="caption">{title}</div></div>'
-        )
-    return "\n".join(parts)
+        section = _classify_figure_section(title)
+        if section not in grouped:
+            grouped[section] = []
+        grouped[section].append((title, src))
+
+    parts: list[str] = []
+    for section in _SECTION_ORDER:
+        figs = grouped.get(section) or []
+        if not figs:
+            continue
+        parts.append(f"<h3>{section}</h3>")
+        for title, src in figs:
+            parts.append(
+                f'<div class="imgwrap"><img alt="{title}" src="{src}" '
+                f'style="max-width:100%;height:auto;"/>'
+                f'<div class="caption">{title}</div></div>'
+            )
+
+    return "\n".join(parts) if parts else "<p>No figures.</p>"
 
 
 def render_html(
@@ -556,6 +622,13 @@ def render_html(
 ) -> bytes:
     """
     Render a complete HTML with inline base64 PNG figures (no external assets).
+
+    Figures are automatically grouped into logical sections:
+    - Performance Overview
+    - Performance Attribution (Brinson)
+    - Risk Attribution (Euler)
+    - Factor Decomposition (PCA)
+    - Other Figures
     """
     fig_srcs: list[tuple[str, str]] = []
     for rf in figures:
@@ -577,7 +650,7 @@ def render_html(
 
 
 def render_pdf(
-    ctx: dict[str, Any],
+    ctx: dict[str, Any],  # noqa: ARG001 (ctx reserved for future metadata usage)
     figures: list[ReportFigure],
     *,
     title: str = "GammaEdge Report",
