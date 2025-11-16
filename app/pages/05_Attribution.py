@@ -152,6 +152,11 @@ viz.show_plot(report.figures["drawdown"], st_obj=col2, key="drawdown")
 viz.show_plot(report.figures["weights"], key="weights")
 viz.show_plot(report.figures["top_contrib"], key="top_contrib")
 
+# Variables para export de figuras adicionales
+fig_euler_last_day = None
+fig_factor_bar = None
+fig_factor_hm = None
+
 # Brinson
 if df_brinson_ctx is not None:
     try:
@@ -193,14 +198,38 @@ try:
         w_last = daily_W[-1]
         w_series = pd.Series(w_last, index=tickers)
         rc = euler_risk_contributions(w_series, cov_last)
+
         df_euler = rc.rename("risk_contribution").reset_index().rename(columns={"index": "asset"})
-        fig_euler = viz.plot_euler_contributions(df_euler)
-        viz.show_plot(fig_euler, key="euler_last_day")
+
+        col_e1, col_e2 = st.columns(2)
+        as_percent_euler = col_e1.checkbox(
+            "Show Euler RC in %",
+            value=True,
+            help="Normalize risk contributions by total portfolio risk.",
+            key="euler_as_percent",
+        )
+        top_n_euler = col_e2.slider(
+            "Top assets",
+            min_value=5,
+            max_value=min(25, len(df_euler)),
+            value=min(10, len(df_euler)),
+            step=1,
+            key="euler_top_n",
+        )
+
+        fig_euler_last_day = viz.plot_euler_contributions(
+            df_euler,
+            title="Euler risk contributions (last day)",
+            as_percent=as_percent_euler,
+            top_n=top_n_euler,
+        )
+        viz.show_plot(fig_euler_last_day, key="euler_last_day")
     else:
         st.info("Not enough data to compute Euler risk contributions.")
 except Exception as e:
     st.info(f"Euler risk contributions not available: {e}")
     cov_last = None
+    fig_euler_last_day = None
 
 # Factor Decomposition (Euler sobre factores PCA)
 st.markdown("### 🧩 Factor Decomposition (Euler, PCA factors)")
@@ -262,19 +291,42 @@ with st.expander("Show factor risk decomposition"):
 
                     st.caption(f"Portfolio sigma (PCA factor model): {sigma_p:.6f}")
 
-                    fig_bar = viz.plot_factor_rc_bar(
+                    col_f1, col_f2 = st.columns(2)
+                    as_percent_factor = col_f1.checkbox(
+                        "Show factor RC in %",
+                        value=True,
+                        help="Normalize factor and asset × factor risk contributions by portfolio sigma.",
+                        key="factor_as_percent",
+                    )
+                    top_n_factors = col_f2.slider(
+                        "Top factors",
+                        min_value=1,
+                        max_value=min(10, len(factor_rc)),
+                        value=min(5, len(factor_rc)),
+                        step=1,
+                        key="factor_top_n",
+                    )
+
+                    fig_factor_bar = viz.plot_factor_rc_bar(
                         factor_rc,
                         title="Factor RC (Euler, PCA factors)",
+                        as_percent=as_percent_factor,
+                        sigma_p=sigma_p,
+                        top_n=top_n_factors,
                     )
-                    viz.show_plot(fig_bar, key="factor_rc_bar")
+                    viz.show_plot(fig_factor_bar, key="factor_rc_bar")
 
-                    fig_hm = viz.plot_factor_rc_heatmap(
+                    fig_factor_hm = viz.plot_factor_rc_heatmap(
                         asset_factor_rc,
                         title="Asset × Factor RC (Euler, PCA factors)",
+                        as_percent=as_percent_factor,
+                        sigma_p=sigma_p,
                     )
-                    viz.show_plot(fig_hm, key="factor_rc_heatmap")
+                    viz.show_plot(fig_factor_hm, key="factor_rc_heatmap")
         except Exception as e:
             st.info(f"Factor decomposition not available: {e}")
+            fig_factor_bar = None
+            fig_factor_hm = None
 
 # Tablas
 st.subheader("📊 Tables")
@@ -322,6 +374,16 @@ if df_brinson_ctx is not None:
     except Exception:
         pass
 
+# Añadimos Euler y Factor Decomposition al reporte si están disponibles
+if fig_euler_last_day is not None:
+    figures.append(ReportFigure("Euler RC (last day)", fig_euler_last_day))
+
+if fig_factor_bar is not None:
+    figures.append(ReportFigure("Factor RC (PCA)", fig_factor_bar))
+
+if fig_factor_hm is not None:
+    figures.append(ReportFigure("Asset × Factor RC (PCA)", fig_factor_hm))
+
 try:
     html_bytes = render_html(ctx, figures, page_title="GammaEdge Report", h1="Backtest Report")
     st.download_button(
@@ -341,8 +403,8 @@ try:
         file_name="backtest_report.pdf",
         mime="application/pdf",
     )
-except Exception:
-    st.info("PDF export not available: {e}\nInstall dependencies: plotly[kaleido], reportlab")
+except Exception as e:
+    st.info(f"PDF export not available: {e}\nInstall dependencies: plotly[kaleido], reportlab")
 
 # Guardado opcional en ./reports
 save_to_disk = st.checkbox("Save also to ./reports", value=False)

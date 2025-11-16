@@ -2238,35 +2238,54 @@ def plot_weights_compare_heatmap(
 
 
 def plot_brinson_group_bar(
-    df: pl.DataFrame | pd.DataFrame, *, title: str = "Brinson attribution by group"
+    df: pl.DataFrame | pd.DataFrame,
+    *,
+    title: str = "Brinson attribution by group",
+    metric: str | None = None,
 ) -> go.Figure:
     pdf = _to_pandas(df)
+
     if "group" in pdf.columns:
         group_col = "group"
     elif "group_id" in pdf.columns:
         group_col = "group_id"
     else:
         raise ValueError("Expected a 'group' or 'group_id' column in Brinson group dataframe.")
-    metrics = [c for c in ("alloc", "select", "interact", "total") if c in pdf.columns]
-    if not metrics:
-        raise ValueError(
-            "No Brinson metric columns found (expected one of: 'alloc', 'select', 'interact', 'total')."
-        )
+
     x = pdf[group_col].astype(str)
+
     fig = go.Figure()
-    for m in metrics:
+
+    if metric is not None:
+        if metric not in pdf.columns:
+            raise ValueError(f"Metric '{metric}' not found in Brinson group dataframe.")
+        y = pdf[metric]
         fig.add_bar(
             x=x,
-            y=pdf[m],
-            name=m.capitalize(),
-            hovertemplate=f"Group: %{{x}}<br>{m}: %{{y:.4f}}<extra></extra>",
+            y=y,
+            name=metric,
+            hovertemplate=f"Group: %{{x}}<br>{metric}: %{{y:.4f}}<extra></extra>",
         )
+    else:
+        metrics = [c for c in ("alloc", "select", "interact", "total") if c in pdf.columns]
+        if not metrics:
+            raise ValueError(
+                "No Brinson metric columns found (expected one of: "
+                "'alloc', 'select', 'interact', 'total')."
+            )
+        for m in metrics:
+            fig.add_bar(
+                x=x,
+                y=pdf[m],
+                name=m.capitalize(),
+                hovertemplate=f"Group: %{{x}}<br>{m}: %{{y:.4f}}<extra></extra>",
+            )
+
     fig.update_layout(
         title=title,
         xaxis_title="Group",
         yaxis_title="Contribution",
         barmode="group",
-        template="plotly_white",
         legend_title_text="Component",
     )
     return fig
@@ -2313,6 +2332,7 @@ def plot_euler_contributions(
     *,
     title: str = "Euler risk contributions",
     top_n: int | None = None,
+    as_percent: bool = False,
 ) -> go.Figure:
     if isinstance(df, pd.Series):
         pdf = df.to_frame(name="risk_contribution")
@@ -2323,14 +2343,17 @@ def plot_euler_contributions(
         pdf = df.copy()
     else:
         raise TypeError(
-            "Unsupported type for Euler contributions: expected pandas.Series, pandas.DataFrame or polars.DataFrame."
+            "Unsupported type for Euler contributions: expected pandas.Series, "
+            "pandas.DataFrame or polars.DataFrame."
         )
+
     if "risk_contribution" in pdf.columns:
         contrib_col = "risk_contribution"
     elif "contribution" in pdf.columns:
         contrib_col = "contribution"
     else:
         raise ValueError("Expected a 'risk_contribution' or 'contribution' column for Euler plot.")
+
     if "asset" in pdf.columns:
         asset_col = "asset"
     elif "ticker" in pdf.columns:
@@ -2338,12 +2361,24 @@ def plot_euler_contributions(
     else:
         pdf["asset"] = pdf.index.astype(str)
         asset_col = "asset"
+
     pdf = pdf[[asset_col, contrib_col]].copy()
     pdf = pdf.dropna(subset=[contrib_col])
+
+    if as_percent:
+        total = float(pdf[contrib_col].sum())
+        if abs(total) > 1e-12:
+            pdf[contrib_col] = pdf[contrib_col] / total * 100.0
+        y_label = "Risk contribution (%)"
+    else:
+        y_label = "Risk contribution"
+
     pdf["abs_contrib"] = pdf[contrib_col].abs()
     pdf = pdf.sort_values("abs_contrib", ascending=False)
+
     if top_n is not None and top_n > 0:
         pdf = pdf.head(top_n)
+
     fig = go.Figure(
         go.Bar(
             x=pdf[asset_col],
@@ -2352,7 +2387,9 @@ def plot_euler_contributions(
         )
     )
     fig.update_layout(
-        title=title, xaxis_title="Asset", yaxis_title="Risk contribution", template="plotly_white"
+        title=title,
+        xaxis_title="Asset",
+        yaxis_title=y_label,
     )
     return fig
 
@@ -2361,20 +2398,31 @@ def plot_factor_rc_bar(
     factor_rc: pd.Series | pd.DataFrame,
     *,
     title: str = "Factor risk contributions",
+    as_percent: bool = False,
+    sigma_p: float | None = None,
+    top_n: int | None = None,
 ) -> go.Figure:
-    """
-    Bar chart for Euler factor risk contributions.
-
-    Accepts:
-    - pandas.Series with index=factors
-    - pandas.DataFrame (we use the first column)
-    """
     if isinstance(factor_rc, pd.DataFrame):
         s = pd.Series(dtype=float) if factor_rc.shape[1] == 0 else factor_rc.iloc[:, 0]
     else:
         s = factor_rc
 
     s = s.astype(float)
+
+    if as_percent:
+        if sigma_p is not None and sigma_p > 1e-12:
+            s = s / float(sigma_p) * 100.0
+        else:
+            total = float(s.sum())
+            if abs(total) > 1e-12:
+                s = s / total * 100.0
+        y_label = "Risk contribution (%)"
+    else:
+        y_label = "Risk contribution"
+
+    if top_n is not None and top_n > 0 and top_n < len(s):
+        order = s.abs().sort_values(ascending=False).index[:top_n]
+        s = s.loc[order]
 
     fig = go.Figure(
         go.Bar(
@@ -2386,8 +2434,7 @@ def plot_factor_rc_bar(
     fig.update_layout(
         title=title,
         xaxis_title="Factor",
-        yaxis_title="Risk contribution",
-        template="plotly_white",
+        yaxis_title=y_label,
     )
     return fig
 
@@ -2396,13 +2443,21 @@ def plot_factor_rc_heatmap(
     asset_factor_rc: pd.DataFrame,
     *,
     title: str = "Asset × Factor RC",
+    as_percent: bool = False,
+    sigma_p: float | None = None,
 ) -> go.Figure:
-    """
-    Heatmap for asset × factor Euler risk contributions.
-
-    asset_factor_rc: DataFrame index=assets, columns=factors.
-    """
     df = asset_factor_rc.astype(float)
+
+    if as_percent:
+        if sigma_p is not None and sigma_p > 1e-12:
+            df = df / float(sigma_p) * 100.0
+        else:
+            total = float(df.values.sum())
+            if abs(total) > 1e-12:
+                df = df / total * 100.0
+        color_label = "RC (%)"
+    else:
+        color_label = "RC"
 
     fig = px.imshow(
         df.values,
@@ -2411,13 +2466,12 @@ def plot_factor_rc_heatmap(
         aspect="auto",
         color_continuous_scale="RdBu",
         origin="upper",
-        labels=dict(color="RC"),
+        labels=dict(color=color_label),
     )
     fig.update_layout(
         title=title,
         xaxis_title="Factor",
         yaxis_title="Asset",
-        template="plotly_white",
         margin=dict(t=60, r=10, b=40, l=60),
     )
     return fig
