@@ -6,6 +6,8 @@ from typing import TypedDict
 import numpy as np
 import pandas as pd
 
+from portfolio.core.utils import ensure_psd
+
 
 class FactorDecompOut(TypedDict):
     sigma_p: float
@@ -13,7 +15,10 @@ class FactorDecompOut(TypedDict):
     asset_factor_rc: pd.DataFrame
 
 
-def _to_series(x: pd.Series | list[float] | tuple[float, ...] | np.ndarray, name: str) -> pd.Series:
+def _to_series(
+    x: pd.Series | list[float] | tuple[float, ...] | np.ndarray,
+    name: str,
+) -> pd.Series:
     if isinstance(x, pd.Series):
         s = x.copy()
         if s.name is None:
@@ -39,7 +44,9 @@ def _to_dataframe(
 
 
 def _validate_shapes(
-    w: pd.Series, B: pd.DataFrame, Sigma_f: pd.DataFrame
+    w: pd.Series,
+    B: pd.DataFrame,
+    Sigma_f: pd.DataFrame,
 ) -> tuple[pd.Series, pd.DataFrame, pd.DataFrame]:
     if not isinstance(w, pd.Series):
         raise TypeError("w must be a pandas Series with asset index.")
@@ -55,6 +62,7 @@ def _validate_shapes(
     if not set(B.columns).issubset(set(Sigma_f.columns)):
         raise ValueError("All B columns (factors) must be present in Sigma_f.")
 
+    # Align Sigma_f to factor order in B
     Sigma_f = Sigma_f.reindex(index=B.columns, columns=B.columns)
     assert Sigma_f is not None
 
@@ -65,48 +73,96 @@ def euler_factor_contributions(
     w: pd.Series | np.ndarray,
     B: pd.DataFrame | np.ndarray,
     Sigma_f: pd.DataFrame | np.ndarray,
+    *,
+    lambda_reg: float = 1e-8,
 ) -> FactorDecompOut:
     """
     Euler factor risk decomposition under a linear factor model:
-      R = B F,  Var(R) = B Sigma_f B^T,  sigma_p = sqrt(w^T B Sigma_f B^T w)
+
+      R = B F
+      Var(R) = B Sigma_f B^T
+      sigma_p = sqrt(w^T B Sigma_f B^T w)
+
+    Returns
+    -------
+    sigma_p : float
+        Portfolio risk (standard deviation).
+    factor_rc : pd.Series
+        Risk contributions by factor (sum ≈ sigma_p).
+    asset_factor_rc : pd.DataFrame
+        Asset × factor risk contributions (rows=assets, cols=factors).
     """
+    # Coerce to pandas
     w_s: pd.Series = _to_series(w, name="w")
     B_df: pd.DataFrame = _to_dataframe(B, index=w_s.index, name="B")
     if not isinstance(Sigma_f, pd.DataFrame):
         Sigma_f_df: pd.DataFrame = _to_dataframe(
-            Sigma_f, index=B_df.columns, columns=B_df.columns, name="Sigma_f"
+            Sigma_f,
+            index=B_df.columns,
+            columns=B_df.columns,
+            name="Sigma_f",
         )
     else:
         Sigma_f_df = Sigma_f.copy()
 
+    # Validate shapes and align factor order
     w_s, B_df, Sigma_f_df = _validate_shapes(w_s, B_df, Sigma_f_df)
+
+    # ------------------------------------------------------------------
+    # 1) Comprobación de varianza "real" SIN tocar Sigma (ni PSD ni ridge)
+    # ------------------------------------------------------------------
+    Sigma_input = Sigma_f_df.to_numpy(dtype=float)
 
     # Portfolio factor exposure g = B^T w
     g_ser: pd.Series = B_df.T @ w_s
-
-    # Variance via NumPy for clean dtypes
     g_np = g_ser.to_numpy(dtype=float)
-    Sigma_np = Sigma_f_df.to_numpy(dtype=float)
+
+    var_raw = float(g_np.T @ (Sigma_input @ g_np))
+
+    # Si la varianza verdadera es cero (o numéricamente ~0) → todo cero
+    if var_raw <= 0.0 or np.isclose(var_raw, 0.0, atol=1e-12):
+        factors = B_df.columns
+        assets = B_df.index
+        return {
+            "sigma_p": 0.0,
+            "factor_rc": pd.Series(0.0, index=factors, name="factor_rc"),
+            "asset_factor_rc": pd.DataFrame(0.0, index=assets, columns=factors),
+        }
+
+    # ------------------------------------------------------------------
+    # 2) Ahora sí: limpieza PSD + ridge para estabilidad numérica
+    # ------------------------------------------------------------------
+    Sigma_base = ensure_psd(Sigma_input)
+    Sigma_np = Sigma_base
+    if lambda_reg > 0.0:
+        n_factors = Sigma_base.shape[0]
+        Sigma_np = Sigma_base + float(lambda_reg) * np.eye(n_factors)
+
+    Sigma_f_df = pd.DataFrame(Sigma_np, index=Sigma_f_df.index, columns=Sigma_f_df.columns)
+
+    # Portfolio variance with stabilized covariance
     var_p = float(g_np.T @ (Sigma_np @ g_np))
-    if var_p < 0:
+    if var_p < 0.0:
         var_p = 0.0
     sigma_p = float(np.sqrt(var_p))
 
     if sigma_p == 0.0:
+        factors = B_df.columns
+        assets = B_df.index
         return {
             "sigma_p": 0.0,
-            "factor_rc": pd.Series(0.0, index=B_df.columns, name="factor_rc"),
-            "asset_factor_rc": pd.DataFrame(0.0, index=B_df.index, columns=B_df.columns),
+            "factor_rc": pd.Series(0.0, index=factors, name="factor_rc"),
+            "asset_factor_rc": pd.DataFrame(0.0, index=assets, columns=factors),
         }
 
     # Marginal risk per factor: d sigma / d g = (Sigma g) / sigma
     mrc_np = (Sigma_np @ g_np) / sigma_p
     mrc_factor = pd.Series(mrc_np, index=Sigma_f_df.index, name="mrc_factor")
 
-    # Euler by factor
+    # Euler by factor: RC_f = g_f * MRC_f (sum_f RC_f = sigma_p)
     factor_rc = pd.Series(g_np * mrc_np, index=Sigma_f_df.index, name="factor_rc")
 
-    # Per-asset per-factor: RC_{i,f} = w_i * B_if * mrc_factor_f
+    # Per-asset per-factor: RC_{i,f} = w_i * B_if * MRC_f
     asset_factor_rc = B_df.mul(w_s, axis=0).mul(mrc_factor, axis=1)
 
     return {
@@ -121,16 +177,20 @@ def factor_attribution_matrix(
     B: pd.DataFrame | np.ndarray,
     Sigma_f: pd.DataFrame | np.ndarray,
     top_factors: int | None = None,
+    *,
+    lambda_reg: float = 1e-8,
 ) -> pd.DataFrame:
     """
-    Return long-format per-asset per-factor risk contributions with |rc| for sorting.
+    Long-format per-asset per-factor risk contributions with |rc| for sorting.
+
+    Columns: ["asset", "factor", "rc", "abs_rc"].
     """
-    out = euler_factor_contributions(w, B, Sigma_f)
+    out = euler_factor_contributions(w, B, Sigma_f, lambda_reg=lambda_reg)
     A: pd.DataFrame = out["asset_factor_rc"]
 
     stacked = A.stack()  # MultiIndex (asset, factor)
     stacked.name = "rc"
-    df = stacked.reset_index()  # columns: ['level_0','level_1','rc']
+    df = stacked.reset_index()
     df.columns = ["asset", "factor", "rc"]
 
     if top_factors is not None and top_factors > 0:
