@@ -6,18 +6,15 @@ import io
 import json
 import os
 import sys
+from datetime import datetime
+from typing import Any
 
-import numpy as _np
 import numpy as np
-import numpy.linalg as _la
 import polars as pl
 import streamlit as st
 
-# Para importar módulos del proyecto
+# Local project imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
-
-# Core risk
-from datetime import datetime
 
 from portfolio.core.compat import UTC
 from portfolio.features.risk_models import (
@@ -27,11 +24,7 @@ from portfolio.features.risk_models import (
     correlation_from_cov,
     pca_factor_cov,
 )
-
-# Cache persistente de artefactos (para risk_model.json)
 from portfolio.io.cache import save_json
-
-# Viz
 from portfolio.viz.plot_utils import (
     HeatmapOrder,
     corr_dendrogram,
@@ -58,7 +51,7 @@ df_ret_wide: pl.DataFrame = st.session_state["returns_wide"]
 
 
 def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
-    # 0) Tipo y columna fecha
+    """Validate and clean wide returns frame for risk modeling."""
     if not isinstance(df, pl.DataFrame):
         st.error("returns_wide in session_state is not a Polars DataFrame.")
         st.stop()
@@ -66,17 +59,18 @@ def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
         st.error("returns_wide must include a 'date' column.")
         st.stop()
 
-    # 1) Normaliza fecha + orden + unicidad
+    # Normalize date type and order; enforce unique dates
     df = df.with_columns(pl.col("date").cast(pl.Datetime, strict=False)).sort("date")
     if df["date"].n_unique() < df.height:
         st.warning("Duplicate dates detected — keeping last per timestamp.")
         df = df.unique(subset=["date"], keep="last")
 
-    # 2) Fuerza numérico en todas las columnas ≠ date
     value_cols = [c for c in df.columns if c != "date"]
+
+    # Force numeric dtype for all asset columns
     df = df.with_columns([pl.col(c).cast(pl.Float64, strict=False).alias(c) for c in value_cols])
 
-    # 3) Limpieza de no finitos: ±inf → null
+    # Replace non-finite values with null
     df = df.with_columns(
         [
             pl.when(pl.col(c).is_finite()).then(pl.col(c)).otherwise(None).alias(c)
@@ -84,28 +78,31 @@ def _validate_returns_wide(df: pl.DataFrame) -> pl.DataFrame:
         ]
     )
 
-    # 4) Elimina columnas completamente vacías
-    null_counts = df.select([pl.col(c).is_null().sum().alias(c) for c in value_cols]).row(0)
+    # Drop columns that are entirely null
+    null_counts_row = df.select([pl.col(c).is_null().sum().alias(c) for c in value_cols]).row(0)
     n_rows = df.height
-    drop_cols = [c for c, nnull in zip(value_cols, null_counts) if (nnull == n_rows)]  # noqa: B905
+    drop_cols = [
+        c
+        for c, nnull in zip(value_cols, null_counts_row)  # noqa: B905
+        if nnull is not None and int(nnull) == n_rows
+    ]
     if drop_cols:
         st.warning(f"Dropping empty return columns: {', '.join(drop_cols)}")
         df = df.drop(drop_cols)
         value_cols = [c for c in value_cols if c not in drop_cols]
 
-    # 5) Detecta columnas constantes (σ≈0) que rompen Σ
+    # Drop near-constant columns (σ≈0) that break covariance estimation
     if value_cols:
-        stds = df.select([pl.col(c).std(ddof=1).alias(c) for c in value_cols]).row(0)
-        const_cols = [
-            c
-            for c, s in zip(value_cols, stds)  # noqa: B905
-            if (s is None) or (not np.isfinite(s)) or (s <= 1e-14)
-        ]
+        stds_row = df.select([pl.col(c).std(ddof=1).alias(c) for c in value_cols]).row(0)
+        const_cols = []
+        for c, s in zip(value_cols, stds_row, strict=False):
+            if s is None or not np.isfinite(s) or float(s) <= 1e-14:
+                const_cols.append(c)
         if const_cols:
             st.warning(f"Dropping near-constant columns (σ≈0): {', '.join(const_cols)}")
             df = df.drop(const_cols)
 
-    # 6) Asegura al menos 2 filas útiles
+    # Ensure enough data for risk modeling
     if df.height < 2 or len([c for c in df.columns if c != "date"]) == 0:
         st.error("Not enough valid data after validation for risk modeling.")
         st.stop()
@@ -119,7 +116,7 @@ if not tickers:
     st.error("No return columns found.")
     st.stop()
 
-# Estado persistente
+# Persistent state
 st.session_state.setdefault("risk_payload", None)
 st.session_state.setdefault("risk_ready", False)
 
@@ -127,7 +124,8 @@ st.session_state.setdefault("risk_ready", False)
 # ──────────────────────────────────────────────────────────────────────────────
 # Helpers
 # ──────────────────────────────────────────────────────────────────────────────
-def _json_default(o):
+def _json_default(o: Any) -> Any:
+    """JSON serializer for numpy and datetime objects."""
     if hasattr(o, "isoformat"):
         try:
             return o.isoformat()
@@ -144,6 +142,7 @@ def _json_default(o):
 
 
 def _infer_per_year(dates: pl.Series) -> int:
+    """Infer periods per year from median calendar spacing."""
     s = dates.sort()
     if s.len() < 2:
         return 252
@@ -151,14 +150,16 @@ def _infer_per_year(dates: pl.Series) -> int:
     med = float(dt_days.median())
     if med <= 3.0:
         return 252  # daily
-    elif med <= 9.0:
+    if med <= 9.0:
         return 52  # weekly
-    else:
-        return 12  # monthly approx
+    return 12  # monthly (approx)
 
 
-def _apply_fill_policy(df_wide: pl.DataFrame, policy: str):
-    """Devuelve df_wide_filled y un reporte de imputación por ticker."""
+def _apply_fill_policy(
+    df_wide: pl.DataFrame,
+    policy: str,
+) -> tuple[pl.DataFrame, pl.DataFrame]:
+    """Return filled wide returns and an imputation report."""
     if policy == "drop":
         original_h = df_wide.height
         df_filled = df_wide.drop_nulls()
@@ -167,32 +168,36 @@ def _apply_fill_policy(df_wide: pl.DataFrame, policy: str):
             {"policy": ["drop"], "rows_dropped": [int(dropped)], "imputed_pct": [0.0]}
         )
         return df_filled, report
-    else:
-        value_cols = [c for c in df_wide.columns if c != "date"]
-        means = df_wide.select([pl.col(c).mean().alias(c) for c in value_cols])
-        na_counts = df_wide.select([pl.col(c).is_null().sum().alias(c) for c in value_cols])
-        df_filled = df_wide.clone()
-        for c in value_cols:
-            m = means.select(c).item()
-            df_filled = df_filled.with_columns(
-                pl.when(pl.col(c).is_null()).then(pl.lit(m)).otherwise(pl.col(c)).alias(c)
-            )
-        total_cells = df_wide.height * len(value_cols)
-        total_na = int(sum(na_counts.row(0)))
-        imputed_pct = (100.0 * total_na / total_cells) if total_cells else 0.0
-        report = pl.DataFrame(
-            {"policy": ["mean"], "rows_dropped": [0], "imputed_pct": [imputed_pct]}
+
+    # Mean-impute per asset
+    value_cols = [c for c in df_wide.columns if c != "date"]
+    means = df_wide.select([pl.col(c).mean().alias(c) for c in value_cols])
+    na_counts = df_wide.select([pl.col(c).is_null().sum().alias(c) for c in value_cols])
+
+    df_filled = df_wide.clone()
+    for c in value_cols:
+        m = means.select(c).item()
+        df_filled = df_filled.with_columns(
+            pl.when(pl.col(c).is_null()).then(pl.lit(m)).otherwise(pl.col(c)).alias(c)
         )
-        return df_filled, report
+
+    total_cells = df_wide.height * len(value_cols)
+    total_na = int(sum(int(x or 0) for x in na_counts.row(0)))
+    imputed_pct = (100.0 * total_na / total_cells) if total_cells else 0.0
+
+    report = pl.DataFrame({"policy": ["mean"], "rows_dropped": [0], "imputed_pct": [imputed_pct]})
+    return df_filled, report
 
 
 def _annualize(mu: np.ndarray, Sigma: np.ndarray, per_year: int) -> tuple[np.ndarray, np.ndarray]:
+    """Annualize mean and covariance."""
     mu_a = mu * float(per_year)
     Sigma_a = Sigma * float(per_year)
     return mu_a, Sigma_a
 
 
 def _apply_ridge(Sigma: np.ndarray, eps: float) -> np.ndarray:
+    """Diagonal ridge regularization."""
     if eps <= 0:
         return Sigma
     n = Sigma.shape[0]
@@ -200,21 +205,26 @@ def _apply_ridge(Sigma: np.ndarray, eps: float) -> np.ndarray:
 
 
 def _cond_number(S: np.ndarray) -> float:
+    """Condition number κ(Σ) based on eigenvalues."""
     if S.size == 0:
         return float("nan")
     S_sym = 0.5 * (S + S.T)
     vals = np.linalg.eigvalsh(S_sym)
-    lam_min = float(np.min(vals)) if vals.size else np.nan
-    lam_max = float(np.max(vals)) if vals.size else np.nan
-    return float(lam_max / max(lam_min, 1e-16)) if vals.size else np.nan
+    if vals.size == 0:
+        return float("nan")
+    lam_min = float(np.min(vals))
+    lam_max = float(np.max(vals))
+    return float(lam_max / max(lam_min, 1e-16))
 
 
-def _fingerprint(names: list[str], params: dict) -> str:
+def _fingerprint(names: list[str], params: dict[str, Any]) -> str:
+    """Short stable fingerprint based on tickers and params."""
     blob = json.dumps({"tickers": names, "params": params}, sort_keys=True).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:12]
 
 
 def _ewma_default(per_year: int) -> float:
+    """Reasonable EWMA lambda default given sampling frequency."""
     if per_year >= 250:
         return 0.94
     if per_year >= 50:
@@ -226,7 +236,7 @@ def _ewma_default(per_year: int) -> float:
 # Black–Litterman helpers (simple views builder)
 # ──────────────────────────────────────────────────────────────────────────────
 def _build_PQ_absolute(names: list[str], asset: str, q: float) -> tuple[np.ndarray, np.ndarray]:
-    """Vista absoluta: r_i = q."""
+    """Absolute view: r_i = q."""
     N = len(names)
     P = np.zeros((1, N), dtype=float)
     try:
@@ -239,9 +249,12 @@ def _build_PQ_absolute(names: list[str], asset: str, q: float) -> tuple[np.ndarr
 
 
 def _build_PQ_relative(
-    names: list[str], long: str, short: str, q: float
+    names: list[str],
+    long: str,
+    short: str,
+    q: float,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Vista relativa: r_i - r_j = q."""
+    """Relative view: r_i − r_j = q."""
     N = len(names)
     P = np.zeros((1, N), dtype=float)
     try:
@@ -256,16 +269,22 @@ def _build_PQ_relative(
 
 
 def _omega_from_confidence(
-    P: np.ndarray, Sigma: np.ndarray, tau: float, confidence: float | list[float]
+    P: np.ndarray,
+    Sigma: np.ndarray,
+    tau: float,
+    confidence: float | list[float],
 ) -> np.ndarray:
     """
-    Ω diagonal a partir de P, Σ y tau. Mayor confidence → menor varianza (Ω escala por 1/conf).
+    Diagonal Ω from P, Σ and tau.
+    Higher confidence → lower variance (Ω scaled by 1/confidence).
     """
     K = P.shape[0]
-    base = np.diag(np.diag(P @ (tau * Sigma) @ P.T))  # KxK
+    base = np.diag(np.diag(P @ (tau * Sigma) @ P.T))  # (K, K)
+
     if np.isscalar(confidence):
-        c = float(np.clip(confidence, 1e-3, 1.0))
+        c = float(np.clip(float(confidence), 1e-3, 1.0))
         return base * (1.0 / c)
+
     conf = np.asarray(confidence, dtype=float).reshape(-1)
     if conf.shape[0] != K:
         raise ValueError("Length of confidence list must equal number of views.")
@@ -274,7 +293,7 @@ def _omega_from_confidence(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Core pipeline
+# Core risk pipeline
 # ──────────────────────────────────────────────────────────────────────────────
 def _risk_pipeline(
     df_ret_wide: pl.DataFrame,
@@ -293,14 +312,15 @@ def _risk_pipeline(
     stress_test: bool,
     heatmap_method: str,
     heatmap_optimal: bool,
-):
-    # 1) Fill policy
+) -> dict[str, Any]:
+    """Compute μ, Σ and diagnostics for the selected configuration."""
+    # 1) Handle missing data
     df_clean, fill_report = _apply_fill_policy(df_ret_wide, fill_policy)
     names = [c for c in df_clean.columns if c != "date"]
     X = df_clean.select(pl.exclude("date")).to_numpy()
 
-    # 2) μ & Σ (no anualizar aquí)
-    mu_shrink_to_vec = None
+    # 2) Mean vector target for shrinkage
+    mu_shrink_to_vec: np.ndarray | None = None
     if mu_method == "shrunk" and mu_shrink_target is not None:
         if mu_shrink_target == "zero":
             mu_shrink_to_vec = np.zeros(len(names))
@@ -313,6 +333,7 @@ def _risk_pipeline(
             rf_per = rf_ann / max(per_year, 1)
             mu_shrink_to_vec = np.full(len(names), rf_per, dtype=float)
 
+    # 3) Mean / covariance estimation (non-annualized)
     if mu_method == "capm":
         mu = capm_mu(df_clean, market="SPY", annualize=False)
         Sigma = np.cov(X, rowvar=False)
@@ -336,34 +357,40 @@ def _risk_pipeline(
             mu_shrink_to=mu_shrink_to_vec,
             cov_method=cov_method,
             ewma_lambda=float(ewma_lambda),
-            fill="none",  # ya hicimos fill
+            fill="none",  # already filled
             annualize=False,
             psd=enforce_psd,
         )
         names = list(names_out)
 
-    # 3) Annualización consistente
+    # 4) Annualization
     mu, Sigma = _annualize(mu, Sigma, per_year)
 
-    # 4) Condicionamiento antes de ridge (diagnóstico)
+    # 5) Pre-ridge conditioning
     cond_pre = _cond_number(Sigma)
 
-    # 5) Ridge opcional
+    # 6) Ridge regularization
     Sigma = _apply_ridge(Sigma, ridge_eps)
 
-    # 6) Stress test opcional
+    # 7) Optional stress test
     if stress_test:
         vol = np.sqrt(np.diag(Sigma))
         Corr = correlation_from_cov(Sigma)
         Sigma = np.outer(vol * 1.2, vol * 1.2) * (Corr * 0.5)
 
-    # 7) Diagnósticos post
+    # 8) Post diagnostics
     S_sym = 0.5 * (Sigma + Sigma.T)
     eigvals = np.linalg.eigvalsh(S_sym)
-    lam_min = float(np.min(eigvals)) if eigvals.size else np.nan
-    lam_max = float(np.max(eigvals)) if eigvals.size else np.nan
-    cond_post = float(lam_max / max(lam_min, 1e-16)) if eigvals.size else np.nan
-    eff_rank = float((eigvals.sum() ** 2) / np.sum(eigvals**2)) if eigvals.size else np.nan
+    if eigvals.size > 0:
+        lam_min = float(np.min(eigvals))
+        lam_max = float(np.max(eigvals))
+        cond_post = float(lam_max / max(lam_min, 1e-16))
+        eff_rank = float((eigvals.sum() ** 2) / np.sum(eigvals**2))
+    else:
+        lam_min = float("nan")
+        lam_max = float("nan")
+        cond_post = float("nan")
+        eff_rank = float("nan")
 
     params = {
         "mu_method": mu_method,
@@ -409,7 +436,7 @@ def _risk_pipeline(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Inputs (UI)
+# UI – inputs
 # ──────────────────────────────────────────────────────────────────────────────
 default_per_year = _infer_per_year(df_ret_wide["date"])
 ewma_default = _ewma_default(default_per_year)
@@ -425,22 +452,41 @@ with c1:
         ["historical", "ema", "shrunk", "capm", "black-litterman"],
         index=0,
     )
-    mu_span = st.number_input("EMA span (if μ=ema)", min_value=5, max_value=360, value=60, step=5)
+    mu_span = st.number_input(
+        "EMA span (if μ=ema)",
+        min_value=5,
+        max_value=360,
+        value=60,
+        step=5,
+    )
+
 with c2:
-    cov_method = st.selectbox("Covariance (Σ)", ["sample", "oas", "lw", "ewma", "pca"], index=0)
+    cov_method = st.selectbox(
+        "Covariance (Σ)",
+        ["sample", "oas", "lw", "ewma", "pca"],
+        index=0,
+    )
     ewma_lambda = st.slider(
-        "EWMA λ", min_value=0.80, max_value=0.995, value=float(ewma_default), step=0.005
+        "EWMA λ",
+        min_value=0.80,
+        max_value=0.995,
+        value=float(ewma_default),
+        step=0.005,
     )
     n_factors = st.slider(
-        "PCA factors (if Σ=pca)", min_value=1, max_value=len(tickers), value=min(5, len(tickers))
+        "PCA factors (if Σ=pca)",
+        min_value=1,
+        max_value=len(tickers),
+        value=min(5, len(tickers)),
     )
+
 with c3:
     fill_policy = st.selectbox("NaN policy", ["drop", "mean"], index=0)
     enforce_psd = st.checkbox("Enforce PSD (clip eigenvalues)", value=True)
 
-# Controles extra para μ-shrunk
-mu_shrink_target = None
-mu_rf_annual = 0.0
+# Extra controls for μ-shrunk
+mu_shrink_target: str | None = None
+mu_rf_annual: float = 0.0
 if mu_method == "shrunk":
     st.markdown("**μ shrinkage target**")
     _tcol1, _tcol2 = st.columns(2)
@@ -477,11 +523,12 @@ with c5:
 with c6:
     stress_test = st.checkbox("Enable Stress Testing (+20% vol, -50% corr)", value=False)
 
-# Orden del heatmap y WebGL
 h1, h2, h3 = st.columns(3)
 with h1:
     heatmap_method = st.selectbox(
-        "Heatmap linkage", ["single", "complete", "average", "ward"], index=2
+        "Heatmap linkage",
+        ["single", "complete", "average", "ward"],
+        index=2,
     )
 with h2:
     heatmap_optimal = st.checkbox("Optimal leaf ordering", value=True)
@@ -490,7 +537,7 @@ with h3:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Acción (cálculo) → guarda en session_state
+# Action – compute risk model and store in session_state
 # ──────────────────────────────────────────────────────────────────────────────
 if st.button("Estimate μ and Σ", type="primary"):
     payload = _risk_pipeline(
@@ -515,15 +562,20 @@ if st.button("Estimate μ and Σ", type="primary"):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Render desde session_state (persistente)
+# Render & handoff (only when risk model is ready)
 # ──────────────────────────────────────────────────────────────────────────────
 if st.session_state.get("risk_ready"):
     p = st.session_state["risk_payload"]
-    mu, Sigma, names = p["mu"], p["Sigma"], p["names"]
-    eigvals, cond_pre, cond_post = p["eigvals"], p["cond_pre"], p["cond_post"]
-    fill_report, meta = p["fill_report"], p["meta"]
+    mu: np.ndarray = p["mu"]
+    Sigma: np.ndarray = p["Sigma"]
+    names: list[str] = p["names"]
+    eigvals: np.ndarray = p["eigvals"]
+    cond_pre: float = p["cond_pre"]
+    cond_post: float = p["cond_post"]
+    fill_report: pl.DataFrame = p["fill_report"]
+    meta: dict[str, Any] = p["meta"]
 
-    # Fill policy report
+    # NaN policy report
     st.subheader("NaN Policy Report")
     st.dataframe(fill_report.to_pandas(), width="stretch")
 
@@ -538,12 +590,12 @@ if st.session_state.get("risk_ready"):
     cD.metric("κ (pre-ridge)", f"{cond_pre:.2e}")
     cE.metric("κ (post-ridge)", f"{cond_post:.2e}")
 
-    # μ
+    # μ table
     st.subheader("Expected returns (μ, annualized)")
     mu_df = pl.DataFrame({"ticker": names, "mu": mu}).sort("mu", descending=True)
     st.dataframe(mu_df.to_pandas().round(6), width="stretch")
 
-    # Σ/ρ visualizations
+    # Correlation heatmap
     st.subheader("Correlation heatmap (clustered)")
     order_cfg = HeatmapOrder(
         clustered=True,
@@ -551,7 +603,6 @@ if st.session_state.get("risk_ready"):
         optimal=bool(meta["params"]["heatmap_optimal"]),
     )
 
-    # Heatmap (keys distintos según GL vs normal)
     if len(names) > 200:
         show_plot(
             corr_heatmap_gl(Sigma, labels=names, is_cov=True, order=order_cfg),
@@ -568,7 +619,10 @@ if st.session_state.get("risk_ready"):
         st.subheader("Correlation dendrogram")
         show_plot(
             corr_dendrogram(
-                Sigma, labels=names, is_cov=True, method=meta["params"]["heatmap_method"]
+                Sigma,
+                labels=names,
+                is_cov=True,
+                method=meta["params"]["heatmap_method"],
             ),
             key="risk-dendrogram",
         )
@@ -577,15 +631,15 @@ if st.session_state.get("risk_ready"):
     st.subheader("Covariance spectrum")
     show_plot(covariance_spectrum(Sigma), key="risk-cov-spectrum")
 
-    # Scree Plot
+    # Scree plot
     st.subheader("Scree Plot (explained variance)")
     show_plot(scree_plot(eigvals), key="risk-scree")
 
-    # Correlation Network
+    # Correlation network
     st.subheader("Correlation Network Graph")
     show_plot(network_corr_graph(Sigma, names), key="risk-netgraph")
 
-    # Risk contributions (benchmark equal-weight)
+    # Risk contributions (equal-weight benchmark)
     st.subheader("Risk Contributions (Equal-Weight Benchmark)")
     if len(names) > 0:
         w_eq = np.full(len(names), 1.0 / len(names))
@@ -594,28 +648,39 @@ if st.session_state.get("risk_ready"):
             risk_contributions_bar(rc, names, sort=True, topn=min(30, len(names))),
             key="risk-rc-ew",
         )
-    # ──────────────────────────────────────────────────────────────────────────
-    # Black–Litterman (Views) – esqueleto operativo
-    # ──────────────────────────────────────────────────────────────────────────
+
+    # ──────────────────────────────────────────────────────────────────────
+    # Black–Litterman (views) – interactive posterior μ
+    # ──────────────────────────────────────────────────────────────────────
     with st.expander("🧠 Black–Litterman (Views)", expanded=False):
-        st.caption("Construye vistas absolutas o relativas; ajusta Ω desde 'confidence'.")
+        st.caption("Build absolute or relative views and adjust Ω from confidence.")
         col_bl1, col_bl2, col_bl3 = st.columns(3)
         with col_bl1:
             bl_tau = st.number_input(
-                "τ (tau)", min_value=0.0001, max_value=1.0, value=0.05, step=0.01, format="%.4f"
+                "τ (tau)",
+                min_value=0.0001,
+                max_value=1.0,
+                value=0.05,
+                step=0.01,
+                format="%.4f",
             )
         with col_bl2:
             bl_conf_mode = st.selectbox("Confidence mode", ["scalar", "per-view"], index=0)
         with col_bl3:
             bl_conf_scalar = st.slider(
-                "Confidence (scalar)", min_value=0.05, max_value=1.0, value=0.5, step=0.05
+                "Confidence (scalar)",
+                min_value=0.05,
+                max_value=1.0,
+                value=0.5,
+                step=0.05,
             )
 
         if "bl_views" not in st.session_state:
-            st.session_state["bl_views"] = []  # lista de dicts: {"kind":"abs"/"rel", ...}
+            st.session_state["bl_views"] = []  # list[dict[str, Any]]
 
-        st.markdown("**Añadir vista**")
-        kind = st.radio("Tipo", ["absolute", "relative"], horizontal=True)
+        st.markdown("**Add view**")
+        kind = st.radio("Type", ["absolute", "relative"], horizontal=True)
+
         if kind == "absolute":
             ca1, ca2 = st.columns([2, 1])
             with ca1:
@@ -628,10 +693,22 @@ if st.session_state.get("risk_ready"):
                     format="%.4f",
                     key="bl_abs_q",
                 )
-            a_conf = st.slider("Confidence (this view)", 0.05, 1.0, 0.5, 0.05, key="bl_abs_conf")
+            a_conf = st.slider(
+                "Confidence (this view)",
+                0.05,
+                1.0,
+                0.5,
+                0.05,
+                key="bl_abs_conf",
+            )
             if st.button("➕ Add absolute view"):
                 st.session_state["bl_views"].append(
-                    {"kind": "absolute", "asset": a_asset, "q": float(a_q), "conf": float(a_conf)}
+                    {
+                        "kind": "absolute",
+                        "asset": a_asset,
+                        "q": float(a_q),
+                        "conf": float(a_conf),
+                    }
                 )
         else:
             cr1, cr2, cr3 = st.columns([2, 2, 1])
@@ -641,12 +718,23 @@ if st.session_state.get("risk_ready"):
                 short_a = st.selectbox("Short asset", names, index=1, key="bl_rel_short")
             with cr3:
                 r_q = st.number_input(
-                    "q (r_i - r_j)", value=0.0, step=0.001, format="%.4f", key="bl_rel_q"
+                    "q (r_i - r_j)",
+                    value=0.0,
+                    step=0.001,
+                    format="%.4f",
+                    key="bl_rel_q",
                 )
-            r_conf = st.slider("Confidence (this view)", 0.05, 1.0, 0.5, 0.05, key="bl_rel_conf")
+            r_conf = st.slider(
+                "Confidence (this view)",
+                0.05,
+                1.0,
+                0.5,
+                0.05,
+                key="bl_rel_conf",
+            )
             if st.button("➕ Add relative view"):
                 if long_a == short_a:
-                    st.warning("Long y Short no pueden ser el mismo activo.")
+                    st.warning("Long and short assets cannot be the same.")
                 else:
                     st.session_state["bl_views"].append(
                         {
@@ -658,14 +746,14 @@ if st.session_state.get("risk_ready"):
                         }
                     )
 
-        # Tabla de vistas
+        # Current views
         if st.session_state["bl_views"]:
-            st.write("**Vistas actuales**")
+            st.write("**Current views**")
             st.dataframe(pl.DataFrame(st.session_state["bl_views"]).to_pandas(), width="stretch")
             if st.button("🗑️ Clear views"):
                 st.session_state["bl_views"] = []
 
-        # Calcular μ_post
+        # Compute posterior μ
         if st.session_state["bl_views"]:
             P_list, Q_list, conf_list = [], [], []
             for v in st.session_state["bl_views"]:
@@ -676,11 +764,11 @@ if st.session_state.get("risk_ready"):
                 P_list.append(P)
                 Q_list.append(Q)
                 conf_list.append(v["conf"])
-            P = np.vstack(P_list)  # (K,N)
-            Q = np.concatenate(Q_list)  # (K,)
-            per_y = int(meta["params"]["per_year"])
 
-            # Llevar Σ, μ a per-period para coherencia BL
+            P = np.vstack(P_list)  # (K, N)
+            Q = np.concatenate(Q_list)  # (K,)
+
+            per_y = int(meta["params"]["per_year"])
             mu_prior = np.asarray(mu, dtype=float)
             mu_prior_per = mu_prior / max(per_y, 1)
             Sigma_per = Sigma / max(per_y, 1)
@@ -709,349 +797,147 @@ if st.session_state.get("risk_ready"):
 
             use_bl_for_optimizer = st.toggle("Use BL posterior μ for Optimizer", value=False)
             if use_bl_for_optimizer:
-                st.session_state["mu_vec"] = mu_post  # Handoff con μ posterior
-                # peguemos meta mínimo de BL
-                meta_bl = dict(meta)
+                st.session_state["mu_vec"] = mu_post
                 meta_bl = {
-                    **meta_bl,
-                    "bl": {"tau": float(bl_tau), "K": int(P.shape[0]), "conf_mode": bl_conf_mode},
+                    **meta,
+                    "bl": {
+                        "tau": float(bl_tau),
+                        "K": int(P.shape[0]),
+                        "conf_mode": bl_conf_mode,
+                    },
                 }
                 st.session_state["risk_meta"] = meta_bl
                 st.success("Using Black–Litterman posterior μ for Optimizer handoff.")
+            else:
+                # If not using BL, keep original μ in session
+                st.session_state["mu_vec"] = mu
 
-
-# ──────────────────────────────────────────────────────────────────────────
-# Handoff & export artifacts (persisting model to cache)
-# ──────────────────────────────────────────────────────────────────────────
-
-# Ensure we have 'names' (tickers) and 'df_ret_wide' in scope
-# Ensure we have 'names' (tickers) and 'df_ret_wide' in scope
-names = locals().get("names")
-if not names:
-    names = st.session_state.get("asset_names") or []
-    if not names:
-        dfw = st.session_state.get("returns_wide")
-        names = [c for c in dfw.columns if c != "date"] if dfw is not None else []
-
-# idem para df_ret_wide y Sigma si usabas try/except:
-df_ret_wide = locals().get("df_ret_wide", st.session_state.get("returns_wide"))
-Sigma = locals().get("Sigma", st.session_state.get("cov_mat"))
-
-# If still missing, derive generic tickers from Sigma
-if not names:
-    try:
-        n_guess = int(np.shape(Sigma)[0])  # noqa: F821
-    except Exception:
-        n_guess = 0
-    names = [f"A{i}" for i in range(n_guess)]
-
-# Ensure we have df_ret_wide for fallback μ/cov estimates
-try:
-    df_ret_wide = locals().get("df_ret_wide", st.session_state.get("returns_wide"))
-except NameError:
-    df_ret_wide = st.session_state.get("returns_wide", None)
-
-
-# ---------- Fallback helpers ----------
-def _fallback_mu_from_returns(df_ret_wide_obj, names_list):
-    """Mean return per asset (NaN-safe). Returns np.ndarray."""
-
-    if df_ret_wide_obj is None or not names_list:
-        return _np.full(len(names_list), _np.nan, float)
-    try:
-        import polars as pl  # type: ignore
-
-        if isinstance(df_ret_wide_obj, pl.DataFrame):
-            R = df_ret_wide_obj.select(names_list).to_numpy()
         else:
-            R = df_ret_wide_obj[names_list].to_numpy()  # pandas-like
-    except Exception:
-        return _np.full(len(names_list), _np.nan, float)
-    return _np.nanmean(_np.asarray(R, dtype=float), axis=0)
+            # No views → use original μ
+            st.session_state["mu_vec"] = mu
 
+    # ──────────────────────────────────────────────────────────────────────
+    # Handoff to downstream pages + export artifacts
+    # ──────────────────────────────────────────────────────────────────────
+    mu_vec = np.asarray(st.session_state.get("mu_vec", mu), dtype=float).ravel()
+    Sigma_clean = np.asarray(Sigma, dtype=float)
+    Sigma_clean = np.nan_to_num(Sigma_clean, nan=0.0, posinf=0.0, neginf=0.0)
+    Sigma_clean = 0.5 * (Sigma_clean + Sigma_clean.T)
 
-def _fallback_cov_from_returns(df_ret_wide_obj, names_list):
-    """NaN-safe sample covariance from returns. Returns (N,N) array (or tiny I if needed)."""
+    # Persist to session_state for Optimizer / Backtest
+    st.session_state["mu_vec"] = mu_vec
+    st.session_state["cov_mat"] = Sigma_clean
+    st.session_state["asset_names"] = names
 
-    if df_ret_wide_obj is None or not names_list:
-        return _np.array([[]], dtype=float)[:0, :0]
-    try:
-        import polars as pl  # type: ignore
+    # Risk meta / config
+    risk_meta = st.session_state.get("risk_meta", meta)
+    if not isinstance(risk_meta, dict) or "params" not in risk_meta:
+        risk_meta = meta
 
-        if isinstance(df_ret_wide_obj, pl.DataFrame):
-            R = df_ret_wide_obj.select(names_list).to_numpy()
-        else:
-            R = df_ret_wide_obj[names_list].to_numpy()  # pandas-like
-    except Exception:
-        return _np.array([[]], dtype=float)[:0, :0]
-    R = _np.asarray(R, dtype=float)
-    R[~_np.isfinite(R)] = 0.0
-    if R.shape[0] < 2:
-        return _np.eye(len(names_list), dtype=float) * 1e-6
-    C = _np.cov(R, rowvar=False)
-    C = _np.nan_to_num(C, nan=0.0, posinf=0.0, neginf=0.0)
-    C = 0.5 * (C + C.T)  # symmetrize
-
-    try:
-        eigmin = _np.min(_la.eigvalsh(C))
-        if eigmin < 1e-12:
-            C = C + _np.eye(C.shape[0]) * (1e-12 - eigmin + 1e-12)
-    except Exception:
-        pass
-    return C
-
-
-# ---------- Build a robust candidate for μ ----------
-try:
-    mu_vec_candidate = st.session_state.get("mu_vec", None)
-    if mu_vec_candidate is None:
-        mu_vec_candidate = np.asarray(mu, dtype=float).ravel()  # 'mu' may or may not exist
-    else:
-        mu_vec_candidate = np.asarray(mu_vec_candidate, dtype=float).ravel()
-except Exception:
-    mu_vec_candidate = _fallback_mu_from_returns(df_ret_wide, names)
-
-
-# ---------- Ensure Sigma (covariance) is defined ----------
-try:
-    Sigma = locals().get("Sigma", None)
-except NameError:
-    Sigma = None
-
-if Sigma is None:
-    Sigma = st.session_state.get("cov_mat", None)
-
-if Sigma is None:
-    # estimate from returns if needed
-    df_ret_wide_local = st.session_state.get("returns_wide", None)
-    names_local = st.session_state.get("asset_names", None) or names
-    if not names_local and df_ret_wide_local is not None:
-        try:
-            names_local = [c for c in df_ret_wide_local.columns if c != "date"]
-        except Exception:
-            names_local = []
-    Sigma = _fallback_cov_from_returns(df_ret_wide_local, names_local)
-
-# Clean/symmetrize/shape-align Sigma to len(names)
-Sigma = np.asarray(Sigma, dtype=float)
-Sigma = np.nan_to_num(Sigma, nan=0.0, posinf=0.0, neginf=0.0)
-Sigma = 0.5 * (Sigma + Sigma.T)
-
-N_names = len(names) if isinstance(names, (list, tuple)) else int(Sigma.shape[0])
-if not isinstance(names, (list, tuple)) or len(names) == 0:
-    names = [f"A{i}" for i in range(int(Sigma.shape[0]))]
-
-if Sigma.shape != (N_names, N_names):
-    m = min(N_names, Sigma.shape[0], Sigma.shape[1])
-    Sigma_trim = Sigma[:m, :m]
-    if m < N_names:
-        Sigma_pad = np.zeros((N_names, N_names), dtype=float)
-        Sigma_pad[:m, :m] = Sigma_trim
-        for i in range(m, N_names):
-            Sigma_pad[i, i] = 1e-6  # tiny ridge on padded diag
-        Sigma = Sigma_pad
-    else:
-        Sigma = Sigma_trim
-
-np.fill_diagonal(Sigma, np.maximum(np.diag(Sigma), 1e-12))
-
-
-# ---------- Helper: align μ to tickers ----------
-def _align_mu_by_names(names_list, mu_obj):
-    """
-    Align expected returns (μ) to 'names_list'.
-    - Labeled Polars/Pandas → match by ticker.
-    - Raw array/list → pad/truncate to len(names_list).
-    """
-
-    try:
-        import polars as pl  # type: ignore
-
-        if isinstance(mu_obj, pl.DataFrame):
-            cols = set(mu_obj.columns)
-            tk_col = "ticker" if "ticker" in cols else list(mu_obj.columns)[0]
-            mu_col = "mu" if "mu" in cols else [c for c in mu_obj.columns if c != tk_col][0]
-            mapping = {
-                str(t): float(v)
-                for t, v in zip(mu_obj[tk_col].to_list(), mu_obj[mu_col].to_list(), strict=False)
-            }
-            return _np.array([mapping.get(t, _np.nan) for t in names_list], float)
-
-        if isinstance(mu_obj, pl.Series):
-            pass
-    except Exception:
-        pass
-    try:
-        import pandas as pd  # type: ignore
-
-        if isinstance(mu_obj, pd.DataFrame):
-            tk_col = "ticker" if "ticker" in mu_obj.columns else mu_obj.columns[0]
-            mu_col = (
-                "mu" if "mu" in mu_obj.columns else [c for c in mu_obj.columns if c != tk_col][0]
-            )
-            mapping = dict(
-                zip(mu_obj[tk_col].astype(str), mu_obj[mu_col].astype(float), strict=False)
-            )
-            return _np.array([mapping.get(t, _np.nan) for t in names_list], float)
-        if isinstance(mu_obj, pd.Series):
-            s = mu_obj.astype(float)
-            return _np.array([s.get(t, _np.nan) for t in names_list], float)
-    except Exception:
-        pass
-    arr = _np.asarray(mu_obj, float).ravel()
-    out = _np.full(len(names_list), _np.nan, float)
-    n = min(len(names_list), arr.size)
-    if n > 0:
-        out[:n] = arr[:n]
-    return out
-
-
-# Align μ to tickers and persist artifacts to session_state
-mu_aligned = _align_mu_by_names(names, mu_vec_candidate)
-st.session_state["mu_vec"] = mu_aligned
-st.session_state["cov_mat"] = Sigma
-st.session_state["asset_names"] = names
-
-
-# ---------- Ensure 'meta' exists (pull from session or build a minimal one) ----------
-def _safe_float(x, default):
-    try:
-        return float(x)
-    except Exception:
-        return float(default)
-
-
-def _safe_bool(x, default):
-    try:
-        return bool(x)
-    except Exception:
-        return bool(default)
-
-
-meta = st.session_state.get("risk_meta", None)
-if meta is None or not isinstance(meta, dict) or "params" not in meta:
-    meta = {
-        "params": {
-            "per_year": 252,
-            "mu_method": "mean",
-            "cov_method": "sample_cov",
-            "ewma_lambda": 0.94,
-            "ridge_eps": 1e-8,
-            "enforce_psd": True,
-        },
-        "fingerprint": "ad-hoc",
+    params = risk_meta.get("params", {})
+    risk_cfg = {
+        "tickers": ",".join(names),
+        "per_year": int(params.get("per_year", 252)),
+        "mu_method": str(params.get("mu_method", "mean")),
+        "cov_method": str(params.get("cov_method", "sample_cov")),
+        "ewma_lambda": float(params.get("ewma_lambda", 0.94)),
+        "ridge_eps": float(params.get("ridge_eps", 0.0)),
+        "psd": bool(params.get("enforce_psd", True)),
+        "fingerprint": str(risk_meta.get("fingerprint", meta.get("fingerprint", "ad-hoc"))),
     }
 
-# Normalize types (defensive)
-meta["params"]["per_year"] = int(meta["params"].get("per_year", 252))
-meta["params"]["mu_method"] = str(meta["params"].get("mu_method", "mean"))
-meta["params"]["cov_method"] = str(meta["params"].get("cov_method", "sample_cov"))
-meta["params"]["ewma_lambda"] = _safe_float(meta["params"].get("ewma_lambda", 0.94), 0.94)
-meta["params"]["ridge_eps"] = _safe_float(meta["params"].get("ridge_eps", 1e-8), 1e-8)
-meta["params"]["enforce_psd"] = _safe_bool(meta["params"].get("enforce_psd", True), True)
-meta["fingerprint"] = str(meta.get("fingerprint", "ad-hoc"))
+    st.session_state["risk_meta"] = risk_meta
+    st.session_state["risk_config"] = risk_cfg
+    st.session_state["risk_timestamp"] = datetime.now(UTC).isoformat()
 
-# ---------- Compact configuration for caching/repro ----------
-risk_cfg = {
-    "tickers": ",".join(names),
-    "per_year": int(meta["params"]["per_year"]),
-    "mu_method": meta["params"]["mu_method"],
-    "cov_method": meta["params"]["cov_method"],
-    "ewma_lambda": float(meta["params"]["ewma_lambda"]),
-    "ridge_eps": float(meta["params"]["ridge_eps"]),
-    "psd": bool(meta["params"]["enforce_psd"]),
-    "fingerprint": meta["fingerprint"],
-}
+    # Persist risk_model metadata to cache
+    try:
+        save_json("risk_model", risk_cfg, risk_meta)
+        st.caption(
+            f"Saved risk model metadata to cache (fingerprint: **{risk_cfg['fingerprint']}**)."
+        )
+    except Exception as e:
+        st.warning(f"Could not persist risk_model.json to cache: {e}")
 
-# ---------- Persist risk_model.json metadata into local cache ----------
-try:
-    save_json("risk_model", risk_cfg, meta)
-    st.caption(f"Saved risk model metadata to cache (fingerprint: **{meta['fingerprint']}**).")
-except Exception as e:
-    st.warning(f"Could not persist risk_model.json to cache: {e}")
+    # ──────────────────────────────────────────────────────────────────────
+    # Export artifacts
+    # ──────────────────────────────────────────────────────────────────────
+    st.subheader("📤 Export artifacts")
+    colx, coly, colz, colw, colm = st.columns(5)
 
-# Store meta into session_state for downstream pages
-st.session_state["risk_meta"] = meta
-st.session_state["risk_config"] = risk_cfg
-st.session_state["risk_timestamp"] = datetime.now(UTC).isoformat()
+    # μ (expected returns) CSV export
+    with colx:
+        buf_mu = io.StringIO()
+        pl.DataFrame({"ticker": names, "mu": mu_vec}).write_csv(buf_mu)
+        st.download_button(
+            "Download μ (CSV)",
+            buf_mu.getvalue(),
+            file_name="mu.csv",
+            mime="text/csv",
+        )
 
+    # Σ (covariance matrix) .npy export
+    with coly:
+        buf_cov = io.BytesIO()
+        np.save(buf_cov, Sigma_clean)
+        st.download_button(
+            "Download Σ (.npy)",
+            buf_cov.getvalue(),
+            file_name="covariance.npy",
+        )
 
-# ---------- Diagnostics: condition number & eigenvalues (safe) ----------
+    # ρ (correlation matrix) .npy export
+    with colz:
+        Corr = correlation_from_cov(Sigma_clean)
+        buf_corr = io.BytesIO()
+        np.save(buf_corr, Corr)
+        st.download_button(
+            "Download ρ (.npy)",
+            buf_corr.getvalue(),
+            file_name="correlation.npy",
+        )
 
+    # Σ (covariance matrix) CSV wide export with shape checks
+    with colw:
+        n_cols = len(names)
+        if Sigma_clean.shape != (n_cols, n_cols):
+            st.warning(
+                f"Σ shape {Sigma_clean.shape} != ({n_cols},{n_cols}). Exporting trimmed square."
+            )
+            m = min(n_cols, Sigma_clean.shape[0], Sigma_clean.shape[1])
+            Sigma_csv = Sigma_clean[:m, :m]
+            cols_csv = names[:m]
+        else:
+            Sigma_csv = Sigma_clean
+            cols_csv = names
 
-try:
-    if Sigma is None or getattr(Sigma, "size", 0) == 0:
-        eigvals = _np.array([], dtype=float)
-        cond_post = _np.inf
-    else:
-        Sigma_np = np.asarray(Sigma, dtype=float)
-        Sigma_np = 0.5 * (Sigma_np + Sigma_np.T)
-        eigvals = _la.eigvalsh(Sigma_np)
-        svals = _la.svd(Sigma_np, compute_uv=False)
-        cond_post = float(svals[0] / svals[-1]) if svals.size and svals[-1] > 0 else np.inf
-except Exception:
-    eigvals = np.array([], dtype=float)
-    cond_post = np.inf
+        buf_cov_csv = io.StringIO()
+        pl.DataFrame(Sigma_csv, schema=cols_csv).write_csv(buf_cov_csv)
+        st.download_button(
+            "Download Σ (CSV wide)",
+            buf_cov_csv.getvalue(),
+            file_name="covariance.csv",
+            mime="text/csv",
+        )
 
+    # JSON metadata export
+    with colm:
+        meta_blob = json.dumps(
+            {**risk_meta, "exported_at_utc": datetime.now(UTC).isoformat()},
+            ensure_ascii=False,
+            indent=2,
+            sort_keys=True,
+            default=_json_default,
+        )
+        st.download_button(
+            f"Download risk_model_{risk_cfg['fingerprint']}.json",
+            meta_blob.encode("utf-8"),
+            file_name=f"risk_model_{risk_cfg['fingerprint']}.json",
+            mime="application/json",
+        )
 
-# ---------- File export section ----------
-st.subheader("📤 Export artifacts")
-colx, coly, colz, colw, colm = st.columns(5)
-
-# μ (expected returns) CSV export
-with colx:
-    buf_mu = io.StringIO()
-    pl.DataFrame({"ticker": names, "mu": mu_aligned}).write_csv(buf_mu)
-    st.download_button("Download μ (CSV)", buf_mu.getvalue(), file_name="mu.csv", mime="text/csv")
-
-# Σ (covariance matrix) .npy export
-with coly:
-    buf_cov = io.BytesIO()
-    np.save(buf_cov, Sigma)
-    st.download_button("Download Σ (.npy)", buf_cov.getvalue(), file_name="covariance.npy")
-
-# ρ (correlation matrix) .npy export
-with colz:
-    Corr = correlation_from_cov(Sigma)
-    buf_corr = io.BytesIO()
-    np.save(buf_corr, Corr)
-    st.download_button("Download ρ (.npy)", buf_corr.getvalue(), file_name="correlation.npy")
-
-# Σ (covariance matrix) CSV wide export with safety checks
-with colw:
-    n_cols = len(names)
-    if Sigma.shape != (n_cols, n_cols):
-        st.warning(f"Σ shape {Sigma.shape} != ({n_cols},{n_cols}). Exporting trimmed square.")
-        m = min(n_cols, Sigma.shape[0], Sigma.shape[1])
-        Sigma_csv = Sigma[:m, :m]
-        cols_csv = names[:m]
-    else:
-        Sigma_csv = Sigma
-        cols_csv = names
-    buf_cov_csv = io.StringIO()
-    pl.DataFrame(Sigma_csv, schema=cols_csv).write_csv(buf_cov_csv)
-    st.download_button(
-        "Download Σ (CSV wide)", buf_cov_csv.getvalue(), file_name="covariance.csv", mime="text/csv"
-    )
-
-# JSON metadata export
-with colm:
-    meta_blob = json.dumps(
-        {**meta, "exported_at_utc": datetime.now(UTC).isoformat()},
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
-        default=_json_default,
-    )
-    st.download_button(
-        f"Download risk_model_{meta['fingerprint']}.json",
-        meta_blob.encode("utf-8"),
-        file_name=f"risk_model_{meta['fingerprint']}.json",
-        mime="application/json",
-    )
-
-# Diagnostic warnings for matrix conditioning
-if np.isfinite(cond_post) and cond_post > 1e6:
-    st.warning("High post-conditioning number κ; consider increasing Ridge ε or using OAS/PCA.")
-if eigvals.size and float(np.min(eigvals)) < 0:
-    st.warning("Σ has negative eigenvalues; PSD clipping or larger Ridge ε recommended.")
+    # Conditioning warnings
+    if np.isfinite(cond_post) and cond_post > 1e6:
+        st.warning("High post-conditioning number κ; consider increasing Ridge ε or using OAS/PCA.")
+    if eigvals.size and float(np.min(eigvals)) < 0:
+        st.warning("Σ has negative eigenvalues; PSD clipping or higher Ridge ε recommended.")

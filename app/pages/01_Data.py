@@ -31,7 +31,7 @@ from portfolio.viz.plot_utils import show_plot
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Helpers (internos de esta página)
+# Local helpers
 # ──────────────────────────────────────────────────────────────────────────────
 def _fmt_age(sec: float | None) -> str:
     if sec is None:
@@ -49,7 +49,7 @@ def _fmt_age(sec: float | None) -> str:
 
 
 def gaps_report(df_long: pl.DataFrame, threshold_days: int = 3) -> pl.DataFrame:
-    """Reporte de gaps por ticker en días (umbral configurable)."""
+    """Gap report per ticker in days (configurable threshold)."""
     df = df_long.sort(["ticker", "date"]).with_columns(
         (pl.col("date") - pl.col("date").shift(1)).dt.total_days().alias("gap_days")
     )
@@ -77,7 +77,7 @@ def gaps_report(df_long: pl.DataFrame, threshold_days: int = 3) -> pl.DataFrame:
 
 
 def top_abs_moves(df_ret_long: pl.DataFrame, k: int = 5) -> pl.DataFrame:
-    """Top-k movimientos absolutos por ticker (pre-winsor)."""
+    """Top-k absolute moves per ticker (pre-winsor)."""
     df = df_ret_long.with_columns(pl.col("ret").abs().alias("abs_ret"))
     df = df.with_columns(
         pl.col("abs_ret").rank(method="dense", descending=True).over("ticker").alias("rank")
@@ -113,7 +113,7 @@ def _fingerprint(obj: dict) -> str:
         obj,
         sort_keys=True,
         separators=(",", ":"),
-        default=_json_default,  # serializador seguro
+        default=_json_default,
     ).encode("utf-8")
     return hashlib.sha256(blob).hexdigest()[:16]
 
@@ -132,23 +132,25 @@ def _run_data_pipeline(
     gap_thr: int,
     topk_out: int,
 ):
+    """Full data loading + cleaning pipeline, returning a rich payload."""
     t0 = time.perf_counter()
 
-    # ------- defaults seguros (por si hay early-returns/errores) -------
     empty_df = pl.DataFrame()
-    coverage_full = empty_df  # se rellenará más abajo
+    coverage_full = empty_df
 
-    # Invalida caché antigua si procede
+    # Invalidate old cache if requested
     if invalidate_old:
         age = age_seconds("prices_long", price_cfg)
         if age is not None and age > 24 * 3600:
             invalidate("prices_long", price_cfg)
 
-    # 1) Fetch precios (con caché)
-    df_prices = None if not force_refresh else None  # (igual que tenías)
-    if df_prices is None:
+    # 1) Fetch prices (cache-aware)
+    df_prices: pl.DataFrame | None = None
+    if not force_refresh:
         cached = load_pl("prices_long", price_cfg)
-        df_prices = cached if (cached is not None and not force_refresh) else None
+        if cached is not None:
+            df_prices = cached
+
     if df_prices is None:
         df_prices = get_prices_long(
             tickers=tickers,
@@ -161,7 +163,7 @@ def _run_data_pipeline(
         )
         save_pl("prices_long", price_cfg, df_prices)
 
-    # Normaliza dtypes/orden
+    # Normalise dtypes/order
     df_prices = df_prices.with_columns(
         [
             pl.col("date").cast(pl.Datetime),
@@ -170,7 +172,7 @@ def _run_data_pipeline(
         ]
     ).sort(["ticker", "date"])
 
-    # —— cobertura mínima por ticker ——
+    # Price coverage per ticker
     price_coverage = (
         df_prices.group_by("ticker")
         .agg(
@@ -196,7 +198,7 @@ def _run_data_pipeline(
         dropped_prices_df["ticker"].to_list() if dropped_prices_df.height else []
     )
 
-    # Si no queda ningún ticker, construye payload mínimo y sal
+    # If no ticker survives, build minimal payload and exit
     if df_prices.select(pl.col("ticker").n_unique()).item() == 0:
         meta_partial = {
             "provider": "Yahoo Finance",
@@ -231,12 +233,12 @@ def _run_data_pipeline(
             "stats": empty_df,
             "eff": empty_df,
             "meta": meta_partial,
-            "coverage": empty_df,  # 👈 aquí no existía coverage_full aún
+            "coverage": empty_df,
             "dropped_tickers": tickers,
             "t_elapsed": time.perf_counter() - t0,
         }
 
-    # 2) Retornos, winsor, wide, frecuencia final
+    # 2) Returns, winsor, wide, final frequency
     df_ret_raw_long = compute_returns_from_prices_long(
         df_prices, freq=freq_prices, kind=ret_kind, drop_first=True
     ).collect()
@@ -245,7 +247,7 @@ def _run_data_pipeline(
     if freq_returns != freq_prices:
         df_ret_wide = returns_to_frequency_wide(df_ret_wide, freq=freq_returns, kind=ret_kind)
 
-    # Cobertura por ticker en retornos
+    # Coverage per ticker in returns
     value_cols = [c for c in df_ret_wide.columns if c != "date"]
     total_dates = int(df_ret_wide.height)
 
@@ -305,23 +307,23 @@ def _run_data_pipeline(
         keep = ["date"] + [c for c in value_cols if c not in dropped_tickers_returns]
         df_ret_wide = df_ret_wide.select(keep)
 
-    # Cobertura completa para UI/meta
+    # Full coverage table for UI/meta
     coverage_full = ret_coverage.join(
         price_coverage.select(["ticker", "start_eff", "end_eff"]),
         on="ticker",
         how="left",
     )
 
-    # Excluidos finales
+    # Final list of dropped tickers
     dropped_tickers = sorted(set(dropped_tickers_prices) | set(dropped_tickers_returns))
 
-    # 3) Salud/diagnóstico
+    # 3) Health / diagnostics
     mr = missing_report_wide(df_ret_wide)
     gaps = gaps_report(df_prices, threshold_days=int(gap_thr))
     out_top = top_abs_moves(df_ret_raw_long, k=int(topk_out))
     stats = summary_stats(df_ret_wide, risk_free=0.0)
 
-    # 4) Metadata reproducible
+    # 4) Effective ranges
     eff = (
         df_prices.group_by("ticker")
         .agg(
@@ -339,9 +341,11 @@ def _run_data_pipeline(
             pl.col("end_eff").dt.to_string().alias("end_eff"),
         ]
     ).to_dicts()
+
+    # 5) Metadata
     meta = {
         "provider": "Yahoo Finance",
-        "generated_at_utc": datetime.now(UTC).isoformat(),  # 👈 sin `UTC` de 3.11
+        "generated_at_utc": datetime.now(UTC).isoformat(),
         "params": {
             "tickers": tickers,
             "start": str(start),
@@ -388,7 +392,6 @@ def _run_data_pipeline(
         "stats": stats,
         "eff": eff,
         "meta": meta,
-        # 👇 ANTES referenciabas meta_partial/empty_df (no existen aquí)
         "coverage": coverage_full,
         "dropped_tickers": dropped_tickers,
         "t_elapsed": time.perf_counter() - t0,
@@ -401,7 +404,7 @@ def _run_data_pipeline(
 st.set_page_config(page_title="Data", layout="wide")
 st.title("📦 Data Module")
 
-# Inicializa session_state
+# Initialise session_state
 if "data_payload" not in st.session_state:
     st.session_state["data_payload"] = None
 if "data_ready" not in st.session_state:
@@ -470,10 +473,10 @@ with st.expander("Options", expanded=False):
     with colH:
         topk_out = st.number_input("Top-K outliers", min_value=3, max_value=20, value=5, step=1)
 
-# Normaliza tickers
+# Normalise tickers
 tickers = [t.strip().upper() for t in tickers_input.split(",") if t.strip()]
 
-# Clave de caché consistente (precios largos)
+# Cache key for long prices
 price_cfg = {
     "tickers": ",".join(sorted(tickers)),
     "start": str(start),
@@ -484,7 +487,7 @@ price_cfg = {
 }
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Acción (cálculo) – guarda en session_state
+# Action (compute) – store in session_state
 # ──────────────────────────────────────────────────────────────────────────────
 if st.button("Load & Preview", type="primary"):
     if not tickers:
@@ -509,12 +512,12 @@ if st.button("Load & Preview", type="primary"):
     st.session_state["data_ready"] = True
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Render (si hay datos en session_state)
+# Render (if we have data in session_state)
 # ──────────────────────────────────────────────────────────────────────────────
 if st.session_state.get("data_ready"):
     p = st.session_state["data_payload"]
 
-    # Guard: si el pipeline devolvió retornos vacíos → aviso + stop
+    # Guard: if pipeline returned empty returns → show message + stop
     if p["df_ret_wide"] is None or (
         isinstance(p["df_ret_wide"], pl.DataFrame) and p["df_ret_wide"].height == 0
     ):
@@ -535,7 +538,7 @@ if st.session_state.get("data_ready"):
 
         st.stop()
 
-    # Si llegamos aquí, hay datos → seguimos con asignaciones
+    # At this point, we have valid data
     df_prices = p["df_prices"]
     df_ret_raw_long = p["df_ret_raw_long"]
     df_ret_wide = p["df_ret_wide"]
@@ -546,7 +549,7 @@ if st.session_state.get("data_ready"):
     eff = p["eff"]
     meta = p["meta"]
 
-    # Aviso de tickers excluidos (si no se vació del todo)
+    # Warn about excluded tickers (if any)
     dropped_tickers = p.get("dropped_tickers", [])
     if dropped_tickers:
         st.warning(
@@ -652,5 +655,10 @@ if st.session_state.get("data_ready"):
         )
 
     st.success(f"Data loaded in {p['t_elapsed']:.2f}s and stored in session_state.")
-    # Handoff explícito para otros módulos (RiskModel, Optimization, etc.)
+
+    # Explicit handoff for other modules (RiskModel, Optimizer, Backtest, Attribution)
     st.session_state["returns_wide"] = df_ret_wide
+    st.session_state["df_ret_wide"] = df_ret_wide
+    st.session_state["df_prices"] = df_prices
+    st.session_state["tickers"] = [c for c in df_ret_wide.columns if c != "date"]
+    st.session_state["data_meta"] = meta
