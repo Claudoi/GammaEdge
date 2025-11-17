@@ -50,6 +50,7 @@ from portfolio.viz.plot_utils import (
 # Utility functions
 # ─────────────────────────────────────────────────────────────────────
 def _bt_key(tag: str) -> str:
+    """Generate unique keys for Backtest plots to avoid duplicate IDs."""
     st.session_state.setdefault("_bt_key_seq", 0)
     st.session_state["_bt_key_seq"] += 1
     return f"bt-{tag}-{st.session_state['_bt_key_seq']}"
@@ -186,7 +187,7 @@ def metrics_bootstrap(
 def _metric_from_df(m, name: str) -> float:
     """Robust metric extraction (Polars | pandas) -> float or NaN."""
     try:
-        import polars as pl
+        import polars as pl  # type: ignore[import]
 
         if isinstance(m, pl.DataFrame):
             if name in m.columns:
@@ -198,7 +199,7 @@ def _metric_from_df(m, name: str) -> float:
     except Exception:
         pass
     try:
-        import pandas as pd
+        import pandas as pd  # type: ignore[import]
 
         if isinstance(m, pd.DataFrame) and len(m.index) > 0:
             if name in m.columns:
@@ -508,7 +509,7 @@ def _cached_metrics_for_grid(
 
 
 # Run backtest or grid depending on user setting
-bt = None
+bt: dict[str, Any] | None = None
 if not do_grid:
     with st.spinner("Running backtest..."):
         bt = cached_backtest(
@@ -621,7 +622,7 @@ if do_grid:
 # ─────────────────────────────────────────────────────────────────────
 # Metrics + Bootstrap CI (if not running grid)
 # ─────────────────────────────────────────────────────────────────────
-if not do_grid:
+if not do_grid and bt is not None:
     st.subheader("📈 Metrics")
     dfm = bt_metrics.compute_backtest_metrics(bt)
     tab1, tab2 = st.tabs(["Overview", "Bootstrap CI"])
@@ -638,7 +639,7 @@ if not do_grid:
 # ─────────────────────────────────────────────────────────────────────
 # Main plots
 # ─────────────────────────────────────────────────────────────────────
-if not do_grid:
+if not do_grid and bt is not None:
     st.subheader("📉 Equity & Drawdown")
     show_plot(
         equity_and_drawdown(bt["dates"], bt["equity"], title="Equity & Drawdown"),
@@ -647,9 +648,15 @@ if not do_grid:
 
     col1, col2 = st.columns(2)
     with col1:
-        show_plot(plot_equity(bt["dates"], bt["equity"], title="Equity"), key=_bt_key("equity"))
+        show_plot(
+            plot_equity(bt["dates"], bt["equity"], title="Equity"),
+            key=_bt_key("equity"),
+        )
     with col2:
-        show_plot(plot_drawdown(bt["dates"], bt["equity"], title="Drawdown"), key=_bt_key("dd"))
+        show_plot(
+            plot_drawdown(bt["dates"], bt["equity"], title="Drawdown"),
+            key=_bt_key("dd"),
+        )
 
     st.subheader("⚖️ Weights & Turnover")
     show_plot(
@@ -711,7 +718,7 @@ if not do_grid and bt is not None:
         aln = bt_attr.align_returns_and_weights(df_ret_bt, daily_W)
 
     except Exception as e:
-        st.info(f"Alineación para attribution no disponible: {e}")
+        st.info(f"Alignment for attribution not available: {e}")
         aln = None
 
     # 2) Asset-level contributors
@@ -724,7 +731,10 @@ if not do_grid and bt is not None:
                 .sort("contrib_total", descending=True)
                 .head(10)
             )
-            show_plot(plot_top_contributors(df_top), key=_bt_key("top-contrib"))
+            show_plot(
+                plot_top_contributors(df_top),
+                key=_bt_key("top-contrib"),
+            )
 
             df_bottom = (
                 df_contrib_asset.group_by("ticker")
@@ -763,8 +773,14 @@ if not do_grid and bt is not None:
                 )
                 .sort("contrib_total", descending=True)
             )
-            show_plot(plot_group_contrib(df_group_total), key=_bt_key("group-bar"))
-            show_plot(plot_group_contrib_area(df_group_daily), key=_bt_key("group-area"))
+            show_plot(
+                plot_group_contrib(df_group_total),
+                key=_bt_key("group-bar"),
+            )
+            show_plot(
+                plot_group_contrib_area(df_group_daily),
+                key=_bt_key("group-area"),
+            )
 
         except Exception as e:
             st.info(f"Group attribution not available: {e}")
@@ -815,7 +831,10 @@ if not do_grid and bt is not None:
                 f"select[min,max]=({np.nanmin(_select):.6f}, {np.nanmax(_select):.6f})"
             )
 
-            show_plot(plot_brinson_cumulative(df_brinson), key=_bt_key("brinson-cum"))
+            show_plot(
+                plot_brinson_cumulative(df_brinson),
+                key=_bt_key("brinson-cum"),
+            )
 
             # Export artifacts for 05_Attribution and 06_Reporting
             st.session_state["df_brinson"] = df_brinson

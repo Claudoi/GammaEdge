@@ -43,6 +43,7 @@ from portfolio.viz.plot_utils import (
     plot_turnover,
     plot_weights_compare_heatmap,
     plot_weights_heatmap,
+    show_plot,
 )
 
 # ─────────────────────────────────────────────────────────────────────
@@ -53,25 +54,6 @@ st.title("🧪 Scenarios")
 st.caption(
     "Stress-tests on the return matrix with robust turnover reconstruction and clean comparisons vs Baseline."
 )
-
-
-# ─────────────────────────────────────────────────────────────────────
-# Plot helper: centraliza compat con Streamlit >=1.39
-# ─────────────────────────────────────────────────────────────────────
-def show_plot(fig, *, key: str | None = None, width: str = "stretch", height: int | None = None):
-    """
-    Renderiza un Plotly Figure sin kwargs deprecados.
-    - width: 'stretch' o 'content'
-    - height: px opcional
-    - config: centralizado aquí para evitar avisos
-    """
-    config = {
-        "displayModeBar": True,
-        "responsive": True,
-        "scrollZoom": True,
-        # añade aquí más opciones si las necesitas
-    }
-    return st.plotly_chart(fig, key=key, width=width, height=height, config=config)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -91,6 +73,7 @@ def _to_numpy_2d(x) -> np.ndarray:
 
 
 def _safe_metrics(bt_obj: dict[str, Any]) -> pl.DataFrame:
+    """Safe wrapper around bt_metrics.compute_backtest_metrics with a fallback based on equity."""
     try:
         return bt_metrics.compute_backtest_metrics(bt_obj)
     except Exception:
@@ -109,6 +92,7 @@ def _safe_metrics(bt_obj: dict[str, Any]) -> pl.DataFrame:
 def _extract_metric_scalar(
     dfm: pl.DataFrame | pd.DataFrame, name: str, default: float = np.nan
 ) -> float:
+    """Extract a scalar metric from a metrics DataFrame, with name-insensitive matching and NaN-safe."""
     try:
         if isinstance(dfm, pl.DataFrame) and dfm.height > 0:
             if name in dfm.columns:
@@ -133,7 +117,12 @@ def _extract_metric_scalar(
 
 
 def _ensure_turnover_with_drift(bt: dict, df_wide: pl.DataFrame) -> tuple[list, np.ndarray]:
-    # 1) intenta usar la serie del engine si existe
+    """
+    Ensure we have a turnover time series:
+    1) Try to use what the engine returns (DataFrame or array).
+    2) If missing, reconstruct turnover between rebalance dates using drifted weights.
+    """
+    # 1) Try engine output
     to_obj = bt.get("turnover")
     if to_obj is not None:
         try:
@@ -164,7 +153,7 @@ def _ensure_turnover_with_drift(bt: dict, df_wide: pl.DataFrame) -> tuple[list, 
         except Exception:
             pass
 
-    # 2) reconstrucción por drift entre rebalances
+    # 2) Reconstruct from pre/post-drift weights
     rb_dates = list(bt.get("rebalance_dates", []))
     W_reb = np.asarray(bt.get("weights", []), float)
     tick = list(bt.get("tickers", []))
@@ -365,10 +354,11 @@ def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
 # Engine wrapper
 # ─────────────────────────────────────────────────────────────────────
 def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
+    """Run backtest_rebalanced with a recorder to recover actual rebalance weights if needed."""
     base_alloc = make_allocator(alloc_kind)
 
     class _Recorder:
-        def __init__(self):
+        def __init__(self) -> None:
             self.dates: list = []
             self.weights: list[np.ndarray] = []
             self.calls: int = 0
@@ -407,6 +397,7 @@ def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
         "bench_weights": bench_w,
     }
 
+    # Try to match input argument name for returns
     for rn in ["df_ret_wide", "returns_wide", "df_returns", "returns", "R_wide", "data"]:
         if rn in sig.parameters:
             kw[rn] = df_arg
@@ -416,6 +407,7 @@ def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
         kw["df_ret_wide"] = df_arg
         ret_hook = "fallback(df_ret_wide)"
 
+    # Try to match allocator argument name
     for an in ["allocator", "allocator_factory", "weights_func", "strategy"]:
         if an in sig.parameters:
             kw[an] = (lambda: rec) if an == "allocator_factory" else rec
@@ -442,6 +434,7 @@ def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
         dif = np.max(np.abs(W[1:] - W[:-1]), axis=1)
         return float(np.max(dif)) <= 1e-12
 
+    # If engine returns degenerate weights but recorder has richer structure, prefer recorder
     if (W_eng.ndim != 2 or W_eng.size == 0 or _is_constant_panel(W_eng)) and (
         W_rec.ndim == 2 and W_rec.size > 0 and not _is_constant_panel(W_rec)
     ):
@@ -615,6 +608,11 @@ else:
 
 
 def _flatten_metrics_row(m: pl.DataFrame | pd.DataFrame) -> dict[str, float]:
+    """
+    Flatten a metrics table to a dict[str, float] using either:
+    - single-row wide format, or
+    - (metric, value) long format.
+    """
     out: dict[str, float] = {}
     try:
         if isinstance(m, pl.DataFrame):
@@ -770,6 +768,7 @@ with st.sidebar:
 def _rolling_beta_last_window(
     df_wide: pl.DataFrame, index_col: str, lookback: int
 ) -> dict[str, float]:
+    """Compute betas vs a given index on the last lookback window."""
     df = df_wide.sort("date")
     win = df if df.height <= lookback else df.tail(lookback)
     cols = [c for c in win.columns if c != "date"]

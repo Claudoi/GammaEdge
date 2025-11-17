@@ -1,3 +1,4 @@
+# app/pages/06_Reporting.py
 from __future__ import annotations
 
 # --- stdlib ---
@@ -34,6 +35,18 @@ st.caption(
     "Generate HTML and PDF reports with equity, drawdown, weights, attribution and benchmark context."
 )
 
+
+# ---------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------
+def _to_pandas(df: object):
+    """Safely convert Polars or other table-like objects to pandas."""
+    try:
+        return df.to_pandas()
+    except Exception:
+        return df
+
+
 # ---------------------------------------------------------------------
 # Inputs from previous pages (expected in session_state)
 # ---------------------------------------------------------------------
@@ -43,8 +56,6 @@ group_map = st.session_state.get("group_map")
 metrics_df = st.session_state.get("metrics_df")  # optional KPIs
 df_brinson = st.session_state.get("df_brinson")  # optional Brinson table
 bench_meta = st.session_state.get("bench_meta")  # optional metadata about benchmark
-Wb_daily = st.session_state.get("Wb_daily")  # optional benchmark weights
-groups_idx = st.session_state.get("groups_idx")  # optional groups
 
 if bt is None or df_ret_wide is None:
     st.warning(
@@ -55,6 +66,7 @@ if bt is None or df_ret_wide is None:
 # Normalize returns table to Polars + Datetime
 if not isinstance(df_ret_wide, pl.DataFrame):
     df_ret_wide = pl.from_pandas(df_ret_wide)
+
 if df_ret_wide.schema.get("date") != pl.Datetime:
     df_ret_wide = df_ret_wide.with_columns(pl.col("date").cast(pl.Datetime, strict=False))
 
@@ -74,23 +86,23 @@ if not dates_bt or equity.size == 0 or W_reb.size == 0 or not tickers:
 # ---------------------------------------------------------------------
 # Align returns to backtest date grid and expand weights to daily
 # ---------------------------------------------------------------------
-# 1) returns solo en fechas del backtest
+# 1) Filter returns to backtest dates (unique & sorted)
 df_ret_bt = df_ret_wide.filter(pl.col("date").is_in(dates_bt)).unique(subset=["date"]).sort("date")
 
-# 2) rebalance dates si faltan
+# 2) Rebalance dates fallback if shapes mismatch
 if len(rb_dates_any) != W_reb.shape[0]:
     K = W_reb.shape[0]
     step = max(len(dates_bt) // max(K, 1), 1)
     rb_dates_any = dates_bt[::step][:K]
 
-# 3) expandir a diario (T×N)
+# 3) Expand to daily (T×N)
 daily_W = bt_attr.expand_rebalance_weights(
     dates=df_ret_bt.get_column("date").to_list(),
     rb_dates=rb_dates_any,
     W_reb=W_reb,
 )
 
-# persist fallback
+# Persist a sensible fallback for other pages that might need benchmark weights
 st.session_state["Wb_daily"] = st.session_state.get("Wb_daily", daily_W)
 
 # ---------------------------------------------------------------------
@@ -117,9 +129,11 @@ colB.metric("Groups", f"{len(group_map) if group_map else 0} assets mapped")
 # Show figures
 # ---------------------------------------------------------------------
 st.markdown("### 📈 Charts")
+
 col1, col2 = st.columns(2)
 col1.plotly_chart(report.figures["equity"], use_container_width=True)
 col2.plotly_chart(report.figures["drawdown"], use_container_width=True)
+
 st.plotly_chart(report.figures["weights"], use_container_width=True)
 st.plotly_chart(report.figures["top_contrib"], use_container_width=True)
 
@@ -129,7 +143,7 @@ st.plotly_chart(report.figures["top_contrib"], use_container_width=True)
 st.subheader("📊 Tables")
 for name, df in report.tables.items():
     st.write(f"**{name}**")
-    st.dataframe(df, use_container_width=True)
+    st.dataframe(_to_pandas(df), use_container_width=True)
 
 # ---------------------------------------------------------------------
 # Build context for export
@@ -137,23 +151,25 @@ for name, df in report.tables.items():
 period_start = str(dates_bt[0]) if dates_bt else "—"
 period_end = str(dates_bt[-1]) if dates_bt else "—"
 
-# metrics: si no vienen, calcula a partir de equity
-extra_metrics = None
+# metrics: if not provided, compute from equity
+extra_metrics: dict[str, float] | None = None
 if metrics_df is not None:
     try:
         pdf = metrics_df.to_pandas() if hasattr(metrics_df, "to_pandas") else metrics_df
-        extra_metrics = {
-            str(k): float(v) for k, v in zip(pdf.iloc[:, 0], pdf.iloc[:, 1], strict=False)
-        }
+        if pdf.shape[1] >= 2:
+            extra_metrics = {
+                str(k): float(v) for k, v in zip(pdf.iloc[:, 0], pdf.iloc[:, 1], strict=False)
+            }
     except Exception:
         extra_metrics = None
 
 if extra_metrics is None:
+    # Robust fallback KPIs
     extra_metrics = compute_kpis(equity, rf_daily=0.0, periods_per_year=252)
 
-# añade benchmark info a extra_metrics (aparece en el HTML/PDF)
+# Append benchmark info to appear in HTML/PDF header
 if bench_meta and "scheme" in bench_meta:
-    extra_metrics["Benchmark Scheme"] = bench_meta.get("scheme")
+    extra_metrics["Benchmark Scheme"] = bench_meta.get("scheme", "Unknown")
 
 df_asset_total = report.tables.get("contrib_asset_total")
 df_group_total = report.tables.get("contrib_group_total")
@@ -203,8 +219,9 @@ try:
 except Exception as e:
     st.info(f"PDF export not available: {e}\nInstall dependencies: plotly[kaleido], reportlab")
 
-
-# Guardar en disco (reports/)
+# ---------------------------------------------------------------------
+# Optional: save to disk (reports/)
+# ---------------------------------------------------------------------
 save_to_disk = st.checkbox("Save also to ./reports", value=False)
 if save_to_disk:
     os.makedirs("reports", exist_ok=True)
@@ -215,6 +232,7 @@ if save_to_disk:
         st.success("HTML saved to reports/backtest_report.html")
     except Exception as e:
         st.info(f"Saving HTML failed: {e}")
+
     try:
         pdf_bytes = render_pdf(ctx, figures, title="GammaEdge Report")
         with open("reports/backtest_report.pdf", "wb") as f:
