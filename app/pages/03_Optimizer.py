@@ -57,8 +57,7 @@ from portfolio.viz.plot_utils import (
 
 def _opt_key(tag: str) -> str:
     """
-    Genera claves únicas y legibles para todos los plots de la página Optimizer.
-    Evita StreamlitDuplicateElementId al re-renderizar.
+    Generate unique keys for Optimizer plots to avoid Streamlit duplicate ID issues.
     """
     st.session_state.setdefault("_opt_key_seq", 0)
     st.session_state["_opt_key_seq"] += 1
@@ -83,7 +82,7 @@ if not all(k in st.session_state for k in required_keys):
 
 Sigma = np.asarray(st.session_state["cov_mat"], dtype=float)
 mu = np.asarray(st.session_state["mu_vec"], dtype=float)
-mu = np.nan_to_num(mu, nan=0.0, posinf=0.0, neginf=0.0)  # critical de-noising
+mu = np.nan_to_num(mu, nan=0.0, posinf=0.0, neginf=0.0)
 names = list(st.session_state["asset_names"])
 df_ret_wide: pl.DataFrame = st.session_state["returns_wide"]
 meta_df: pl.DataFrame | None = st.session_state.get("asset_meta", None)
@@ -308,6 +307,11 @@ elif mode == "Active (TE penalized)":
 # Results / plots
 # ─────────────────────────────────────────────────────────────────────
 if w_out is not None:
+    # Persist optimal weights for downstream pages (Backtest / Attribution)
+    st.session_state["opt_weights"] = np.asarray(w_out, dtype=float)
+    st.session_state["opt_mode"] = mode
+    st.session_state["bench_weights"] = np.asarray(w_bench, dtype=float)
+
     c1, c2 = st.columns([2, 1])
     with c1:
         show_plot(
@@ -458,7 +462,10 @@ cost = st.number_input(
 
 
 def allocator(win: pl.DataFrame) -> np.ndarray:
-    """Allocator used inside the rolling backtest; long-only with PSD covariance and safe numerics."""
+    """
+    Allocator used inside the rolling backtest; long-only with PSD covariance
+    and safe numerics.
+    """
     cols = [c for c in win.columns if c != "date"]
     R = win.select(cols).to_numpy() if cols else np.zeros((0, 0), dtype=float)
     mu_win = np.nanmean(R, axis=0) if R.size else np.zeros(N)
@@ -555,7 +562,9 @@ except Exception as e:
 
 # ---- Turnover mean (robust to different engine outputs) ----
 def _turnover_mean(turnover_obj) -> float:
-    """Return the mean turnover if possible; otherwise NaN without crashing."""
+    """
+    Return the mean turnover if possible; otherwise NaN without crashing.
+    """
     try:
         if turnover_obj is None:
             return float("nan")
@@ -563,7 +572,7 @@ def _turnover_mean(turnover_obj) -> float:
         if isinstance(turnover_obj, pl.DataFrame) and "turnover" in turnover_obj.columns:
             return float(turnover_obj.select(pl.col("turnover").mean()).item())
         # Pandas
-        import pandas as pd  # local import to avoid hard dep
+        import pandas as pd  # type: ignore[import]
 
         if isinstance(turnover_obj, pd.DataFrame) and "turnover" in turnover_obj.columns:
             return float(turnover_obj["turnover"].mean())
@@ -602,7 +611,6 @@ if w_out is not None and mode == "CVaR":
     try:
         cols_used_eval = [c for c in names if c in R_clean_pl.columns]
         if cols_used_eval:
-            # FIX: correct (i, n) unpack — previously swapped
             name_to_idx = {n: i for i, n in enumerate(names)}
             W_eval = np.array([w_out[name_to_idx[c]] for c in cols_used_eval], dtype=float)
             R_eval = R_clean_pl.select(cols_used_eval).to_numpy()
