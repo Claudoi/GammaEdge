@@ -3,7 +3,9 @@ from __future__ import annotations
 
 import base64
 import io
+import os
 from collections.abc import Iterable, Mapping, Sequence
+from contextlib import suppress
 from typing import Any, Literal, cast
 
 import numpy as np
@@ -268,10 +270,10 @@ def build_brinson_attribution_section(
     how: Literal["sum", "mean"] = "sum",
 ) -> BrinsonReport:
     """
-    Construye la sección de atribución tipo Brinson para un informe de backtest.
+    Build a Brinson-style attribution section for a backtest report.
 
-    Es un thin-wrapper sobre ``build_brinson_attribution_report`` para mantener
-    una API consistente en :mod:`portfolio.backtest.reporting`.
+    This is a thin wrapper over ``build_brinson_attribution_report`` to keep
+    a consistent API within :mod:`portfolio.backtest.reporting`.
     """
     return build_brinson_attribution_report(timeseries, how=how)
 
@@ -404,6 +406,18 @@ def _ensure_datetime(df: pl.DataFrame, col: str = "date") -> pl.DataFrame:
         return df.with_columns(pl.col(col).cast(pl.Datetime, strict=False))
     except Exception:
         return df
+
+
+def _safe_metrics_to_dict(metrics_df_obj: Any) -> dict[str, Any] | None:
+    """
+    Best effort conversion of a metrics table (Polars/Pandas) to a simple
+    dict[name -> value] using the first two columns.
+    """
+    try:
+        pdf = metrics_df_obj.to_pandas() if hasattr(metrics_df_obj, "to_pandas") else metrics_df_obj
+        return {str(k): float(v) for k, v in zip(pdf.iloc[:, 0], pdf.iloc[:, 1], strict=False)}
+    except Exception:
+        return None
 
 
 def build_context(
@@ -562,7 +576,6 @@ _SECTION_ORDER: list[str] = [
 
 
 def _classify_figure_section(title: str) -> str:
-    """Map a figure title to a logical report section."""
     lt = title.lower()
 
     if any(k in lt for k in ("equity", "drawdown", "weight", "top contrib", "top contributor")):
@@ -679,7 +692,10 @@ def render_pdf(
     # First page header
     c.setFont("Helvetica-Bold", 16)
     c.drawString(margin, h_page - margin, title)
-    meta = f"Portfolio: {ctx.get('portfolio_name', '—')}   Period: {ctx.get('period_start', '—')} → {ctx.get('period_end', '—')}"
+    meta = (
+        f"Portfolio: {ctx.get('portfolio_name', '—')}   "
+        f"Period: {ctx.get('period_start', '—')} → {ctx.get('period_end', '—')}"
+    )
     c.setFont("Helvetica", 10)
     c.drawString(margin, h_page - margin - 18, meta)
 
@@ -700,3 +716,166 @@ def render_pdf(
     c.save()
     buffer.seek(0)
     return buffer.getvalue()
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# High-level helper to export a backtest report without Streamlit
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def export_backtest_report(
+    *,
+    bt: Mapping[str, Any],
+    df_ret_wide: pl.DataFrame | Any,
+    group_map: dict[str, str] | None = None,
+    metrics_df: Any | None = None,
+    df_brinson: pl.DataFrame | None = None,
+    bench_meta: Mapping[str, Any] | None = None,
+    portfolio_name: str = "Portfolio",
+    output_dir: str | os.PathLike[str] | None = None,
+    export_html: bool = True,
+    export_pdf: bool = False,
+    title: str = "GammaEdge Backtest",
+) -> dict[str, bytes]:
+    """
+    High-level helper to export a backtest report to HTML/PDF without Streamlit.
+    """
+    # 1) Normalise returns frame
+    if not isinstance(df_ret_wide, pl.DataFrame):
+        df_ret_wide = pl.from_pandas(df_ret_wide)
+    df_ret_wide = _ensure_datetime(df_ret_wide, "date")
+
+    dates_bt_any = list(bt.get("dates", []))
+    equity = np.asarray(bt.get("equity", []), dtype=float)
+    tickers = list(bt.get("tickers", []))
+    W_reb = np.asarray(bt.get("weights", []), dtype=float)
+    rb_dates_any = list(bt.get("rebalance_dates", []))
+
+    if not dates_bt_any or equity.size == 0 or W_reb.size == 0 or not tickers:
+        raise ValueError("bt must contain non-empty 'dates', 'equity', 'weights' and 'tickers'.")
+
+    dates_bt = list(dates_bt_any)
+
+    # Align returns to backtest calendar
+    df_ret_bt = (
+        df_ret_wide.filter(pl.col("date").is_in(dates_bt)).unique(subset=["date"]).sort("date")
+    )
+
+    # Robust handling of weight dimensions and rebalance dates
+    if W_reb.ndim == 2:
+        K, N = W_reb.shape
+    else:
+        K = W_reb.shape[0]
+        N = len(tickers)
+
+    if len(tickers) != N:
+        raise ValueError(f"weights columns ({N}) do not match tickers ({len(tickers)})")
+
+    if len(rb_dates_any) != K:
+        step = max(len(dates_bt) // max(K, 1), 1)
+        rb_dates_list = dates_bt[::step][:K]
+    else:
+        rb_dates_list = rb_dates_any
+
+    # Expand rebalance weights to daily grid
+    from portfolio.backtest import attribution as bt_attr  # local import to avoid cycles
+
+    daily_W = bt_attr.expand_rebalance_weights(
+        dates=df_ret_bt.get_column("date").to_list(),
+        rb_dates=list(rb_dates_list),
+        W_reb=W_reb,
+    )
+
+    # 2) Build BacktestReport (tables + core figures)
+    report = build_backtest_report(
+        df_ret_wide=df_ret_bt,
+        daily_weights=daily_W,
+        equity=equity,
+        group_map=group_map,
+        title=title,
+    )
+
+    df_asset_total = report.tables.get("contrib_asset_total")
+    df_group_total = report.tables.get("contrib_group_total")
+
+    # 3) Normalise Brinson timeseries (if available)
+    df_brinson_ctx: pl.DataFrame | None = None
+    if isinstance(df_brinson, pl.DataFrame) and "date" in df_brinson.columns:
+        df_brinson_ctx = _ensure_datetime(df_brinson, "date")
+        df_brinson_ctx = df_brinson_ctx.filter(pl.col("date").is_in(dates_bt)).sort("date")
+
+    # 4) Metrics context
+    extra_metrics: dict[str, Any] | None = (
+        _safe_metrics_to_dict(metrics_df) if metrics_df is not None else None
+    )
+    if extra_metrics is None:
+        from portfolio.backtest.kpis import compute_kpis
+
+        extra_metrics = compute_kpis(equity, rf_daily=0.0, periods_per_year=252)
+
+    # Append benchmark metadata if present
+    if bench_meta and "scheme" in bench_meta:
+        scheme_value = bench_meta.get("scheme")
+        if scheme_value is not None:
+            with suppress(TypeError, ValueError):
+                extra_metrics["Benchmark Scheme"] = float(scheme_value)
+
+    period_start = str(dates_bt[0]) if dates_bt else "—"
+    period_end = str(dates_bt[-1]) if dates_bt else "—"
+
+    ctx = build_context(
+        portfolio_name=portfolio_name,
+        period=(period_start, period_end),
+        df_asset_cum=df_asset_total,
+        df_group_total=df_group_total,
+        df_brinson=df_brinson_ctx,
+        extra_metrics=extra_metrics,
+    )
+
+    # 5) Figures for export (core pack)
+    figures: list[ReportFigure] = [
+        ReportFigure("Equity", report.figures["equity"]),
+        ReportFigure("Drawdown", report.figures["drawdown"]),
+        ReportFigure("Weights", report.figures["weights"]),
+        ReportFigure("Top Contributors", report.figures["top_contrib"]),
+    ]
+
+    # Optional Brinson cumulative figure if data is available and plotting works
+    if df_brinson_ctx is not None:
+        try:
+            from portfolio.viz import plot_utils as viz
+
+            br_cum_fig = viz.plot_brinson_cumulative(
+                df_brinson_ctx,
+                title="Brinson–Fachler (Cumulative)",
+            )
+            figures.append(ReportFigure("Brinson (Cumulative)", br_cum_fig))
+        except Exception:
+            # Keep the rest of the report even if Brinson plotting fails
+            pass
+
+    # 6) Export artefacts
+    outputs: dict[str, bytes] = {}
+
+    if export_html:
+        outputs["html"] = render_html(
+            ctx,
+            figures,
+            page_title="GammaEdge Report",
+            h1="Backtest Report",
+        )
+
+    if export_pdf:
+        outputs["pdf"] = render_pdf(ctx, figures, title="GammaEdge Report")
+
+    # 7) Optional write to disk
+    if output_dir is not None and outputs:
+        os.makedirs(output_dir, exist_ok=True)
+        if "html" in outputs:
+            with open(os.path.join(output_dir, "backtest_report.html"), "wb") as f:
+                f.write(outputs["html"])
+        if "pdf" in outputs:
+            with open(os.path.join(output_dir, "backtest_report.pdf"), "wb") as f:
+                f.write(outputs["pdf"])
+
+    return outputs
