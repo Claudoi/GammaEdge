@@ -12,12 +12,12 @@ Method = Literal["generic", "brinson", "euler"]
 @dataclass
 class AttributionResult:
     """
-    Contenedor ligero para salidas de atribución.
+    Lightweight container for attribution outputs.
 
-    Por ahora solo guarda:
-    - method: etiqueta del método ('generic', 'brinson', 'euler', ...)
-    - contributions: DataFrame de Polars con contribuciones por fecha/asset
-    - meta: diccionario opcional con metadatos (nombre de columnas, etc.)
+    For now it only stores:
+    - method: label of the method ('generic', 'brinson', 'euler', ...)
+    - contributions: Polars DataFrame with per-date/per-asset contributions
+    - meta: optional dict with metadata (column names, etc.)
     """
 
     method: Method
@@ -26,7 +26,9 @@ class AttributionResult:
 
 
 def _ensure_lazy(df: pl.DataFrame | pl.LazyFrame) -> pl.LazyFrame:
-    """Normaliza a LazyFrame para poder encadenar joins y selects."""
+    """
+    Normalize to LazyFrame so we can chain joins and selects consistently.
+    """
     if isinstance(df, pl.LazyFrame):
         return df
     return df.lazy()
@@ -40,40 +42,39 @@ def compute_portfolio_contributions(
     method: Method = "generic",
 ) -> AttributionResult:
     """
-    Calcula contribuciones simples de cartera: contrib = peso * retorno.
+    Compute simple portfolio contributions: contrib = weight * return.
 
     Parameters
     ----------
     weights:
-        DataFrame/LazyFrame de Polars con la columna `date_col` y una columna
-        por asset/bucket con los pesos de cartera.
+        Polars DataFrame/LazyFrame with `date_col` and one column
+        per asset/bucket with portfolio weights.
     returns:
-        DataFrame/LazyFrame de Polars con la columna `date_col` y una columna
-        por asset/bucket con los retornos de cada fecha, en la misma malla
-        temporal que `weights`.
+        Polars DataFrame/LazyFrame with `date_col` and one column
+        per asset/bucket with returns, on the same time grid as `weights`.
     date_col:
-        Nombre de la columna fecha para alinear ambos DataFrames.
+        Name of the date column used to align both DataFrames.
     method:
-        Etiqueta del método de atribución. Actualmente es solo informativa,
-        pero deja el API preparado para enganchar 'brinson' / 'euler' después.
+        Label of the attribution method. Currently informational only,
+        but keeps the API ready for plugging in 'brinson' / 'euler', etc.
 
     Returns
     -------
     AttributionResult
-        `contributions` tendrá el esquema:
-        [date_col] + mismas columnas de assets que `weights`/`returns`,
-        con valores igual a peso * retorno.
+        `contributions` has the schema:
+        [date_col] + same asset columns as `weights`/`returns`,
+        with values equal to weight * return.
     """
     w_lazy = _ensure_lazy(weights)
     r_lazy = _ensure_lazy(returns)
 
-    # Join interno por fecha; las columnas de retornos se sufijan con '_ret'
+    # Inner join on date; return columns get a '_ret' suffix
     joined = w_lazy.join(r_lazy, on=date_col, how="inner", suffix="_ret")
 
-    # Columnas de assets: todas menos la fecha y las sufijadas con '_ret'
+    # Asset columns: all except date and the '_ret' suffixed ones
     asset_cols = [c for c in joined.schema if c != date_col and not c.endswith("_ret")]
 
-    # Construimos expresiones: fecha + contribuciones por asset
+    # Build expressions: date + contributions per asset
     exprs: list[pl.Expr] = [pl.col(date_col)]
     for c in asset_cols:
         exprs.append((pl.col(c) * pl.col(f"{c}_ret")).alias(c))
