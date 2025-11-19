@@ -1,5 +1,4 @@
 # portfolio/attribution/euler.py
-
 from __future__ import annotations
 
 from collections.abc import Sequence
@@ -17,15 +16,15 @@ def euler_risk_contributions(
     cov: np.ndarray | pd.DataFrame,
 ) -> pd.Series:
     """
-    Calcula las Euler risk contributions para una cartera con volatilidad:
+    Compute Euler risk contributions for a portfolio with volatility:
 
         σ_p = sqrt(wᵀ Σ w)
 
-    Usando la descomposición de Euler:
+    Using Euler decomposition:
 
         RC_i = w_i * (Σ w)_i / σ_p
 
-    donde Σ es la matriz de covarianzas.
+    where Σ is the covariance matrix.
     """
     w = np.asarray(weights, dtype=float).reshape(-1, 1)
     sigma = np.asarray(cov, dtype=float)
@@ -48,17 +47,17 @@ def euler_risk_contributions(
     contrib = (w * marginal) / port_sigma
     contrib = contrib.ravel()
 
-    # Índice bien tipado para mypy
+    # Build index consistent with the input
     if isinstance(weights, pd.Series):
         idx: pd.Index = weights.index
     elif isinstance(cov, pd.DataFrame):
         idx = cov.index
     else:
-        # RangeIndex produce siempre un pd.Index compatible
+        # RangeIndex always yields a valid pd.Index
         idx = pd.RangeIndex(n)
 
     series = pd.Series(contrib, index=idx, name="risk_contribution")
-    # El constructor de pandas está tipado como Any; hacemos cast explícito.
+    # Pandas constructor is typed as Any; cast explicitly for mypy.
     return cast(pd.Series, series)
 
 
@@ -69,10 +68,10 @@ def run_euler_engine(
     date_col: str = "date",
 ) -> pl.DataFrame:
     """
-    Usa el mismo engine de contribuciones para construir contribuciones
-    por factor (o activo) en un df largo.
+    Use the same contribution engine to compute contributions
+    per factor (or asset) in a long-format df.
 
-    Espera un df con columnas: date, asset, weights_col, returns_col.
+    Expects a df with columns: date, asset, weights_col, returns_col.
     """
     if "asset" not in df.columns:
         msg = "Expected a long dataframe with an 'asset' column."
@@ -94,6 +93,7 @@ def run_euler_engine(
         weights=weights_wide,
         returns=returns_wide,
         date_col=date_col,
+        method="euler",
     ).contributions
 
     contrib_long = contrib_wide.melt(

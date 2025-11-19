@@ -109,7 +109,7 @@ def euler_factor_contributions(
     w_s, B_df, Sigma_f_df = _validate_shapes(w_s, B_df, Sigma_f_df)
 
     # ------------------------------------------------------------------
-    # 1) Comprobación de varianza "real" SIN tocar Sigma (ni PSD ni ridge)
+    # 1) Check the "raw" variance WITHOUT touching Sigma (no PSD fix nor ridge)
     # ------------------------------------------------------------------
     Sigma_input = Sigma_f_df.to_numpy(dtype=float)
 
@@ -119,7 +119,7 @@ def euler_factor_contributions(
 
     var_raw = float(g_np.T @ (Sigma_input @ g_np))
 
-    # Si la varianza verdadera es cero (o numéricamente ~0) → todo cero
+    # If the true variance is zero (or numerically ~0) → everything is zero
     if var_raw <= 0.0 or np.isclose(var_raw, 0.0, atol=1e-12):
         factors = B_df.columns
         assets = B_df.index
@@ -130,7 +130,7 @@ def euler_factor_contributions(
         }
 
     # ------------------------------------------------------------------
-    # 2) Ahora sí: limpieza PSD + ridge para estabilidad numérica
+    # 2) Now enforce PSD + ridge for numerical stability
     # ------------------------------------------------------------------
     Sigma_base = ensure_psd(Sigma_input)
     Sigma_np = Sigma_base
