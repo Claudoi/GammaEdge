@@ -6,8 +6,7 @@ import inspect
 # --- stdlib ---
 import os
 import sys
-from collections.abc import Callable
-from typing import Any
+from typing import Any, Literal, cast
 
 # --- third-party ---
 import numpy as np
@@ -22,6 +21,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 
 # --- local modules ---
 from portfolio.backtest import metrics as bt_metrics
+from portfolio.backtest.allocators import make_allocator
 from portfolio.backtest.engine import backtest_rebalanced
 from portfolio.backtest.scenarios import (
     ScenarioConfig,
@@ -30,10 +30,6 @@ from portfolio.backtest.scenarios import (
     historical_slice_returns,
     run_scenarios,
 )
-from portfolio.core.utils import ensure_psd, hrp_safe, project_to_box_simplex
-from portfolio.optim.hrp import hrp_weights
-from portfolio.optim.mean_variance import pgd_box_simplex_l2
-from portfolio.optim.risk_parity import risk_parity
 from portfolio.viz.plot_utils import (
     equity_and_drawdown,
     plot_drawdown_compare,
@@ -254,108 +250,27 @@ with st.sidebar:
 # ─────────────────────────────────────────────────────────────────────
 # Allocator factory (no turnover budget)
 # ─────────────────────────────────────────────────────────────────────
-def _cov_ewma(R: np.ndarray, lam: float = 0.94) -> np.ndarray:
-    if R.size == 0:
-        return np.eye(0)
-    T, N_ = R.shape
-    S = np.zeros((N_, N_), dtype=float)
-    w = 0.0
-    mu = np.nanmean(R, axis=0)
-    for t in range(T):
-        x = (R[t] - mu).reshape(1, -1)
-        S = lam * S + (1 - lam) * (x.T @ x)
-        w = lam * w + (1 - lam)
-    S = S / max(w, 1e-12)
-    S = np.nan_to_num(S, nan=0.0, posinf=0.0, neginf=0.0)
-    return ensure_psd(S, eps=1e-10, clip=True)
-
-
-def _get_cov(win: pl.DataFrame, cols: list[str]) -> np.ndarray:
-    if not cols:
-        return np.eye(0)
-    R = win.select(cols).to_numpy()
-    if R.size == 0:
-        return np.eye(len(cols)) * 1e-4
-    S = _cov_ewma(R, lam=float(ewma_lambda)) if cov_estimator == "EWMA" else np.cov(R, rowvar=False)
-    S = np.nan_to_num(S, nan=0.0, posinf=0.0, neginf=0.0)
-    return ensure_psd(S, eps=1e-10, clip=True)
-
-
-def make_allocator(kind: str) -> Callable[[pl.DataFrame], np.ndarray]:
-    if kind == "Equal-Weight":
-
-        def base_alloc(win: pl.DataFrame) -> np.ndarray:
-            n = win.width - 1
-            w = np.ones(n, dtype=float) / max(n, 1)
-            return project_to_box_simplex(w, w_min, w_max)
-
-    elif kind == "Min-Var (L2 PGD)":
-
-        def base_alloc(win: pl.DataFrame) -> np.ndarray:
-            cols = [c for c in win.columns if c != "date"]
-            R = win.select(cols).to_numpy() if cols else np.zeros((0, 0), dtype=float)
-            mu_w = np.nanmean(R, axis=0) if R.size else np.zeros(len(cols))
-            mu_w = np.nan_to_num(mu_w, nan=0.0, posinf=0.0, neginf=0.0)
-            Sigma_w = _get_cov(win, cols)
-            w = pgd_box_simplex_l2(
-                mu_w, Sigma_w, gamma=100.0, w_min=w_min, w_max=w_max, lam_turnover=0.0
-            )
-            return project_to_box_simplex(w, w_min, w_max)
-
-    elif kind == "Risk Parity":
-
-        def base_alloc(win: pl.DataFrame) -> np.ndarray:
-            cols = [c for c in win.columns if c != "date"]
-            Sigma_w = _get_cov(win, cols)
-            try:
-                w = risk_parity(Sigma_w, w_min=w_min, w_max=w_max)
-            except Exception:
-                w = np.ones(len(cols)) / max(len(cols), 1)
-            return project_to_box_simplex(w, w_min, w_max)
-
-    elif kind == "HRP":
-
-        def base_alloc(win: pl.DataFrame) -> np.ndarray:
-            cols = [c for c in win.columns if c != "date"]
-            Sigma_w = _get_cov(win, cols)
-            w = hrp_safe(
-                hrp_func=hrp_weights,
-                cov=Sigma_w,
-                method="ward",
-                optimal=True,
-                w_min=w_min,
-                w_max=w_max,
-            )
-            return project_to_box_simplex(w, w_min, w_max)
-
-    elif kind == "Min-TE (to Bench)":
-
-        def base_alloc(win: pl.DataFrame) -> np.ndarray:
-            cols = [c for c in win.columns if c != "date"]
-            Sigma_w = _get_cov(win, cols)
-            w_bench = np.full(len(cols), 1.0 / max(len(cols), 1))
-            mu_eff = 2.0 * (Sigma_w @ w_bench)
-            w = pgd_box_simplex_l2(
-                mu_eff, Sigma_w, gamma=1.0, w_min=w_min, w_max=w_max, lam_turnover=0.0
-            )
-            return project_to_box_simplex(w, w_min, w_max)
-
-    else:
-
-        def base_alloc(win: pl.DataFrame) -> np.ndarray:
-            n = win.width - 1
-            w = np.ones(n, dtype=float) / max(n, 1)
-            return project_to_box_simplex(w, w_min, w_max)
-
-    return base_alloc
 
 
 # ─────────────────────────────────────────────────────────────────────
 # Engine wrapper
 # ─────────────────────────────────────────────────────────────────────
+
+
 def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
     """Run backtest_rebalanced with a recorder to recover actual rebalance weights if needed."""
-    base_alloc = make_allocator(alloc_kind)
+    cov_estimator_lit = cast(Literal["Sample", "EWMA"], cov_estimator)
+
+    base_alloc = make_allocator(
+        alloc_kind,
+        w_min=w_min,
+        w_max=w_max,
+        cov_estimator=cov_estimator_lit,
+        ewma_lambda=float(ewma_lambda),
+        use_to_budget=False,
+        max_turnover=0.0,
+        band_eps=0.0,
+    )
 
     class _Recorder:
         def __init__(self) -> None:
@@ -379,8 +294,8 @@ def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
         def as_array(self) -> np.ndarray:
             if not self.weights:
                 return np.zeros((0, 0), float)
-            Nmax = max(len(w) for w in self.weights)
-            W = np.zeros((len(self.weights), Nmax), float)
+            n_max = max(len(w) for w in self.weights)
+            W = np.zeros((len(self.weights), n_max), float)
             for i, w in enumerate(self.weights):
                 W[i, : len(w)] = w
             return W
@@ -390,6 +305,7 @@ def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
     bench_w = np.full(N, 1.0 / max(N, 1))
     df_arg = df_wide.select(["date", *tickers]).sort("date")
     sig = inspect.signature(backtest_rebalanced)
+
     kw: dict[str, Any] = {
         "lookback": int(lookback),
         "rebalance_freq": rebalance_freq,
@@ -417,9 +333,8 @@ def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
         kw["allocator"] = rec
         alloc_hook = "fallback(allocator)"
 
-    bt = backtest_rebalanced(**kw)
-    if not isinstance(bt, dict):
-        bt = dict(bt)
+    # Here is the key fix: no unreachable isinstance branch, just cast
+    bt = cast(dict[str, Any], backtest_rebalanced(**kw))
 
     bt["_alloc_hook"] = alloc_hook
     bt["_ret_hook"] = ret_hook
@@ -661,21 +576,41 @@ if cfgs:
     st.subheader("Scenario comparison vs Baseline")
 
     with st.spinner("Running scenarios…"):
-        results = run_scenarios(
+        cov_estimator_lit = cast(Literal["Sample", "EWMA"], cov_estimator)
+
+        results: list[dict[str, Any]] = run_scenarios(
             cfgs,
             df_ret_wide=df_base,
-            allocator_factory=lambda: make_allocator(alloc_kind),
+            allocator_factory=lambda: make_allocator(
+                alloc_kind,
+                w_min=w_min,
+                w_max=w_max,
+                cov_estimator=cov_estimator_lit,
+                ewma_lambda=float(ewma_lambda),
+                use_to_budget=False,
+                max_turnover=0.0,
+                band_eps=0.0,
+            ),
             lookback=int(lookback),
             rebalance_freq=rebalance_freq,
             cost_bps=float(cost_bps),
             bench_weights=np.full(N, 1.0 / max(N, 1)),
         )
 
-    rows: list[dict] = []
+    rows: list[dict[str, float | str]] = []
+
     for res in results:
-        m = res.get("metrics", None)
-        flat = _flatten_metrics_row(m) if m is not None else {}
-        rows.append({"Scenario": res.get("name", "Scenario")} | flat)
+        # results es una lista de dicts
+        assert isinstance(res, dict)
+
+        m_obj = res.get("metrics")
+        flat: dict[str, float]
+        if isinstance(m_obj, (pl.DataFrame, pd.DataFrame)):
+            flat = _flatten_metrics_row(m_obj)
+        else:
+            flat = {}
+
+        rows.append({"Scenario": str(res.get("name", "Scenario"))} | flat)
 
     if rows:
         df_comp = pl.DataFrame(rows, orient="row")
@@ -794,7 +729,9 @@ if use_beta:
     st.subheader("Beta-correlated shock")
     try:
         betas = _rolling_beta_last_window(df_base, index_col=index_col, lookback=int(beta_lb))
-        shock_map = {asset: beta * float(index_move) for asset, beta in betas.items()}
+        shock_map: dict[str, float | tuple[int, float]] = {
+            asset: beta * float(index_move) for asset, beta in betas.items()
+        }
         df_beta = apply_shock_map_to_wide(df_base, shock_map)
         bt_beta = _run_engine(df_beta)
         show_plot(
