@@ -206,6 +206,7 @@ def compute_backtest_metrics(bt: Any) -> pl.DataFrame:
         MetricRow("Sharpe", sharpe),
         MetricRow("Volatility_ann", vol),
         MetricRow("MaxDrawdown", maxdd),
+        MetricRow("MaxDD", maxdd),
         MetricRow("Sortino", sortino),
         MetricRow("Turnover_mean", to_mean),
         MetricRow("TrackingError_ann_proxy", te_ann),
