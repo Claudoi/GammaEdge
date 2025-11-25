@@ -1,60 +1,80 @@
-# GammaEdge
+# 🧠 GammaEdge — Portfolio Backtesting, Risk Modeling & Reporting Platform
 
 [![Python](https://img.shields.io/badge/Python-3.8+-blue?logo=python&logoColor=white)](https://www.python.org/)
 [![License](https://img.shields.io/badge/License-MIT-green?logo=Open%20Source%20Initiative&logoColor=white)](https://opensource.org/licenses/MIT)
 [![Last Commit](https://img.shields.io/badge/Last_Commit-Recently-brightgreen?logo=git&logoColor=white)](https://github.com/Claudoi/GammaEdge/commits/main)
 [![Streamlit](https://img.shields.io/badge/Live%20App:%20Open%20in%20Streamlit-App-red?logo=streamlit&logoColor=white)](https://gammaedge.streamlit.app/)
 
-# 🧠 GammaEdge — Portfolio Analytics, Risk Modeling & Scenario Simulation Platform
 
-**GammaEdge** is an end-to-end research and visualization framework for **portfolio construction, backtesting, attribution and scenario analysis**.  
-It combines academic-grade financial modeling with a clean, interactive **Streamlit interface**, allowing users to explore allocation methods, stress tests, and risk metrics in a single coherent environment.
+**GammaEdge** is a full-stack platform for **portfolio construction**,  
+**backtesting**, **risk modeling**, **scenario analysis**, and **automated reporting**.
 
-This project started as a way to unify my quantitative finance tools — from covariance modeling to risk attribution — into a single, production-style platform that’s both **mathematically rigorous** and **visually intuitive**.
+The goal of the project is to unify all my quantitative finance tooling into a
+production-grade framework that is mathematically rigorous and visually intuitive.
 
 ---
+
+GammaEdge is a modular research framework for **portfolio analytics**, designed to support:
+
+- portfolio construction,
+- backtesting and turnover analysis,
+- risk & factor models,
+- Brinson/Euler attribution,
+- scenario stress testing,
+- and automated **PDF/HTML** reporting.
+
+It is built on a fast NumPy/Polars backend and wrapped in a modern Streamlit interface.
+
+---
+
 
 ## 🚀 Key Features
 
-- **Backtesting Engine**  
-  Modular and allocator-agnostic, with full turnover accounting and transaction cost simulation.
+### 🔹 Backtesting Engine
+- Polars-accelerated computations  
+- Allocation-agnostic design  
+- Full **turnover accounting**  
+- Transaction-cost simulation  
+- Rebalance diagnostics  
 
-- **Portfolio Optimization** — multiple allocators:
-  - Equal Weight  
-  - Risk Parity  
-  - Hierarchical Risk Parity (HRP)  
-  - Minimum Variance (L2-PGD)  
-  - Tracking-Error Minimization vs Benchmark  
-  - Robust & constrained optimizers (cardinality, turnover, etc.)
+### 🔹 Portfolio Optimization
+- **Equal Weight**
+- **Risk Parity**
+- **HRP**
+- **Minimum Variance (PGD)**
+- **Tracking-Error Minimization**
+- **Robust optimizers** with turnover/cardinality constraints
 
-- **Scenario Analysis** — stress-test portfolios under:
-  - Mean and covariance shocks  
-  - One-day crashes  
-  - Historical replay windows  
-  - Beta-correlated market moves  
-  - Tornado (one-at-a-time) sensitivity analysis  
+### 🔹 Scenario Analysis
+- Mean & covariance shocks  
+- Historical replay windows  
+- Tornado sensitivity  
+- Crisis crash simulations  
+- Beta-correlated market stress  
 
-- **Risk Metrics**  
-  Full suite of diagnostics (CAGR, Sharpe, Max Drawdown, Turnover, hit ratio, etc.) plus portfolio-level VaR/ES modules.
+### 🔹 Performance Attribution
+- **Brinson (allocation / selection / interaction)**  
+- **Euler risk contributions** (sum to portfolio volatility)  
+- Full integration with backtest reporting  
 
-- **Portfolio Attribution (New)**  
-  A dedicated attribution engine that supports:
-  - **Brinson-style attribution** (allocation / selection / interaction / total), with helpers to normalize timeseries and build reporting-ready tables.
-  - **Euler risk contributions** from covariance matrices, giving asset-level risk decomposition that sums to total portfolio volatility.
-  - Tight integration with the backtest engine and reporting layer.
+### 🔹 Automated Reporting (NEW)
+- Export **PDF** and **HTML** reports  
+- Includes:
+  - Equity curve  
+  - Drawdown  
+  - KPIs  
+  - Turnover  
+  - Attribution tables  
+  - Plotly charts  
 
-- **Visualization Layer** — built on **Plotly**:
-  - Equity & drawdown charts  
-  - Correlation heatmaps and dendrograms  
-  - Weight evolution and deltas  
-  - Tornado sensitivity plots  
-  - Attribution charts & top contributors  
-  - Scenario-to-baseline comparisons  
+### 🔹 Streamlit UI (NEW)
+- Modern, clean **Home Page**
+- Multi-page app (Data → Model → Optimizer → Backtest → Attribution → Reporting)
+- Dynamic Plotly interactivity
 
-- **Streamlit UI**  
-  A professional multi-page design with clear sidebars, expander sections, and dynamic Plotly interactivity.
 
 ---
+
 
 ## 🧩 Folder Structure
 
@@ -63,6 +83,7 @@ GammaEdge/
 │
 ├── README.md
 ├── pyproject.toml              # Build & dependency configuration (Poetry)
+├── pyproject.toml.bak
 ├── poetry.lock
 ├── requirements.txt            # Optional pip-based installation
 ├── .gitignore
@@ -71,6 +92,8 @@ GammaEdge/
 ├── .coveragerc
 ├── PR_CHECKLIST.md
 ├── CHANGELOG.md
+├── mypy_report.txt
+├── content
 │
 ├── .github/                    # CI/CD workflows (GitHub Actions)
 │   └── workflows/
@@ -106,7 +129,8 @@ GammaEdge/
 │   ├── index.md
 │   ├── risk_models.md
 │   ├── api_reference.md
-│   └── optimizers.md
+│   ├── optimizers.md
+│   └── backtest_attribution.md 
 │
 ├── notebooks/                  # Research notebooks
 │   ├── 01_eda_universe.ipynb
@@ -119,13 +143,17 @@ GammaEdge/
 │   ├── api.Dockerfile
 │   └── docker-compose.yml
 │
+├── examples/                   
+│   └── attribution_usage.py
+│
 ├── portfolio/                  # Core analytical backend
 │   ├── __init__.py
 │   ├── attribution/            # Attribution engine (Brinson & Euler)
 │   │   ├── __init__.py
 │   │   ├── brinson.py          # Brinson-style attribution helpers
 │   │   ├── euler.py            # Euler risk contributions
-│   │   └── engine.py           # Portfolio-level contributions engine
+│   │   ├── engine.py           # Portfolio-level contributions engine
+│   │   └── factor_decomposition.py  
 │   ├── backtest/               # Backtest & reporting
 │   │   ├── __init__.py
 │   │   ├── engine.py           # Core backtest engine
@@ -133,6 +161,7 @@ GammaEdge/
 │   │   ├── attribution.py      # Return/weight alignment & contributions
 │   │   ├── attribution_reporting.py  # Brinson reporting helpers
 │   │   ├── brinson_utils.py    # Low-level attribution utilities
+│   │   ├── allocators.py       
 │   │   ├── kpis.py
 │   │   ├── metrics.py
 │   │   └── scenarios.py
@@ -155,6 +184,8 @@ GammaEdge/
 │   │   ├── compat.py
 │   │   ├── guards.py
 │   │   └── metrics.py
+│   ├── viz/                    # Visualization helpers
+│   │   └── plot_utils.py
 │   └── optim/                  # Optimizers
 │       ├── __init__.py
 │       ├── black_litterman.py
@@ -190,74 +221,87 @@ GammaEdge/
     ├── test_core_utils.py
     ├── test_data_pipeline.py
     ├── test_export_report_cli.py
+    ├── test_frontier_sanity.py
     ├── test_kpis_property.py
     ├── test_mean_variance.py
     ├── test_optimizer_fallbacks.py
     ├── test_risk_models.py
     ├── test_scenarios.py
     ├── test_attribution_euler.py
-    ├── test_attribution_integration.py
-    ├── test_attribution_engine.py
-    ├── test_brinson.py
-    ├── backtest/
-    │   ├── test_attribution_reporting.py
-    │   └── test_brinson_utils_min.py
     ├── attribution/
     │   ├── test_brinson.py
     │   ├── test_engine.py
-    │   └── test_euler.py
+    │   ├── test_euler.py
+    │   └── test_integration.py
+    ├── backtest/
+    │   ├── test_attribution_reporting.py
+    │   ├── test_attribution_example.py
+    │   └── test_brinson_utils_min.py
     ├── quick/                  # Fast smoke/property tests
+    │   ├── test_brinson_coercer.py
     │   ├── test_engine_costs.py
     │   ├── test_engine_smoke.py
     │   ├── test_export_cli.py
     │   ├── test_kpis_smoke.py
     │   ├── test_metrics_smoke.py
     │   ├── test_plot_brinson_contract.py
-    │   └── test_reporting.py
+    │   ├── test_plot_turnover.py        
+    │   ├── test_reporting.py
+    │   ├── test_reporting_build_smoke.py 
+    │   ├── test_reporting_html.py
+    │   ├── test_scenarios_bootstrap_and_slice.py
+    │   ├── test_turnover_reconstruction.py 
+    │   └── test_run_engine_smoke.py     
     └── unit/                   # Fine-grained unit tests
         ├── test_attribution_helpers.py
         ├── test_brinson_utils_edge_cases.py
         ├── test_brinson_utils_glue.py
         ├── test_brinson_utils_more.py
         ├── test_engine_expand.py
+        ├── test_factor_decomposition.py  
+        ├── test_kpis_edge_cases.py       
         ├── test_reporting_build_minimal.py
+        ├── test_reporting_build_report_with_groups.py
+        ├── test_reporting_context.py
         ├── test_reporting_render_html.py
         ├── test_reporting_render_html_brinson.py
         ├── test_reporting_render_html_full.py
         ├── test_reporting_render_html_metrics_only.py
         ├── test_reporting_render_html_minimal_ctx.py
         ├── test_reporting_render_html_no_figs.py
-        └── test_utils_ensure_psd_basic.py
+        ├── test_utils_ensure_psd_basic.py
+        └── test_viz_attribution_plots.py  
 
-´´´
+---
+
 
 ## ⚙️ Tech Stack
 
 | Component | Technology |
-|------------|-------------|
-| Frontend / UI | Streamlit + Plotly |
-| Core Analytics | NumPy, Polars, Pandas |
-| Optimization | Custom Python (HRP, L2-PGD, Risk Parity, TE) |
-| Attribution | Brinson-style & Euler risk contributions) |
-| Risk & Metrics | Custom metrics engine + financial math |
-| Testing & Dev | Pytest, Mypy, Ruff, Black, Pre-commit |
-| Environment | Python ≥ 3.9 |
+|----------|------------|
+| **Frontend** | Streamlit + Plotly |
+| **Numerical Backend** | Polars, NumPy, Pandas |
+| **Optimization** | Custom PGD, HRP, TE optimizers |
+| **Attribution** | Brinson, Euler |
+| **Reporting** | Plotly + Jinja2 (HTML/PDF) |
+| **Testing** | Pytest, Mypy, Ruff, Black, Pre-commit |
+| **Environment** | Python ≥ **3.10** |
+
 
 ---
+
 
 ## 📊 Example Highlights
 
-- **Baseline Backtest**: Compute portfolio weights over time and analyze turnover.  
-- **Scenario Comparison**: Apply mean/covariance shocks or crisis replays, and compare key metrics (ΔCAGR, Sharpe, MaxDD).  
-- **Tornado Sensitivity**: Evaluate which assets have the strongest up/down impact on portfolio CAGR.  
-- **Historical Slices**: Replay specific market periods (e.g., March 2020) with consistent allocator logic.  
-- **Rebalance Diagnostics**: Inspect allocator calls, unique weight changes, and turnover per step.
-- **Portfolio Attribution**: 	
-	•	Compute Brinson-style allocation/selection/interaction effects by group.
-	•	Decompose portfolio risk into Euler contributions per asset.
-	•	Plug attribution results into the backtest reporting layer (tables + Plotly figures).
+- **Backtest a portfolio with one line**
+- **Compare scenarios (ΔCAGR, Sharpe, MaxDD)**
+- **Tornado sensitivity analysis**
+- **Historical replay (e.g., March 2020)**
+- **Brinson/Euler attribution integrated into reporting**
+
 
 ---
+
 
 ## 🧮 Attribution Engine — Brinson & Euler (Overview)
 
@@ -280,7 +324,9 @@ GammaEdge/
 
 These pieces are integrated into the backtest reporting module so that attribution becomes a first-class citizen in the final HTML/PDF reports.
 
+
 ---
+
 
 ## 🧪 Minimal Code Examples
 
@@ -334,22 +380,26 @@ These pieces are integrated into the backtest reporting module so that attributi
    print(report["total"])
    ´´´
 
+
 ---
+
 
 ## 🧠 Mathematical & Research Basis
 
-GammaEdge draws inspiration from:
+GammaEdge builds upon:
 
-- **Markowitz (1952)** — Mean-Variance Optimization  
-- **Ledoit & Wolf (2003)** — Shrinkage Covariance Estimation  
-- **Lopez de Prado (2016)** — Hierarchical Risk Parity  
-- **Cont (2001)** — Financial Turbulence and Stress Testing  
-- **Rockafellar & Uryasev (2002)** — Conditional Value-at-Risk Optimization  
-- **Classic Brinson-style** attribution frameworks and Euler decompositions of risk
+- **Markowitz (1952)** — Mean-Variance  
+- **Ledoit & Wolf (2003)** — Covariance shrinkage  
+- **Lopez de Prado (2016)** — HRP  
+- **Rockafellar & Uryasev (2002)** — CVaR optimization  
+- **Brinson (1985)** — Performance attribution  
+- **Euler decomposition** of portfolio volatility  
 
-Every formula and method is implemented from first principles, with emphasis on numerical stability and interpretability.
+All models are implemented from first principles with numerical stability in mind.
+
 
 ---
+
 
 ## 🖥️ How to Run Locally
 
@@ -373,24 +423,25 @@ Every formula and method is implemented from first principles, with emphasis on 
 ```
 You can then navigate across the pages using the left sidebar (Data → Risk Model → Backtest → Scenarios → Attribution → Risk Analysis).
 
+
 ---
 
 ## 📘 Future Development
 
-Planned extensions include:
-
-- Risk attribution by factor decomposition (Brinson-Fachler, Euler decomposition).  
-- Advanced covariance modeling (DCC-GARCH, shrinkage estimators).  
-- Monte Carlo VaR with dynamic factor structures.  
-- GPU acceleration for optimization and scenario runs.  
-- Interactive dashboard for real-time market data ingestion.  
+- ML-based factor forecasting (LSTM / TFT)  
+- Intraday stress-testing  
+- Multi-threaded optimizers  
+- Real-time market ingestion dashboard  
 - Integration with my [**Option Pricing Model**](https://github.com/Claudoi/OptionPricingModel) project to extend GammaEdge’s analytics into derivative pricing and volatility calibration.
 
+
 ---
+
 
 ## 🧾 License
 
 This project is released under the **MIT License**.  
 Feel free to use, adapt, or extend it for research, academic, or professional purposes — just include proper credit.
+
 
 ---
