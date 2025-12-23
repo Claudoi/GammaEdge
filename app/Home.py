@@ -152,7 +152,7 @@ with col_left:
         unsafe_allow_html=True,
     )
     st.markdown("")
-    _pill("Black-Litterman • HRP • CVaR • Factor Attribution")
+    _pill("Black-Litterman • Vectorized Engine • VaR/CVaR • HRP")
 
     st.markdown(
         """

@@ -113,7 +113,7 @@ def fig_to_html(
 # ============================================================================
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class HeatmapOrder:
     clustered: bool = True
     method: Literal["single", "complete", "average", "ward"] = "average"
