@@ -137,6 +137,60 @@ def _sortino(ret: np.ndarray, ann: float, rf_per_period: float = 0.0) -> float:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Métricas Avanzadas (Risk)
+# ──────────────────────────────────────────────────────────────────────────────
+
+
+def var_historic(returns: np.ndarray, confidence: float = 0.95) -> float:
+    """Value at Risk (VaR) histórico."""
+    if returns.size == 0:
+        return float("nan")
+    # VaR es la pérdida en el percentil q. (e.g. 5% para conf=95%)
+    # Se suele reportar como positivo para indicar pérdida.
+    q = 1.0 - confidence
+    return float(-np.percentile(returns, q * 100))
+
+
+def cvar_historic(returns: np.ndarray, confidence: float = 0.95) -> float:
+    """Conditional Value at Risk (CVaR / Expected Shortfall) histórico."""
+    if returns.size == 0:
+        return float("nan")
+    q = 1.0 - confidence
+    cutoff = np.percentile(returns, q * 100)
+    # Pérdidas peores que el cutoff
+    tail = returns[returns <= cutoff]
+    if tail.size == 0:
+        return float(-cutoff)  # Fallback
+    return float(-np.mean(tail))
+
+
+def calmar_ratio(equity: np.ndarray, ann: float) -> float:
+    """Calmar Ratio: CAGR / MaxDrawdown."""
+    cagr = _cagr(equity, ann)
+    mdd = abs(_max_drawdown(equity))
+    if mdd < 1e-12:
+        return float("nan")
+    return cagr / mdd
+
+
+def omega_ratio(returns: np.ndarray, threshold: float = 0.0) -> float:
+    """Omega Ratio: Prob(Gain)/Prob(Loss) ajustado por magnitud."""
+    if returns.size == 0:
+        return float("nan")
+    excess = returns - threshold
+    pos = excess[excess > 0]
+    neg = excess[excess < 0]
+
+    sum_pos = np.sum(pos)
+    sum_neg = np.abs(np.sum(neg))
+
+    if sum_neg < 1e-12:
+        return float("inf") if sum_pos > 0 else float("nan")
+
+    return float(sum_pos / sum_neg)
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Métricas principales
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -208,6 +262,10 @@ def compute_backtest_metrics(bt: Any) -> pl.DataFrame:
         MetricRow("MaxDrawdown", maxdd),
         MetricRow("MaxDD", maxdd),
         MetricRow("Sortino", sortino),
+        MetricRow("Calmar", calmar_ratio(equity, ann)),
+        MetricRow("Omega", omega_ratio(ret)),
+        MetricRow("VaR_95", var_historic(ret, 0.95)),
+        MetricRow("CVaR_95", cvar_historic(ret, 0.95)),
         MetricRow("Turnover_mean", to_mean),
         MetricRow("TrackingError_ann_proxy", te_ann),
         MetricRow("AnnFactor_used", ann),

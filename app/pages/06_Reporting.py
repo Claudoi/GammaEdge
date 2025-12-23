@@ -143,7 +143,7 @@ st.plotly_chart(report.figures["top_contrib"], use_container_width=True)
 st.subheader("📊 Tables")
 for name, df in report.tables.items():
     st.write(f"**{name}**")
-    st.dataframe(_to_pandas(df), use_container_width=True)
+    st.dataframe(_to_pandas(df), width="stretch")
 
 # ---------------------------------------------------------------------
 # Build context for export
