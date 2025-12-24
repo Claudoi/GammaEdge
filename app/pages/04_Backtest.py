@@ -9,6 +9,7 @@ from typing import Any, Literal, cast
 # --- third-party ---
 import numpy as np
 import pandas as pd
+import plotly.graph_objects as go
 import polars as pl
 import streamlit as st
 
@@ -21,7 +22,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 from portfolio.backtest import attribution as bt_attr
 from portfolio.backtest import metrics as bt_metrics
 from portfolio.backtest.allocators import make_allocator
-from portfolio.backtest.engine import backtest_rebalanced
+from portfolio.backtest.engine import backtest_rebalanced, backtest_vectorized
 
 # --- visualization ---
 from portfolio.viz.plot_utils import (
@@ -324,6 +325,21 @@ with st.sidebar:
         "Transaction cost (bps per turnover)", min_value=0.0, max_value=100.0, value=2.0, step=0.5
     )
 
+    # Engine selection
+    engine_type = st.radio("Engine Mode", ["Classic (Loops)", "Vectorized (Fast)"], index=1)
+
+    # Impact Model
+    st.markdown("---")
+    impact_model = st.selectbox(
+        "Market Impact Model",
+        ["linear", "sqrt"],
+        index=0,
+        help="Linear: Fixed bps. Sqrt: Non-linear impact based on Volume.",
+    )
+    impact_c = 1.0
+    if impact_model == "sqrt":
+        impact_c = st.number_input("Impact Coefficient (c)", 0.1, 10.0, 1.0, 0.1)
+
     st.markdown("---")
     st.subheader("Allocator")
 
@@ -381,6 +397,10 @@ def cached_backtest(
     use_to_budget: bool,
     max_turnover: float,
     band_eps: float,
+    engine_mode: str,
+    impact_model: str = "linear",
+    impact_c: float = 1.0,
+    df_volume: pl.DataFrame | None = None,
 ) -> dict[str, Any]:
     alloc = make_allocator(
         alloc_kind,
@@ -393,13 +413,20 @@ def cached_backtest(
         band_eps=band_eps,
     )
     n_cols = len([c for c in df_ret_wide.columns if c != "date"])
-    return backtest_rebalanced(
+
+    # Select engine
+    engine_func = backtest_vectorized if engine_mode == "Vectorized (Fast)" else backtest_rebalanced
+
+    return engine_func(
         df_ret_wide=df_ret_wide,
         lookback=int(lookback),
         rebalance_freq=rebalance_freq,
         cost_bps=float(cost_bps),
         allocator=alloc,
         bench_weights=np.full(n_cols, 1.0 / max(n_cols, 1)),
+        impact_model=impact_model,
+        impact_c=impact_c,
+        df_volume=df_volume,
     )
 
 
@@ -460,6 +487,10 @@ if not do_grid:
             use_to_budget,
             float(max_turnover),
             float(band_eps),
+            engine_type,
+            impact_model,
+            float(impact_c),
+            None,  # TODO: Pass df_volume from stored session state if available
         )
     st.success("✅ Backtest executed.")
 
@@ -558,6 +589,14 @@ if do_grid:
 # Metrics + Bootstrap CI (if not running grid)
 # ─────────────────────────────────────────────────────────────────────
 if not do_grid and bt is not None:
+    # Check for errors
+    if "error" in bt:
+        st.error(f"Backtest failed: {bt['error']}")
+        st.stop()
+    if "equity" not in bt or "dates" not in bt:
+        st.warning("Backtest returned no data (possibly insufficient history).")
+        st.stop()
+
     st.subheader("📈 Metrics")
     dfm = bt_metrics.compute_backtest_metrics(bt)
     tab1, tab2 = st.tabs(["Overview", "Bootstrap CI"])
@@ -588,10 +627,55 @@ if not do_grid and bt is not None:
             key=_bt_key("equity"),
         )
     with col2:
-        show_plot(
-            plot_drawdown(bt["dates"], bt["equity"], title="Drawdown"),
-            key=_bt_key("dd"),
-        )
+        # Cost Drag Chart (New)
+        if "costs" in bt and len(bt["costs"]) == len(bt["equity"]):
+            costs = bt["costs"]
+            # Reconstruct Gross: Net / CumProd(1 - Cost)
+            # Cost is fraction of CURRENT equity lost.
+            # Eq_net_t = Eq_gross_t * Decay_t
+            # Decay_factor = (1-c1)*(1-c2)...
+
+            decay = np.cumprod(1.0 - costs)
+            equity_gross = bt["equity"] / decay
+
+            # Plot
+            fig_drag = go.Figure()
+            fig_drag.add_trace(
+                go.Scatter(
+                    x=bt["dates"],
+                    y=equity_gross,
+                    mode="lines",
+                    name="Gross Equity (No Costs)",
+                    line=dict(color="gray", dash="dot", width=1),
+                )
+            )
+            fig_drag.add_trace(
+                go.Scatter(
+                    x=bt["dates"],
+                    y=bt["equity"],
+                    mode="lines",
+                    name="Net Equity",
+                    fill="tonexty",  # Fill to Gross
+                    line=dict(color="#636EFA"),
+                    fillcolor="rgba(239, 85, 59, 0.2)",  # Red-ish for cost
+                )
+            )
+            fig_drag.update_layout(
+                title="Transaction Cost Drag (Gross vs Net)",
+                yaxis_title="Equity",
+                template="plotly_white",
+                legend=dict(x=0, y=1),
+                margin=dict(l=40, r=20, t=40, b=40),
+            )
+            show_plot(fig_drag, key="bt-cost-drag")
+        else:
+            # Fallback (e.g. vectorized engine might not support cost tracking yet)
+            st.info("Cost breakdown not available for this engine mode.")
+
+            show_plot(
+                plot_drawdown(bt["dates"], bt["equity"], title="Drawdown"),
+                key=_bt_key("dd"),
+            )
 
     st.subheader("⚖️ Weights & Turnover")
     show_plot(

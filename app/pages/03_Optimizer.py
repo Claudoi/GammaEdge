@@ -29,6 +29,7 @@ from portfolio.core.utils import (
     hrp_safe,
     project_to_box_simplex,
 )
+from portfolio.optim.black_litterman import black_litterman_posterior, market_implied_prior
 from portfolio.optim.exposures import build_onehot_exposure
 from portfolio.optim.hrp import hrp_weights
 from portfolio.optim.mean_variance import (
@@ -118,6 +119,7 @@ with st.sidebar:
         [
             "Mean-Variance (L2)",
             "Mean-Variance (L1)",
+            "Black-Litterman",
             "Risk Parity",
             "HRP",
             "CVaR",
@@ -125,6 +127,45 @@ with st.sidebar:
         ],
         index=0,
     )
+
+    # Black-Litterman Views Settings
+    bl_views: list[tuple] = []
+    bl_tau = 0.05
+    bl_delta = 2.5
+
+    if mode == "Black-Litterman":
+        st.markdown("---")
+        st.subheader("Black-Litterman Views")
+        bl_tau = st.number_input("Tau (uncertainty scalar)", 0.001, 1.0, 0.05, 0.01)
+        bl_delta = st.number_input("Delta (market risk aversion)", 0.1, 10.0, 2.5, 0.1)
+
+        st.caption("Views Format: `Ticker > Ticker : Diff` or `Ticker = Return`")
+        views_txt = st.text_area(
+            "Views (one per line)", value="# Example:\n# AAPL > MSFT : 0.05\n# GOOGL = 0.20"
+        )
+
+        # Parse Views
+        if views_txt:
+            for line in views_txt.splitlines():
+                line = line.strip()
+                if not line or line.startswith("#"):
+                    continue
+                try:
+                    # Parse logic simple
+                    if ">" in line:
+                        parts = line.split(":")
+                        diff = float(parts[1].strip())
+                        assets = parts[0].split(">")
+                        long_a = assets[0].strip()
+                        short_a = assets[1].strip()
+                        bl_views.append(("relative", long_a, short_a, diff))
+                    elif "=" in line:
+                        parts = line.split("=")
+                        val = float(parts[1].strip())
+                        asset = parts[0].strip()
+                        bl_views.append(("absolute", asset, val))
+                except Exception:
+                    st.warning(f"Could not parse view: {line}")
 
     st.markdown("---")
     st.caption("Benchmark (for active / turnover)")
@@ -200,15 +241,79 @@ logger.log("returns_cleaned", n_rows=int(R_clean_pl.height), n_cols=int(len(R_cl
 w_out: np.ndarray | None = None
 diag: dict = {}
 
-if mode == "Mean-Variance (L2)":
+# ─────────────────────────────────────────────────────────────────────
+# Black-Litterman Pre-Process (if selected)
+# ─────────────────────────────────────────────────────────────────────
+mu_optim, Sigma_optim = mu, Sigma
+
+if mode == "Black-Litterman":
+    # 1. Market Implied Prior (approx using Equal Weight or current mu if wanted,
+    # but standard BL uses Market Caps. Here we assume Equal Weight 'Market' or rely on mu input as Prior?)
+    # usually BL starts with Pi = delta * Sigma * w_mkt.
+    # We will use Equal Weight as 'Market' reference for Prior if no market caps.
+    w_mkt = np.full(N, 1.0 / N)
+
+    # If user provided a benchmark in sidebar, use it as market
+    if "w_bench" in locals():
+        w_mkt = w_bench
+
+    Pi = market_implied_prior(Sigma, w_mkt, delta=bl_delta)
+
+    # 2. Build P, Q
+    # We need to map views to P matrix
+    if bl_views:
+        K = len(bl_views)
+        P = np.zeros((K, N))
+        Q = np.zeros(K)
+        # Map names
+        name_map = {n: i for i, n in enumerate(names)}
+
+        valid_views = True
+        for k, view in enumerate(bl_views):
+            vtype = view[0]
+            if vtype == "relative":
+                _, la, sa, val = view
+                if la in name_map and sa in name_map:
+                    P[k, name_map[la]] = 1.0
+                    P[k, name_map[sa]] = -1.0
+                    Q[k] = val
+                else:
+                    st.warning(f"Asset not found for view {k}: {la} or {sa}")
+                    valid_views = False
+            elif vtype == "absolute":
+                _, a, val = view
+                if a in name_map:
+                    P[k, name_map[a]] = 1.0
+                    Q[k] = val
+                else:
+                    st.warning(f"Asset not found for view {k}: {a}")
+                    valid_views = False
+
+        if valid_views:
+            # Confidences? We use default Idzorek via Omega=None (auto)
+            # or we could add UI for confidence. For now: assume user is sure-ish (Idzorek default or He-Litterman?)
+            # Implementation bl_posterior supports Idzorek if confidences passed, or He-Litterman if not.
+            # We passed neither, so it uses standard He-Litterman (Omega propto Sigma).
+            mu_bl, S_bl = black_litterman_posterior(Sigma, Pi, bl_tau, P, Q)
+            mu_optim = mu_bl
+            Sigma_optim = S_bl
+
+            st.success(f"Black-Litterman: Processed {K} views. Updated Expected Returns.")
+    else:
+        # No views -> BL = Prior (implied)
+        mu_optim = Pi
+        # Sigma unchanged usually, or scaled? Standard BL: mu=Pi.
+
+if mode == "Mean-Variance (L2)" or mode == "Black-Litterman":
+    # If BL, we use mu_optim, Sigma_optim
     gamma = st.slider("γ (risk aversion)", 0.1, 200.0, 10.0, 0.1)
     lam2 = st.slider("λ (L2 turnover to bench)", 0.0, 100.0, 0.0, 0.1)
     w_out = pgd_box_simplex_l2(
-        mu, Sigma, gamma, w_min=w_min, w_max=w_max, lam_turnover=lam2, w_ref=w_bench
+        mu_optim, Sigma_optim, gamma, w_min=w_min, w_max=w_max, lam_turnover=lam2, w_ref=w_bench
     )
     w_out = project_to_box_simplex(w_out, w_min, w_max)
     validate_weights(w_out, w_min, w_max)
-    logger.log("solution_ok", algo="MV_L2", gamma=gamma, lam2=lam2)
+    logger.log("solution_ok", algo="MV_L2_or_BL", gamma=gamma, lam2=lam2)
 
 elif mode == "Mean-Variance (L1)":
     gamma = st.slider("γ (risk aversion)", 0.1, 200.0, 10.0, 0.1)

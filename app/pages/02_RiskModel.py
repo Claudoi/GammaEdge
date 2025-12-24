@@ -25,6 +25,7 @@ from portfolio.features.risk_models import (
     pca_factor_cov,
 )
 from portfolio.io.cache import save_json
+from portfolio.optim.robust import clean_covariance_rmt
 from portfolio.viz.plot_utils import (
     HeatmapOrder,
     corr_dendrogram,
@@ -36,6 +37,7 @@ from portfolio.viz.plot_utils import (
     scree_plot,
     show_plot,
 )
+from portfolio.viz.rmt_plots import plot_eigenvalue_spectrum
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Config & guards
@@ -628,8 +630,40 @@ if st.session_state.get("risk_ready"):
         )
 
     # Covariance spectrum
-    st.subheader("Covariance spectrum")
-    show_plot(covariance_spectrum(Sigma), key="risk-cov-spectrum")
+    # Covariance spectrum with RMT overlay
+    st.subheader("Random Matrix Theory: Signal vs Noise")
+
+    # RMT Calc
+    T_obs = int(df_ret_wide.height)
+    N_assets = len(names)
+
+    # 1. Spectrum Plot
+    st.markdown("#### Eigenvalue Spectrum (Marcenko-Pastur)")
+    fig_rmt = plot_eigenvalue_spectrum(Sigma, T=T_obs, N=N_assets)
+    show_plot(fig_rmt, key="risk-rmt-spectrum")
+
+    # 2. Denoising
+    st.markdown("#### RMT Denoising")
+    apply_rmt = st.toggle("Show RMT-Cleaned Correlation Heatmap", value=False)
+
+    if apply_rmt:
+        Sigma_clean = clean_covariance_rmt(Sigma, T=T_obs, N=N_assets)
+        show_plot(
+            corr_heatmap(
+                Sigma_clean,
+                labels=names,
+                is_cov=True,
+                order=order_cfg,
+                title="RMT Cleaned Correlation",
+            ),
+            key="risk-heatmap-rmt",
+        )
+    else:
+        st.info("Toggle above to clean the matrix using Marcenko-Pastur filtering.")
+
+    # Standard Spectrum (legacy)
+    with st.expander("Legacy Spectrum View"):
+        show_plot(covariance_spectrum(Sigma), key="risk-cov-spectrum")
 
     # Scree plot
     st.subheader("Scree Plot (explained variance)")
