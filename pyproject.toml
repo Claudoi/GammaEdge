@@ -37,6 +37,7 @@ fastapi = ">=0.112.0"
 uvicorn = { version = ">=0.30.0", extras = ["standard"] }
 pyyaml = ">=6.0.1"
 reportlab = "^4.4.4"
+openpyxl = ">=3.1.0"
 typing-extensions = ">=4.6"                      # Necesario en py310; no molesta en 3.11
 
 # ── EXTRAS OPCIONALES ──────────────────────────────────────────────────────────
