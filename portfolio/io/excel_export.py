@@ -79,14 +79,21 @@ def export_quant_metrics_to_excel(
     # 1. Download data
     all_tickers = list(set(tickers + [benchmark]))
     df_prices = _download_prices(all_tickers, start, end)
-    
-    # Debug: print what we got
-    if not df_prices.is_empty():
 
     if df_prices.is_empty():
         raise ValueError(
             f"No price data downloaded for tickers: {tickers}. "
             f"Please check ticker symbols and date range ({start} to {end})."
+        )
+
+    # Validate that we have data for the requested tickers (not just benchmark)
+    ticker_columns = [f"adj_close_{t}" for t in tickers]
+    missing_tickers = [t for t in tickers if f"adj_close_{t}" not in df_prices.columns]
+    
+    if missing_tickers:
+        raise ValueError(
+            f"No data found for ticker(s): {', '.join(missing_tickers)}. "
+            f"Please verify ticker symbols are correct."
         )
 
     # 2. Calculate returns
@@ -209,6 +216,7 @@ def export_quant_metrics_to_excel(
             corr_result["sample_sizes"],
         )
     else:
+        pass  # No correlation sheet for single ticker
 
     # 9. Save or return bytes
     if output_format == "path":
