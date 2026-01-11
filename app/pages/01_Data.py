@@ -32,7 +32,7 @@ from portfolio.features.returns import (
 )
 from portfolio.io.cache import age_seconds, cache_path, invalidate, load_pl, save_json, save_pl
 from portfolio.io.data_loader import get_prices_long
-from portfolio.io.excel_export import export_quant_metrics_to_excel, get_quant_metrics_summary
+from portfolio.io.excel_export import export_quant_metrics_to_excel
 from portfolio.viz.plot_utils import show_plot
 
 
@@ -973,30 +973,17 @@ if st.session_state.get("data_ready"):
 
     with col_preview:
         if st.button("Preview Quant Metrics", key="preview_quant"):
-            with st.spinner("Calculating metrics..."):
-                try:
-                    # Parse tickers from input
-                    quant_tickers = [
-                        t.strip().upper() for t in quant_tickers_input.split(",") if t.strip()
-                    ]
-
-                    if not quant_tickers:
-                        st.warning("Please enter at least one ticker.")
-                    else:
-                        summary = get_quant_metrics_summary(
-                            quant_tickers,
-                            start=str(quant_start_date),
-                            end=str(quant_end_date),
-                        )
-                        if summary.height > 0:
-                            st.dataframe(
-                                summary.to_pandas().round(6),
-                                width="stretch",
-                            )
-                        else:
-                            st.warning("No data available for the selected tickers and date range.")
-                except Exception as e:
-                    st.error(f"Error generating preview: {e}")
+                    # Preview functionality temporarily disabled
+                    # Will be re-enabled in Sprint 3 with new UI/UX enhancements
+                    st.info("📊 Preview will be available after Sprint 3 implementation")
+                    
+                    # TODO: Implement preview with:
+                    # - Data Quality Table
+                    # - Price Chart (normalized to 100)
+                    # - Returns Distribution
+                    # - Rolling Volatility
+                    # - Correlation Heatmap
+                    # - Metrics Summary Table
 
     with col_download:
         if st.button("Generate Excel Export", type="primary", key="gen_excel"):
@@ -1010,15 +997,16 @@ if st.session_state.get("data_ready"):
                     if not quant_tickers:
                         st.warning("Please enter at least one ticker.")
                     else:
+                        # Call new export function with simplified signature
                         excel_bytes = export_quant_metrics_to_excel(
-                            quant_tickers,
+                            tickers=quant_tickers,
                             start=str(quant_start_date),
                             end=str(quant_end_date),
-                            volume_lookback=int(vol_lookback),
-                            volatility_method=vol_method,
+                            benchmark="SPY",  # Default benchmark
+                            rf_annual=0.02,   # Default risk-free rate
                         )
                         st.session_state["quant_excel_bytes"] = excel_bytes
-                        st.success("Excel file generated successfully!")
+                        st.success("✅ Excel file generated successfully!")
                 except Exception as e:
                     st.error(f"Error generating Excel: {e}")
 
