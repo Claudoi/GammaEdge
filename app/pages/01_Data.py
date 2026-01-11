@@ -12,7 +12,9 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 
+
 import numpy as np
+import pandas as pd
 import plotly.express as px
 import polars as pl
 import streamlit as st
@@ -32,7 +34,14 @@ from portfolio.features.returns import (
 )
 from portfolio.io.cache import age_seconds, cache_path, invalidate, load_pl, save_json, save_pl
 from portfolio.io.data_loader import get_prices_long
-from portfolio.io.excel_export import export_quant_metrics_to_excel, get_quant_metrics_summary
+from portfolio.io.excel_export import export_quant_metrics_to_excel
+from portfolio.features.quant_preview import generate_metrics_summary
+from portfolio.features.quant_charts import (
+    generate_equity_curve_normalized,
+    generate_drawdown_chart,
+    generate_rolling_volatility,
+    generate_correlation_heatmap_preview,
+)
 from portfolio.viz.plot_utils import show_plot
 
 
@@ -973,30 +982,116 @@ if st.session_state.get("data_ready"):
 
     with col_preview:
         if st.button("Preview Quant Metrics", key="preview_quant"):
-            with st.spinner("Calculating metrics..."):
+            with st.spinner("Downloading data and calculating metrics..."):
                 try:
                     # Parse tickers from input
                     quant_tickers = [
                         t.strip().upper() for t in quant_tickers_input.split(",") if t.strip()
                     ]
-
+                    
                     if not quant_tickers:
                         st.warning("Please enter at least one ticker.")
                     else:
-                        summary = get_quant_metrics_summary(
-                            quant_tickers,
+                        # Generate metrics summary
+                        result = generate_metrics_summary(
+                            tickers=quant_tickers,
                             start=str(quant_start_date),
                             end=str(quant_end_date),
+                            benchmark="SPY",
+                            rf_annual=0.02,
                         )
-                        if summary.height > 0:
-                            st.dataframe(
-                                summary.to_pandas().round(6),
-                                width="stretch",
-                            )
+                        
+                        # Display summary table
+                        st.subheader("📊 Metrics Summary")
+                        summary_df = result["summary_df"]
+                        
+                        # Format for display (convert to pandas for better formatting)
+                        summary_pd = summary_df.to_pandas()
+                        
+                        # Format numeric columns to 4 decimal places
+                        numeric_cols = [
+                            "total_return", "volatility", "sharpe_ratio", "beta", 
+                            "alpha", "max_drawdown", "cagr", "calmar", "skewness", "kurtosis"
+                        ]
+                        for col in numeric_cols:
+                            if col in summary_pd.columns:
+                                summary_pd[col] = summary_pd[col].apply(
+                                    lambda x: f"{x:.4f}" if pd.notna(x) else "N/A"
+                                )
+                        
+                        st.dataframe(summary_pd, use_container_width=True)
+                        
+                        # Display data quality table
+                        st.subheader("🔍 Data Quality Report")
+                        data_quality_df = result["data_quality_df"]
+                        st.dataframe(data_quality_df.to_pandas(), use_container_width=True)
+                        
+                        # Display warnings if any
+                        if result["warnings"]:
+                            st.warning("⚠️ **Warnings:**")
+                            for warning in result["warnings"]:
+                                st.caption(f"• {warning}")
                         else:
-                            st.warning("No data available for the selected tickers and date range.")
+                            st.success("✅ No data quality issues detected")
+                        
+                        # Visual Analysis Section
+                        st.subheader("📈 Visual Analysis")
+                        
+                        tab1, tab2, tab3, tab4 = st.tabs([
+                            "📈 Equity Curves",
+                            "📉 Drawdown",
+                            "📊 Rolling Volatility",
+                            "🔥 Correlation"
+                        ])
+                        
+                        with tab1:
+                            try:
+                                fig = generate_equity_curve_normalized(
+                                    result["df_prices"],
+                                    quant_tickers,
+                                    benchmark="SPY"
+                                )
+                                show_plot(fig, key="quant_equity")
+                            except Exception as e:
+                                st.error(f"Error generating equity curve: {e}")
+                        
+                        with tab2:
+                            try:
+                                fig = generate_drawdown_chart(
+                                    result["df_prices"],
+                                    quant_tickers
+                                )
+                                show_plot(fig, key="quant_drawdown")
+                            except Exception as e:
+                                st.error(f"Error generating drawdown chart: {e}")
+                        
+                        with tab3:
+                            try:
+                                fig = generate_rolling_volatility(
+                                    result["df_returns"],
+                                    quant_tickers,
+                                    window=30
+                                )
+                                show_plot(fig, key="quant_rolling_vol")
+                            except Exception as e:
+                                st.error(f"Error generating rolling volatility: {e}")
+                        
+                        with tab4:
+                            try:
+                                fig = generate_correlation_heatmap_preview(
+                                    result["df_returns"],
+                                    quant_tickers
+                                )
+                                show_plot(fig, key="quant_corr_heatmap")
+                            except Exception as e:
+                                st.error(f"Error generating correlation heatmap: {e}")
+                            
+                except ValueError as e:
+                    st.error(f"Error: {e}")
                 except Exception as e:
-                    st.error(f"Error generating preview: {e}")
+                    st.error(f"Unexpected error: {e}")
+                    import traceback
+                    st.code(traceback.format_exc())
 
     with col_download:
         if st.button("Generate Excel Export", type="primary", key="gen_excel"):
@@ -1010,15 +1105,16 @@ if st.session_state.get("data_ready"):
                     if not quant_tickers:
                         st.warning("Please enter at least one ticker.")
                     else:
+                        # Call new export function with simplified signature
                         excel_bytes = export_quant_metrics_to_excel(
-                            quant_tickers,
+                            tickers=quant_tickers,
                             start=str(quant_start_date),
                             end=str(quant_end_date),
-                            volume_lookback=int(vol_lookback),
-                            volatility_method=vol_method,
+                            benchmark="SPY",  # Default benchmark
+                            rf_annual=0.02,   # Default risk-free rate
                         )
                         st.session_state["quant_excel_bytes"] = excel_bytes
-                        st.success("Excel file generated successfully!")
+                        st.success("✅ Excel file generated successfully!")
                 except Exception as e:
                     st.error(f"Error generating Excel: {e}")
 
