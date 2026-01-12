@@ -817,3 +817,333 @@ def calculate_data_quality(
         "missing_blocks": missing_blocks,
         "warnings": warnings,
     }
+
+
+# ============================================================================
+# Sortino Ratio (Downside Risk Focus)
+# ============================================================================
+
+
+def calculate_sortino_ratio(
+    returns: pl.Series,
+    rf_annual: float = RF_ANNUAL_DEFAULT,
+    target_return: float = 0.0,
+    min_obs: int = 60,
+    annualize: bool = True,
+) -> dict[str, float | None]:
+    """
+    Calculate Sortino Ratio (penalizes only downside volatility).
+
+    Formula: Sortino = (mean_return - target) / downside_deviation
+
+    Args:
+        returns: Return series
+        rf_annual: Annual risk-free rate
+        target_return: Target return threshold (default: 0)
+        min_obs: Minimum observations required
+        annualize: Whether to annualize the ratio
+
+    Returns:
+        {
+            "sortino_ratio": float | None,
+            "downside_deviation": float | None,
+            "warning": str | None,
+        }
+
+    Notes:
+        - Only penalizes volatility below target return
+        - Better than Sharpe for assets with positive skew
+        - Downside deviation uses only returns < target
+
+    Example:
+        >>> result = calculate_sortino_ratio(returns, rf_annual=0.02)
+        >>> print(result["sortino_ratio"])  # 1.45
+    """
+    r = returns.drop_nulls().to_numpy()
+
+    if r.size < min_obs:
+        return {
+            "sortino_ratio": None,
+            "downside_deviation": None,
+            "warning": f"Insufficient data for Sortino ({r.size} < {min_obs})",
+        }
+
+    # Calculate excess returns
+    rf_daily = (1 + rf_annual) ** (1 / TRADING_DAYS_PER_YEAR) - 1
+    excess_returns = r - rf_daily
+
+    # Downside deviation (only negative excess returns)
+    downside_returns = excess_returns[excess_returns < target_return]
+
+    if downside_returns.size < 2:
+        return {
+            "sortino_ratio": None,
+            "downside_deviation": None,
+            "warning": "No downside returns for Sortino calculation",
+        }
+
+    downside_dev = np.std(downside_returns, ddof=1)
+
+    if downside_dev < 1e-10:
+        return {
+            "sortino_ratio": None,
+            "downside_deviation": 0.0,
+            "warning": "Zero downside deviation",
+        }
+
+    # Calculate Sortino
+    mean_excess = np.mean(excess_returns)
+    sortino = mean_excess / downside_dev
+
+    if annualize:
+        sortino *= np.sqrt(TRADING_DAYS_PER_YEAR)
+        downside_dev_ann = downside_dev * np.sqrt(TRADING_DAYS_PER_YEAR)
+    else:
+        downside_dev_ann = downside_dev
+
+    return {
+        "sortino_ratio": float(sortino),
+        "downside_deviation": float(downside_dev_ann),
+        "warning": None,
+    }
+
+
+# ============================================================================
+# Information Ratio (vs Benchmark)
+# ============================================================================
+
+
+def calculate_information_ratio(
+    returns: pl.Series,
+    benchmark_returns: pl.Series,
+    dates: pl.Series,
+    benchmark_dates: pl.Series,
+    min_obs: int = 30,
+) -> dict[str, float | None]:
+    """
+    Calculate Information Ratio (excess return / tracking error).
+
+    Formula: IR = (R_p - R_b) / σ(R_p - R_b)
+
+    Args:
+        returns: Portfolio/ticker returns
+        benchmark_returns: Benchmark returns
+        dates: Portfolio dates
+        benchmark_dates: Benchmark dates
+        min_obs: Minimum observations required
+
+    Returns:
+        {
+            "information_ratio": float | None,
+            "tracking_error": float | None (annualized),
+            "excess_return_annual": float | None,
+            "data_loss_pct": float,
+            "warning": str | None,
+        }
+
+    Notes:
+        - Measures manager skill vs benchmark
+        - IR > 0.5 is good, > 1.0 is excellent
+        - Tracking error is annualized std of excess returns
+
+    Example:
+        >>> result = calculate_information_ratio(aapl_ret, spy_ret, dates, bench_dates)
+        >>> print(result["information_ratio"])  # 0.82
+    """
+    # Align dates (inner join)
+    d_ticker = _as_pl_date(dates).alias("date")
+    d_bench = _as_pl_date(benchmark_dates).alias("date")
+
+    df_ticker = pl.DataFrame({"date": d_ticker, "ret": returns})
+    df_benchmark = pl.DataFrame({"date": d_bench, "ret_bench": benchmark_returns})
+
+    df_aligned = df_ticker.join(df_benchmark, on="date", how="inner")
+
+    n_aligned = df_aligned.height
+    n_original = len(dates)
+    data_loss_pct = 100.0 * (1.0 - n_aligned / max(n_original, 1))
+
+    if n_aligned < min_obs:
+        return {
+            "information_ratio": None,
+            "tracking_error": None,
+            "excess_return_annual": None,
+            "data_loss_pct": data_loss_pct,
+            "warning": f"Insufficient aligned data ({n_aligned} < {min_obs})",
+        }
+
+    # Calculate excess returns
+    r_p = df_aligned["ret"].to_numpy()
+    r_b = df_aligned["ret_bench"].to_numpy()
+    excess = r_p - r_b
+
+    # Tracking error (annualized)
+    tracking_error = np.std(excess, ddof=1) * np.sqrt(TRADING_DAYS_PER_YEAR)
+
+    if tracking_error < 1e-10:
+        return {
+            "information_ratio": None,
+            "tracking_error": 0.0,
+            "excess_return_annual": float(np.mean(excess) * TRADING_DAYS_PER_YEAR),
+            "data_loss_pct": data_loss_pct,
+            "warning": "Zero tracking error (identical to benchmark)",
+        }
+
+    # Information Ratio
+    excess_return_annual = np.mean(excess) * TRADING_DAYS_PER_YEAR
+    information_ratio = excess_return_annual / tracking_error
+
+    return {
+        "information_ratio": float(information_ratio),
+        "tracking_error": float(tracking_error),
+        "excess_return_annual": float(excess_return_annual),
+        "data_loss_pct": data_loss_pct,
+        "warning": None,
+    }
+
+
+# ============================================================================
+# Tail Ratio (Upside/Downside Tails)
+# ============================================================================
+
+
+def calculate_tail_ratio(
+    returns: pl.Series,
+    percentile: float = 0.95,
+) -> dict[str, float]:
+    """
+    Calculate Tail Ratio (upside tail / downside tail).
+
+    Formula: Tail Ratio = abs(95th percentile) / abs(5th percentile)
+
+    Args:
+        returns: Return series
+        percentile: Percentile for tail definition (default: 0.95)
+
+    Returns:
+        {
+            "tail_ratio": float,
+            "upside_tail": float (95th percentile),
+            "downside_tail": float (5th percentile),
+        }
+
+    Notes:
+        - Tail Ratio > 1: Upside tails dominate (good)
+        - Tail Ratio < 1: Downside tails dominate (bad)
+        - Complements skewness with interpretable metric
+
+    Example:
+        >>> result = calculate_tail_ratio(returns)
+        >>> print(result["tail_ratio"])  # 1.18 (upside tails 18% larger)
+    """
+    r = returns.drop_nulls().to_numpy()
+
+    if r.size < 20:
+        return {
+            "tail_ratio": np.nan,
+            "upside_tail": np.nan,
+            "downside_tail": np.nan,
+        }
+
+    # Calculate percentiles
+    upside_tail = float(np.percentile(r, percentile * 100))
+    downside_tail = float(np.percentile(r, (1 - percentile) * 100))
+
+    # Tail ratio
+    if abs(downside_tail) < 1e-10:
+        tail_ratio = np.nan
+    else:
+        tail_ratio = abs(upside_tail) / abs(downside_tail)
+
+    return {
+        "tail_ratio": float(tail_ratio),
+        "upside_tail": upside_tail,
+        "downside_tail": downside_tail,
+    }
+
+
+# ============================================================================
+# Win Metrics (Win Rate, Profit Factor, Avg Win/Loss)
+# ============================================================================
+
+
+def calculate_win_metrics(
+    returns: pl.Series,
+) -> dict[str, float]:
+    """
+    Calculate win-based metrics (popular in trading systems).
+
+    Metrics:
+        - Win Rate: % of positive return days
+        - Profit Factor: sum(gains) / abs(sum(losses))
+        - Avg Win/Loss Ratio: mean(wins) / abs(mean(losses))
+
+    Args:
+        returns: Return series
+
+    Returns:
+        {
+            "win_rate": float (0-100%),
+            "profit_factor": float,
+            "avg_win_loss_ratio": float,
+            "total_wins": int,
+            "total_losses": int,
+        }
+
+    Notes:
+        - Win Rate > 50%: More winning days than losing
+        - Profit Factor > 1: Profitable overall
+        - Avg Win/Loss > 1: Wins larger than losses on average
+
+    Example:
+        >>> result = calculate_win_metrics(returns)
+        >>> print(result["win_rate"])  # 54.2%
+        >>> print(result["profit_factor"])  # 1.35
+    """
+    r = returns.drop_nulls().to_numpy()
+
+    if r.size == 0:
+        return {
+            "win_rate": np.nan,
+            "profit_factor": np.nan,
+            "avg_win_loss_ratio": np.nan,
+            "total_wins": 0,
+            "total_losses": 0,
+        }
+
+    # Separate wins and losses
+    wins = r[r > 0]
+    losses = r[r < 0]
+
+    total_wins = int(wins.size)
+    total_losses = int(losses.size)
+    total_days = r.size
+
+    # Win Rate
+    win_rate = (total_wins / total_days * 100) if total_days > 0 else 0.0
+
+    # Profit Factor
+    sum_wins = np.sum(wins) if wins.size > 0 else 0.0
+    sum_losses = abs(np.sum(losses)) if losses.size > 0 else 0.0
+
+    if sum_losses < 1e-10:
+        profit_factor = np.inf if sum_wins > 0 else np.nan
+    else:
+        profit_factor = sum_wins / sum_losses
+
+    # Avg Win/Loss Ratio
+    avg_win = np.mean(wins) if wins.size > 0 else 0.0
+    avg_loss = abs(np.mean(losses)) if losses.size > 0 else 0.0
+
+    if avg_loss < 1e-10:
+        avg_win_loss_ratio = np.inf if avg_win > 0 else np.nan
+    else:
+        avg_win_loss_ratio = avg_win / avg_loss
+
+    return {
+        "win_rate": float(win_rate),
+        "profit_factor": float(profit_factor),
+        "avg_win_loss_ratio": float(avg_win_loss_ratio),
+        "total_wins": total_wins,
+        "total_losses": total_losses,
+    }

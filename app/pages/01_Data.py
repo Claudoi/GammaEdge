@@ -977,6 +977,37 @@ if st.session_state.get("data_ready"):
                 key="vol_method",
                 help="Parkinson uses High-Low; Garman-Klass uses OHLC.",
             )
+        
+        # Benchmark selector
+        st.markdown("**Benchmark Selection**")
+        col_bench, col_custom = st.columns([2, 2])
+        with col_bench:
+            benchmark_preset = st.selectbox(
+                "Benchmark",
+                options=["SPY (S&P 500)", "QQQ (Nasdaq 100)", "IWM (Russell 2000)", 
+                         "AGG (US Bonds)", "GLD (Gold)", "Custom"],
+                index=0,
+                key="benchmark_preset",
+                help="Select benchmark for beta/alpha/IR calculations",
+            )
+        
+        with col_custom:
+            if "Custom" in benchmark_preset:
+                benchmark_ticker = st.text_input(
+                    "Custom Benchmark Ticker",
+                    value="SPY",
+                    key="custom_benchmark",
+                    help="Enter custom benchmark ticker symbol",
+                )
+            else:
+                # Extract ticker from preset (e.g., "SPY (S&P 500)" -> "SPY")
+                benchmark_ticker = benchmark_preset.split(" ")[0]
+                st.text_input(
+                    "Selected Benchmark",
+                    value=benchmark_ticker,
+                    disabled=True,
+                    key="selected_benchmark_display",
+                )
 
     col_preview, col_download = st.columns([1, 1])
 
@@ -992,12 +1023,12 @@ if st.session_state.get("data_ready"):
                     if not quant_tickers:
                         st.warning("Please enter at least one ticker.")
                     else:
-                        # Generate metrics summary
+                        # Generate metrics summary (with selected benchmark)
                         result = generate_metrics_summary(
                             tickers=quant_tickers,
                             start=str(quant_start_date),
                             end=str(quant_end_date),
-                            benchmark="SPY",
+                            benchmark=benchmark_ticker,  # Use selected benchmark
                             rf_annual=0.02,
                         )
                         
@@ -1010,8 +1041,10 @@ if st.session_state.get("data_ready"):
                         
                         # Format numeric columns to 4 decimal places
                         numeric_cols = [
-                            "total_return", "volatility", "sharpe_ratio", "beta", 
-                            "alpha", "max_drawdown", "cagr", "calmar", "skewness", "kurtosis"
+                            "total_return", "volatility", "sharpe_ratio", "sortino_ratio",
+                            "information_ratio", "beta", "alpha", "max_drawdown", "cagr", 
+                            "calmar", "tail_ratio", "win_rate", "profit_factor", 
+                            "skewness", "kurtosis"
                         ]
                         for col in numeric_cols:
                             if col in summary_pd.columns:
@@ -1110,7 +1143,7 @@ if st.session_state.get("data_ready"):
                             tickers=quant_tickers,
                             start=str(quant_start_date),
                             end=str(quant_end_date),
-                            benchmark="SPY",  # Default benchmark
+                            benchmark=benchmark_ticker,  # Use selected benchmark
                             rf_annual=0.02,   # Default risk-free rate
                         )
                         st.session_state["quant_excel_bytes"] = excel_bytes
