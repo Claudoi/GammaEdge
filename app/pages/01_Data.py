@@ -41,6 +41,9 @@ from portfolio.features.quant_charts import (
     generate_drawdown_chart,
     generate_rolling_volatility,
     generate_correlation_heatmap_preview,
+    generate_rolling_sharpe,
+    generate_returns_distribution,
+    generate_monthly_returns_bar,
 )
 from portfolio.viz.plot_utils import show_plot
 
@@ -1042,8 +1045,10 @@ if st.session_state.get("data_ready"):
                         # Format numeric columns to 4 decimal places
                         numeric_cols = [
                             "total_return", "volatility", "sharpe_ratio", "sortino_ratio",
-                            "information_ratio", "beta", "alpha", "max_drawdown", "cagr", 
-                            "calmar", "tail_ratio", "win_rate", "profit_factor", 
+                            "treynor_ratio", "information_ratio", "beta", "alpha", 
+                            "max_drawdown", "ulcer_index", "cagr", "calmar", 
+                            "up_capture", "down_capture", "tail_ratio", "win_rate", 
+                            "profit_factor", "best_month", "worst_month",
                             "skewness", "kurtosis"
                         ]
                         for col in numeric_cols:
@@ -1070,10 +1075,13 @@ if st.session_state.get("data_ready"):
                         # Visual Analysis Section
                         st.subheader("📈 Visual Analysis")
                         
-                        tab1, tab2, tab3, tab4 = st.tabs([
+                        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
                             "📈 Equity Curves",
                             "📉 Drawdown",
-                            "📊 Rolling Volatility",
+                            "📊 Rolling Vol",
+                            "📈 Rolling Sharpe",
+                            "📊 Returns Dist",
+                            "📊 Monthly Returns",
                             "🔥 Correlation"
                         ])
                         
@@ -1082,7 +1090,7 @@ if st.session_state.get("data_ready"):
                                 fig = generate_equity_curve_normalized(
                                     result["df_prices"],
                                     quant_tickers,
-                                    benchmark="SPY"
+                                    benchmark=benchmark_ticker
                                 )
                                 show_plot(fig, key="quant_equity")
                             except Exception as e:
@@ -1110,6 +1118,38 @@ if st.session_state.get("data_ready"):
                                 st.error(f"Error generating rolling volatility: {e}")
                         
                         with tab4:
+                            try:
+                                fig = generate_rolling_sharpe(
+                                    result["df_returns"],
+                                    quant_tickers,
+                                    window=252,
+                                    rf_annual=0.02
+                                )
+                                show_plot(fig, key="quant_rolling_sharpe")
+                            except Exception as e:
+                                st.error(f"Error generating rolling Sharpe: {e}")
+                        
+                        with tab5:
+                            try:
+                                fig = generate_returns_distribution(
+                                    result["df_returns"],
+                                    quant_tickers
+                                )
+                                show_plot(fig, key="quant_returns_dist")
+                            except Exception as e:
+                                st.error(f"Error generating returns distribution: {e}")
+                        
+                        with tab6:
+                            try:
+                                fig = generate_monthly_returns_bar(
+                                    result["df_returns"],
+                                    quant_tickers
+                                )
+                                show_plot(fig, key="quant_monthly_returns")
+                            except Exception as e:
+                                st.error(f"Error generating monthly returns: {e}")
+                        
+                        with tab7:
                             try:
                                 fig = generate_correlation_heatmap_preview(
                                     result["df_returns"],

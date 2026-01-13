@@ -1147,3 +1147,384 @@ def calculate_win_metrics(
         "total_wins": total_wins,
         "total_losses": total_losses,
     }
+
+
+# ============================================================================
+# Ulcer Index (Pain Index)
+# ============================================================================
+
+
+def calculate_ulcer_index(
+    prices: pl.Series,
+    dates: pl.Series | None = None,
+) -> dict[str, float]:
+    """
+    Calculate Ulcer Index (Peter Martin's pain index).
+
+    Formula: Ulcer Index = sqrt(mean(drawdown²))
+
+    Args:
+        prices: Price series (adjusted close)
+        dates: Optional date series
+
+    Returns:
+        {
+            "ulcer_index": float,  # Percentage
+            "avg_drawdown": float,  # Average drawdown
+            "max_drawdown": float,  # For reference
+        }
+
+    Notes:
+        - Measures depth AND duration of drawdowns
+        - More sensitive than MDD to prolonged drawdowns
+        - Lower is better (< 5% is excellent)
+        - Used by Peter Martin in mutual fund analysis
+
+    Example:
+        >>> result = calculate_ulcer_index(prices)
+        >>> print(result["ulcer_index"])  # 3.2% (low pain)
+    """
+    p = prices.to_numpy()
+    p = p[~np.isnan(p)]
+
+    if len(p) == 0:
+        return {
+            "ulcer_index": np.nan,
+            "avg_drawdown": np.nan,
+            "max_drawdown": np.nan,
+        }
+
+    # Calculate running maximum (peak)
+    running_max = np.maximum.accumulate(p)
+
+    # Drawdown at each point (as percentage)
+    drawdown = ((p / running_max) - 1.0) * 100  # Convert to percentage
+
+    # Ulcer Index = sqrt(mean(drawdown²))
+    drawdown_squared = drawdown ** 2
+    ulcer_index = np.sqrt(np.mean(drawdown_squared))
+
+    # Average drawdown
+    avg_drawdown = np.mean(drawdown)
+
+    # Max drawdown (for reference)
+    max_drawdown = np.min(drawdown)
+
+    return {
+        "ulcer_index": float(ulcer_index),
+        "avg_drawdown": float(avg_drawdown),
+        "max_drawdown": float(max_drawdown),
+    }
+
+
+# ============================================================================
+# Treynor Ratio (Return per unit of systematic risk)
+# ============================================================================
+
+
+def calculate_treynor_ratio(
+    returns: pl.Series,
+    beta: float,
+    rf_annual: float = RF_ANNUAL_DEFAULT,
+    min_obs: int = 60,
+) -> dict[str, float | None]:
+    """
+    Calculate Treynor Ratio (return per unit of systematic risk).
+
+    Formula: Treynor = (R - Rf) / Beta
+
+    Args:
+        returns: Return series
+        beta: Beta vs benchmark
+        rf_annual: Annual risk-free rate
+        min_obs: Minimum observations required
+
+    Returns:
+        {
+            "treynor_ratio": float | None,
+            "excess_return_annual": float,
+            "warning": str | None,
+        }
+
+    Notes:
+        - Sharpe uses total volatility
+        - Treynor uses only systematic risk (Beta)
+        - Better for well-diversified portfolios
+        - If Beta < 1 and Treynor > Sharpe → excellent
+
+    Example:
+        >>> result = calculate_treynor_ratio(returns, beta=1.05)
+        >>> print(result["treynor_ratio"])  # 0.152 (15.2% per unit beta)
+    """
+    r = returns.drop_nulls().to_numpy()
+
+    if r.size < min_obs:
+        return {
+            "treynor_ratio": None,
+            "excess_return_annual": None,
+            "warning": f"Insufficient data ({r.size} < {min_obs})",
+        }
+
+    if beta is None or abs(beta) < 1e-10:
+        return {
+            "treynor_ratio": None,
+            "excess_return_annual": None,
+            "warning": "Beta is zero or None",
+        }
+
+    # Calculate excess return
+    rf_daily = (1 + rf_annual) ** (1 / TRADING_DAYS_PER_YEAR) - 1
+    excess_returns = r - rf_daily
+    mean_excess = np.mean(excess_returns)
+
+    # Annualize
+    excess_return_annual = mean_excess * TRADING_DAYS_PER_YEAR
+
+    # Treynor Ratio
+    treynor = excess_return_annual / beta
+
+    return {
+        "treynor_ratio": float(treynor),
+        "excess_return_annual": float(excess_return_annual),
+        "warning": None,
+    }
+
+
+# ============================================================================
+# Up/Down Capture Ratios (Asymmetry vs Benchmark)
+# ============================================================================
+
+
+def calculate_capture_ratios(
+    returns: pl.Series,
+    benchmark_returns: pl.Series,
+    dates: pl.Series,
+    benchmark_dates: pl.Series,
+    min_obs: int = 30,
+) -> dict[str, float | None]:
+    """
+    Calculate Up/Down Capture Ratios (asymmetry vs benchmark).
+
+    Formulas:
+        Up Capture = mean(R_p | R_b > 0) / mean(R_b | R_b > 0) × 100
+        Down Capture = mean(R_p | R_b < 0) / mean(R_b | R_b < 0) × 100
+
+    Args:
+        returns: Portfolio/ticker returns
+        benchmark_returns: Benchmark returns
+        dates: Portfolio dates
+        benchmark_dates: Benchmark dates
+        min_obs: Minimum observations required
+
+    Returns:
+        {
+            "up_capture": float | None (percentage),
+            "down_capture": float | None (percentage),
+            "capture_ratio": float | None (up/down),
+            "n_up_months": int,
+            "n_down_months": int,
+            "warning": str | None,
+        }
+
+    Notes:
+        - Up Capture > 100%: Outperform in bull markets
+        - Down Capture < 100%: Protect in bear markets
+        - Ideal: Up > 100%, Down < 100%
+        - Capture Ratio = Up / Down (higher is better)
+
+    Example:
+        >>> result = calculate_capture_ratios(aapl_ret, spy_ret, dates, bench_dates)
+        >>> print(f"Up: {result['up_capture']:.1f}%, Down: {result['down_capture']:.1f}%")
+        # Up: 105.2%, Down: 92.3% (excellent!)
+    """
+    # Align dates (inner join)
+    d_ticker = _as_pl_date(dates).alias("date")
+    d_bench = _as_pl_date(benchmark_dates).alias("date")
+
+    df_ticker = pl.DataFrame({"date": d_ticker, "ret": returns})
+    df_benchmark = pl.DataFrame({"date": d_bench, "ret_bench": benchmark_returns})
+
+    df_aligned = df_ticker.join(df_benchmark, on="date", how="inner")
+
+    n_aligned = df_aligned.height
+
+    if n_aligned < min_obs:
+        return {
+            "up_capture": None,
+            "down_capture": None,
+            "capture_ratio": None,
+            "n_up_months": 0,
+            "n_down_months": 0,
+            "warning": f"Insufficient aligned data ({n_aligned} < {min_obs})",
+        }
+
+    # Extract returns
+    r_p = df_aligned["ret"].to_numpy()
+    r_b = df_aligned["ret_bench"].to_numpy()
+
+    # Separate up/down markets
+    up_mask = r_b > 0
+    down_mask = r_b < 0
+
+    r_p_up = r_p[up_mask]
+    r_b_up = r_b[up_mask]
+
+    r_p_down = r_p[down_mask]
+    r_b_down = r_b[down_mask]
+
+    n_up = int(np.sum(up_mask))
+    n_down = int(np.sum(down_mask))
+
+    # Up Capture
+    if n_up < 2:
+        up_capture = None
+    else:
+        mean_p_up = np.mean(r_p_up)
+        mean_b_up = np.mean(r_b_up)
+        if abs(mean_b_up) < 1e-10:
+            up_capture = None
+        else:
+            up_capture = (mean_p_up / mean_b_up) * 100
+
+    # Down Capture
+    if n_down < 2:
+        down_capture = None
+    else:
+        mean_p_down = np.mean(r_p_down)
+        mean_b_down = np.mean(r_b_down)
+        if abs(mean_b_down) < 1e-10:
+            down_capture = None
+        else:
+            down_capture = (mean_p_down / mean_b_down) * 100
+
+    # Capture Ratio
+    if up_capture is not None and down_capture is not None and abs(down_capture) > 1e-10:
+        capture_ratio = up_capture / down_capture
+    else:
+        capture_ratio = None
+
+    return {
+        "up_capture": float(up_capture) if up_capture is not None else None,
+        "down_capture": float(down_capture) if down_capture is not None else None,
+        "capture_ratio": float(capture_ratio) if capture_ratio is not None else None,
+        "n_up_months": n_up,
+        "n_down_months": n_down,
+        "warning": None,
+    }
+
+
+# ============================================================================
+# Best/Worst Month (Monthly Extremes)
+# ============================================================================
+
+
+def calculate_monthly_extremes(
+    returns: pl.Series,
+    dates: pl.Series,
+) -> dict[str, float | str | None]:
+    """
+    Calculate Best and Worst monthly returns.
+
+    Args:
+        returns: Daily return series
+        dates: Date series
+
+    Returns:
+        {
+            "best_month": float,  # Best monthly return
+            "best_month_date": str,  # Date of best month (YYYY-MM)
+            "worst_month": float,  # Worst monthly return
+            "worst_month_date": str,  # Date of worst month (YYYY-MM)
+            "avg_positive_month": float,  # Average positive month
+            "avg_negative_month": float,  # Average negative month
+            "pct_positive_months": float,  # % positive months
+        }
+
+    Notes:
+        - Converts daily returns to monthly
+        - Shows historical extremes
+        - Required in 90% of professional tearsheets
+
+    Example:
+        >>> result = calculate_monthly_extremes(returns, dates)
+        >>> print(f"Best: {result['best_month']:.2%}, Worst: {result['worst_month']:.2%}")
+        # Best: 12.5%, Worst: -8.3%
+    """
+    # Create DataFrame
+    df = pl.DataFrame({"date": dates, "ret": returns})
+    df = df.drop_nulls()
+
+    if df.height == 0:
+        return {
+            "best_month": np.nan,
+            "best_month_date": None,
+            "worst_month": np.nan,
+            "worst_month_date": None,
+            "avg_positive_month": np.nan,
+            "avg_negative_month": np.nan,
+            "pct_positive_months": np.nan,
+        }
+
+    # Convert to monthly returns
+    # Add year-month column
+    df = df.with_columns([
+        pl.col("date").dt.year().alias("year"),
+        pl.col("date").dt.month().alias("month"),
+    ])
+
+    # Group by year-month and calculate cumulative return
+    monthly = df.group_by(["year", "month"]).agg([
+        ((1 + pl.col("ret")).product() - 1).alias("monthly_ret")
+    ]).sort(["year", "month"])
+
+    if monthly.height == 0:
+        return {
+            "best_month": np.nan,
+            "best_month_date": None,
+            "worst_month": np.nan,
+            "worst_month_date": None,
+            "avg_positive_month": np.nan,
+            "avg_negative_month": np.nan,
+            "pct_positive_months": np.nan,
+        }
+
+    monthly_rets = monthly["monthly_ret"].to_numpy()
+
+    # Best month
+    best_idx = np.argmax(monthly_rets)
+    best_month = float(monthly_rets[best_idx])
+    
+    # Convert to lists for indexing
+    years_list = monthly["year"].to_list()
+    months_list = monthly["month"].to_list()
+    
+    best_year = int(years_list[best_idx])
+    best_mon = int(months_list[best_idx])
+    best_month_date = f"{best_year}-{best_mon:02d}"
+
+    # Worst month
+    worst_idx = np.argmin(monthly_rets)
+    worst_month = float(monthly_rets[worst_idx])
+    worst_year = int(years_list[worst_idx])
+    worst_mon = int(months_list[worst_idx])
+    worst_month_date = f"{worst_year}-{worst_mon:02d}"
+
+    # Average positive/negative months
+    positive_months = monthly_rets[monthly_rets > 0]
+    negative_months = monthly_rets[monthly_rets < 0]
+
+    avg_positive = float(np.mean(positive_months)) if len(positive_months) > 0 else 0.0
+    avg_negative = float(np.mean(negative_months)) if len(negative_months) > 0 else 0.0
+
+    # % positive months
+    pct_positive = (len(positive_months) / len(monthly_rets) * 100) if len(monthly_rets) > 0 else 0.0
+
+    return {
+        "best_month": best_month,
+        "best_month_date": best_month_date,
+        "worst_month": worst_month,
+        "worst_month_date": worst_month_date,
+        "avg_positive_month": avg_positive,
+        "avg_negative_month": avg_negative,
+        "pct_positive_months": float(pct_positive),
+    }
