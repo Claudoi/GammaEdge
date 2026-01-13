@@ -1057,12 +1057,12 @@ if st.session_state.get("data_ready"):
                                     lambda x: f"{x:.4f}" if pd.notna(x) else "N/A"
                                 )
                         
-                        st.dataframe(summary_pd, use_container_width=True)
+                        st.dataframe(summary_pd, width='stretch')
                         
                         # Display data quality table
                         st.subheader("🔍 Data Quality Report")
                         data_quality_df = result["data_quality_df"]
-                        st.dataframe(data_quality_df.to_pandas(), use_container_width=True)
+                        st.dataframe(data_quality_df.to_pandas(), width='stretch')
                         
                         # Display warnings if any
                         if result["warnings"]:
