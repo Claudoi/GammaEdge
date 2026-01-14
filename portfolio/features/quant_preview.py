@@ -21,6 +21,14 @@ from portfolio.features.quant_metrics import (
     calculate_moments,
     calculate_correlation_matrix,
     calculate_data_quality,
+    calculate_sortino_ratio,
+    calculate_information_ratio,
+    calculate_tail_ratio,
+    calculate_win_metrics,
+    calculate_ulcer_index,
+    calculate_treynor_ratio,
+    calculate_capture_ratios,
+    calculate_monthly_extremes,
 )
 
 
@@ -189,6 +197,32 @@ def generate_metrics_summary(
         moments = calculate_moments(returns)
         data_quality = calculate_data_quality(dates, benchmark_dates, ticker)
         
+        # NEW: Calculate additional metrics (Sprint UI v2)
+        sortino = calculate_sortino_ratio(returns, rf_annual=rf_annual)
+        info_ratio = calculate_information_ratio(
+            returns=returns,
+            benchmark_returns=benchmark_returns,
+            dates=dates,
+            benchmark_dates=benchmark_dates,
+        )
+        tail_ratio_result = calculate_tail_ratio(returns)
+        win_metrics = calculate_win_metrics(returns)
+        
+        # NEW: Calculate 10/10 metrics
+        ulcer = calculate_ulcer_index(prices, dates)
+        treynor = calculate_treynor_ratio(
+            returns=returns,
+            beta=beta_alpha.get("beta"),
+            rf_annual=rf_annual,
+        )
+        capture = calculate_capture_ratios(
+            returns=returns,
+            benchmark_returns=benchmark_returns,
+            dates=dates,
+            benchmark_dates=benchmark_dates,
+        )
+        monthly_extremes = calculate_monthly_extremes(returns, dates)
+        
         # Total return
         total_return = cagr_result.get("total_return")
         
@@ -199,17 +233,28 @@ def generate_metrics_summary(
         else:
             volatility = None
         
-        # Build summary row
+        # Build summary row (now with 22 metrics)
         summary_rows.append({
             "ticker": ticker,
             "total_return": total_return,
             "volatility": volatility,
             "sharpe_ratio": sharpe.get("sharpe_ratio"),
+            "sortino_ratio": sortino.get("sortino_ratio"),
+            "treynor_ratio": treynor.get("treynor_ratio"),  # NEW 10/10
+            "information_ratio": info_ratio.get("information_ratio"),
             "beta": beta_alpha.get("beta"),
             "alpha": beta_alpha.get("alpha_annual"),
             "max_drawdown": mdd["max_drawdown"],
+            "ulcer_index": ulcer.get("ulcer_index"),  # NEW 10/10
             "cagr": cagr_result.get("cagr"),
             "calmar": calmar,
+            "up_capture": capture.get("up_capture"),  # NEW 10/10
+            "down_capture": capture.get("down_capture"),  # NEW 10/10
+            "tail_ratio": tail_ratio_result.get("tail_ratio"),
+            "win_rate": win_metrics.get("win_rate"),
+            "profit_factor": win_metrics.get("profit_factor"),
+            "best_month": monthly_extremes.get("best_month"),  # NEW 10/10
+            "worst_month": monthly_extremes.get("worst_month"),  # NEW 10/10
             "skewness": moments.get("skewness"),
             "kurtosis": moments.get("kurtosis"),
         })

@@ -41,6 +41,9 @@ from portfolio.features.quant_charts import (
     generate_drawdown_chart,
     generate_rolling_volatility,
     generate_correlation_heatmap_preview,
+    generate_rolling_sharpe,
+    generate_returns_distribution,
+    generate_monthly_returns_bar,
 )
 from portfolio.viz.plot_utils import show_plot
 
@@ -977,6 +980,37 @@ if st.session_state.get("data_ready"):
                 key="vol_method",
                 help="Parkinson uses High-Low; Garman-Klass uses OHLC.",
             )
+        
+        # Benchmark selector
+        st.markdown("**Benchmark Selection**")
+        col_bench, col_custom = st.columns([2, 2])
+        with col_bench:
+            benchmark_preset = st.selectbox(
+                "Benchmark",
+                options=["SPY (S&P 500)", "QQQ (Nasdaq 100)", "IWM (Russell 2000)", 
+                         "AGG (US Bonds)", "GLD (Gold)", "Custom"],
+                index=0,
+                key="benchmark_preset",
+                help="Select benchmark for beta/alpha/IR calculations",
+            )
+        
+        with col_custom:
+            if "Custom" in benchmark_preset:
+                benchmark_ticker = st.text_input(
+                    "Custom Benchmark Ticker",
+                    value="SPY",
+                    key="custom_benchmark",
+                    help="Enter custom benchmark ticker symbol",
+                )
+            else:
+                # Extract ticker from preset (e.g., "SPY (S&P 500)" -> "SPY")
+                benchmark_ticker = benchmark_preset.split(" ")[0]
+                st.text_input(
+                    "Selected Benchmark",
+                    value=benchmark_ticker,
+                    disabled=True,
+                    key="selected_benchmark_display",
+                )
 
     col_preview, col_download = st.columns([1, 1])
 
@@ -992,12 +1026,12 @@ if st.session_state.get("data_ready"):
                     if not quant_tickers:
                         st.warning("Please enter at least one ticker.")
                     else:
-                        # Generate metrics summary
+                        # Generate metrics summary (with selected benchmark)
                         result = generate_metrics_summary(
                             tickers=quant_tickers,
                             start=str(quant_start_date),
                             end=str(quant_end_date),
-                            benchmark="SPY",
+                            benchmark=benchmark_ticker,  # Use selected benchmark
                             rf_annual=0.02,
                         )
                         
@@ -1010,8 +1044,12 @@ if st.session_state.get("data_ready"):
                         
                         # Format numeric columns to 4 decimal places
                         numeric_cols = [
-                            "total_return", "volatility", "sharpe_ratio", "beta", 
-                            "alpha", "max_drawdown", "cagr", "calmar", "skewness", "kurtosis"
+                            "total_return", "volatility", "sharpe_ratio", "sortino_ratio",
+                            "treynor_ratio", "information_ratio", "beta", "alpha", 
+                            "max_drawdown", "ulcer_index", "cagr", "calmar", 
+                            "up_capture", "down_capture", "tail_ratio", "win_rate", 
+                            "profit_factor", "best_month", "worst_month",
+                            "skewness", "kurtosis"
                         ]
                         for col in numeric_cols:
                             if col in summary_pd.columns:
@@ -1019,12 +1057,12 @@ if st.session_state.get("data_ready"):
                                     lambda x: f"{x:.4f}" if pd.notna(x) else "N/A"
                                 )
                         
-                        st.dataframe(summary_pd, use_container_width=True)
+                        st.dataframe(summary_pd, width='stretch')
                         
                         # Display data quality table
                         st.subheader("🔍 Data Quality Report")
                         data_quality_df = result["data_quality_df"]
-                        st.dataframe(data_quality_df.to_pandas(), use_container_width=True)
+                        st.dataframe(data_quality_df.to_pandas(), width='stretch')
                         
                         # Display warnings if any
                         if result["warnings"]:
@@ -1037,10 +1075,13 @@ if st.session_state.get("data_ready"):
                         # Visual Analysis Section
                         st.subheader("📈 Visual Analysis")
                         
-                        tab1, tab2, tab3, tab4 = st.tabs([
+                        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
                             "📈 Equity Curves",
                             "📉 Drawdown",
-                            "📊 Rolling Volatility",
+                            "📊 Rolling Vol",
+                            "📈 Rolling Sharpe",
+                            "📊 Returns Dist",
+                            "📊 Monthly Returns",
                             "🔥 Correlation"
                         ])
                         
@@ -1049,7 +1090,7 @@ if st.session_state.get("data_ready"):
                                 fig = generate_equity_curve_normalized(
                                     result["df_prices"],
                                     quant_tickers,
-                                    benchmark="SPY"
+                                    benchmark=benchmark_ticker
                                 )
                                 show_plot(fig, key="quant_equity")
                             except Exception as e:
@@ -1077,6 +1118,38 @@ if st.session_state.get("data_ready"):
                                 st.error(f"Error generating rolling volatility: {e}")
                         
                         with tab4:
+                            try:
+                                fig = generate_rolling_sharpe(
+                                    result["df_returns"],
+                                    quant_tickers,
+                                    window=252,
+                                    rf_annual=0.02
+                                )
+                                show_plot(fig, key="quant_rolling_sharpe")
+                            except Exception as e:
+                                st.error(f"Error generating rolling Sharpe: {e}")
+                        
+                        with tab5:
+                            try:
+                                fig = generate_returns_distribution(
+                                    result["df_returns"],
+                                    quant_tickers
+                                )
+                                show_plot(fig, key="quant_returns_dist")
+                            except Exception as e:
+                                st.error(f"Error generating returns distribution: {e}")
+                        
+                        with tab6:
+                            try:
+                                fig = generate_monthly_returns_bar(
+                                    result["df_returns"],
+                                    quant_tickers
+                                )
+                                show_plot(fig, key="quant_monthly_returns")
+                            except Exception as e:
+                                st.error(f"Error generating monthly returns: {e}")
+                        
+                        with tab7:
                             try:
                                 fig = generate_correlation_heatmap_preview(
                                     result["df_returns"],
@@ -1110,7 +1183,7 @@ if st.session_state.get("data_ready"):
                             tickers=quant_tickers,
                             start=str(quant_start_date),
                             end=str(quant_end_date),
-                            benchmark="SPY",  # Default benchmark
+                            benchmark=benchmark_ticker,  # Use selected benchmark
                             rf_annual=0.02,   # Default risk-free rate
                         )
                         st.session_state["quant_excel_bytes"] = excel_bytes

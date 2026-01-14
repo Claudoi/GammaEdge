@@ -817,3 +817,714 @@ def calculate_data_quality(
         "missing_blocks": missing_blocks,
         "warnings": warnings,
     }
+
+
+# ============================================================================
+# Sortino Ratio (Downside Risk Focus)
+# ============================================================================
+
+
+def calculate_sortino_ratio(
+    returns: pl.Series,
+    rf_annual: float = RF_ANNUAL_DEFAULT,
+    target_return: float = 0.0,
+    min_obs: int = 60,
+    annualize: bool = True,
+) -> dict[str, float | None]:
+    """
+    Calculate Sortino Ratio (penalizes only downside volatility).
+
+    Formula: Sortino = (mean_return - target) / downside_deviation
+
+    Args:
+        returns: Return series
+        rf_annual: Annual risk-free rate
+        target_return: Target return threshold (default: 0)
+        min_obs: Minimum observations required
+        annualize: Whether to annualize the ratio
+
+    Returns:
+        {
+            "sortino_ratio": float | None,
+            "downside_deviation": float | None,
+            "warning": str | None,
+        }
+
+    Notes:
+        - Only penalizes volatility below target return
+        - Better than Sharpe for assets with positive skew
+        - Downside deviation uses only returns < target
+
+    Example:
+        >>> result = calculate_sortino_ratio(returns, rf_annual=0.02)
+        >>> print(result["sortino_ratio"])  # 1.45
+    """
+    r = returns.drop_nulls().to_numpy()
+
+    if r.size < min_obs:
+        return {
+            "sortino_ratio": None,
+            "downside_deviation": None,
+            "warning": f"Insufficient data for Sortino ({r.size} < {min_obs})",
+        }
+
+    # Calculate excess returns
+    rf_daily = (1 + rf_annual) ** (1 / TRADING_DAYS_PER_YEAR) - 1
+    excess_returns = r - rf_daily
+
+    # Downside deviation (only negative excess returns)
+    downside_returns = excess_returns[excess_returns < target_return]
+
+    if downside_returns.size < 2:
+        return {
+            "sortino_ratio": None,
+            "downside_deviation": None,
+            "warning": "No downside returns for Sortino calculation",
+        }
+
+    downside_dev = np.std(downside_returns, ddof=1)
+
+    if downside_dev < 1e-10:
+        return {
+            "sortino_ratio": None,
+            "downside_deviation": 0.0,
+            "warning": "Zero downside deviation",
+        }
+
+    # Calculate Sortino
+    mean_excess = np.mean(excess_returns)
+    sortino = mean_excess / downside_dev
+
+    if annualize:
+        sortino *= np.sqrt(TRADING_DAYS_PER_YEAR)
+        downside_dev_ann = downside_dev * np.sqrt(TRADING_DAYS_PER_YEAR)
+    else:
+        downside_dev_ann = downside_dev
+
+    return {
+        "sortino_ratio": float(sortino),
+        "downside_deviation": float(downside_dev_ann),
+        "warning": None,
+    }
+
+
+# ============================================================================
+# Information Ratio (vs Benchmark)
+# ============================================================================
+
+
+def calculate_information_ratio(
+    returns: pl.Series,
+    benchmark_returns: pl.Series,
+    dates: pl.Series,
+    benchmark_dates: pl.Series,
+    min_obs: int = 30,
+) -> dict[str, float | None]:
+    """
+    Calculate Information Ratio (excess return / tracking error).
+
+    Formula: IR = (R_p - R_b) / σ(R_p - R_b)
+
+    Args:
+        returns: Portfolio/ticker returns
+        benchmark_returns: Benchmark returns
+        dates: Portfolio dates
+        benchmark_dates: Benchmark dates
+        min_obs: Minimum observations required
+
+    Returns:
+        {
+            "information_ratio": float | None,
+            "tracking_error": float | None (annualized),
+            "excess_return_annual": float | None,
+            "data_loss_pct": float,
+            "warning": str | None,
+        }
+
+    Notes:
+        - Measures manager skill vs benchmark
+        - IR > 0.5 is good, > 1.0 is excellent
+        - Tracking error is annualized std of excess returns
+
+    Example:
+        >>> result = calculate_information_ratio(aapl_ret, spy_ret, dates, bench_dates)
+        >>> print(result["information_ratio"])  # 0.82
+    """
+    # Align dates (inner join)
+    d_ticker = _as_pl_date(dates).alias("date")
+    d_bench = _as_pl_date(benchmark_dates).alias("date")
+
+    df_ticker = pl.DataFrame({"date": d_ticker, "ret": returns})
+    df_benchmark = pl.DataFrame({"date": d_bench, "ret_bench": benchmark_returns})
+
+    df_aligned = df_ticker.join(df_benchmark, on="date", how="inner")
+
+    n_aligned = df_aligned.height
+    n_original = len(dates)
+    data_loss_pct = 100.0 * (1.0 - n_aligned / max(n_original, 1))
+
+    if n_aligned < min_obs:
+        return {
+            "information_ratio": None,
+            "tracking_error": None,
+            "excess_return_annual": None,
+            "data_loss_pct": data_loss_pct,
+            "warning": f"Insufficient aligned data ({n_aligned} < {min_obs})",
+        }
+
+    # Calculate excess returns
+    r_p = df_aligned["ret"].to_numpy()
+    r_b = df_aligned["ret_bench"].to_numpy()
+    excess = r_p - r_b
+
+    # Tracking error (annualized)
+    tracking_error = np.std(excess, ddof=1) * np.sqrt(TRADING_DAYS_PER_YEAR)
+
+    if tracking_error < 1e-10:
+        return {
+            "information_ratio": None,
+            "tracking_error": 0.0,
+            "excess_return_annual": float(np.mean(excess) * TRADING_DAYS_PER_YEAR),
+            "data_loss_pct": data_loss_pct,
+            "warning": "Zero tracking error (identical to benchmark)",
+        }
+
+    # Information Ratio
+    excess_return_annual = np.mean(excess) * TRADING_DAYS_PER_YEAR
+    information_ratio = excess_return_annual / tracking_error
+
+    return {
+        "information_ratio": float(information_ratio),
+        "tracking_error": float(tracking_error),
+        "excess_return_annual": float(excess_return_annual),
+        "data_loss_pct": data_loss_pct,
+        "warning": None,
+    }
+
+
+# ============================================================================
+# Tail Ratio (Upside/Downside Tails)
+# ============================================================================
+
+
+def calculate_tail_ratio(
+    returns: pl.Series,
+    percentile: float = 0.95,
+) -> dict[str, float]:
+    """
+    Calculate Tail Ratio (upside tail / downside tail).
+
+    Formula: Tail Ratio = abs(95th percentile) / abs(5th percentile)
+
+    Args:
+        returns: Return series
+        percentile: Percentile for tail definition (default: 0.95)
+
+    Returns:
+        {
+            "tail_ratio": float,
+            "upside_tail": float (95th percentile),
+            "downside_tail": float (5th percentile),
+        }
+
+    Notes:
+        - Tail Ratio > 1: Upside tails dominate (good)
+        - Tail Ratio < 1: Downside tails dominate (bad)
+        - Complements skewness with interpretable metric
+
+    Example:
+        >>> result = calculate_tail_ratio(returns)
+        >>> print(result["tail_ratio"])  # 1.18 (upside tails 18% larger)
+    """
+    r = returns.drop_nulls().to_numpy()
+
+    if r.size < 20:
+        return {
+            "tail_ratio": np.nan,
+            "upside_tail": np.nan,
+            "downside_tail": np.nan,
+        }
+
+    # Calculate percentiles
+    upside_tail = float(np.percentile(r, percentile * 100))
+    downside_tail = float(np.percentile(r, (1 - percentile) * 100))
+
+    # Tail ratio
+    if abs(downside_tail) < 1e-10:
+        tail_ratio = np.nan
+    else:
+        tail_ratio = abs(upside_tail) / abs(downside_tail)
+
+    return {
+        "tail_ratio": float(tail_ratio),
+        "upside_tail": upside_tail,
+        "downside_tail": downside_tail,
+    }
+
+
+# ============================================================================
+# Win Metrics (Win Rate, Profit Factor, Avg Win/Loss)
+# ============================================================================
+
+
+def calculate_win_metrics(
+    returns: pl.Series,
+) -> dict[str, float]:
+    """
+    Calculate win-based metrics (popular in trading systems).
+
+    Metrics:
+        - Win Rate: % of positive return days
+        - Profit Factor: sum(gains) / abs(sum(losses))
+        - Avg Win/Loss Ratio: mean(wins) / abs(mean(losses))
+
+    Args:
+        returns: Return series
+
+    Returns:
+        {
+            "win_rate": float (0-100%),
+            "profit_factor": float,
+            "avg_win_loss_ratio": float,
+            "total_wins": int,
+            "total_losses": int,
+        }
+
+    Notes:
+        - Win Rate > 50%: More winning days than losing
+        - Profit Factor > 1: Profitable overall
+        - Avg Win/Loss > 1: Wins larger than losses on average
+
+    Example:
+        >>> result = calculate_win_metrics(returns)
+        >>> print(result["win_rate"])  # 54.2%
+        >>> print(result["profit_factor"])  # 1.35
+    """
+    r = returns.drop_nulls().to_numpy()
+
+    if r.size == 0:
+        return {
+            "win_rate": np.nan,
+            "profit_factor": np.nan,
+            "avg_win_loss_ratio": np.nan,
+            "total_wins": 0,
+            "total_losses": 0,
+        }
+
+    # Separate wins and losses
+    wins = r[r > 0]
+    losses = r[r < 0]
+
+    total_wins = int(wins.size)
+    total_losses = int(losses.size)
+    total_days = r.size
+
+    # Win Rate
+    win_rate = (total_wins / total_days * 100) if total_days > 0 else 0.0
+
+    # Profit Factor
+    sum_wins = np.sum(wins) if wins.size > 0 else 0.0
+    sum_losses = abs(np.sum(losses)) if losses.size > 0 else 0.0
+
+    if sum_losses < 1e-10:
+        profit_factor = np.inf if sum_wins > 0 else np.nan
+    else:
+        profit_factor = sum_wins / sum_losses
+
+    # Avg Win/Loss Ratio
+    avg_win = np.mean(wins) if wins.size > 0 else 0.0
+    avg_loss = abs(np.mean(losses)) if losses.size > 0 else 0.0
+
+    if avg_loss < 1e-10:
+        avg_win_loss_ratio = np.inf if avg_win > 0 else np.nan
+    else:
+        avg_win_loss_ratio = avg_win / avg_loss
+
+    return {
+        "win_rate": float(win_rate),
+        "profit_factor": float(profit_factor),
+        "avg_win_loss_ratio": float(avg_win_loss_ratio),
+        "total_wins": total_wins,
+        "total_losses": total_losses,
+    }
+
+
+# ============================================================================
+# Ulcer Index (Pain Index)
+# ============================================================================
+
+
+def calculate_ulcer_index(
+    prices: pl.Series,
+    dates: pl.Series | None = None,
+) -> dict[str, float]:
+    """
+    Calculate Ulcer Index (Peter Martin's pain index).
+
+    Formula: Ulcer Index = sqrt(mean(drawdown²))
+
+    Args:
+        prices: Price series (adjusted close)
+        dates: Optional date series
+
+    Returns:
+        {
+            "ulcer_index": float,  # Percentage
+            "avg_drawdown": float,  # Average drawdown
+            "max_drawdown": float,  # For reference
+        }
+
+    Notes:
+        - Measures depth AND duration of drawdowns
+        - More sensitive than MDD to prolonged drawdowns
+        - Lower is better (< 5% is excellent)
+        - Used by Peter Martin in mutual fund analysis
+
+    Example:
+        >>> result = calculate_ulcer_index(prices)
+        >>> print(result["ulcer_index"])  # 3.2% (low pain)
+    """
+    p = prices.to_numpy()
+    p = p[~np.isnan(p)]
+
+    if len(p) == 0:
+        return {
+            "ulcer_index": np.nan,
+            "avg_drawdown": np.nan,
+            "max_drawdown": np.nan,
+        }
+
+    # Calculate running maximum (peak)
+    running_max = np.maximum.accumulate(p)
+
+    # Drawdown at each point (as percentage)
+    drawdown = ((p / running_max) - 1.0) * 100  # Convert to percentage
+
+    # Ulcer Index = sqrt(mean(drawdown²))
+    drawdown_squared = drawdown ** 2
+    ulcer_index = np.sqrt(np.mean(drawdown_squared))
+
+    # Average drawdown
+    avg_drawdown = np.mean(drawdown)
+
+    # Max drawdown (for reference)
+    max_drawdown = np.min(drawdown)
+
+    return {
+        "ulcer_index": float(ulcer_index),
+        "avg_drawdown": float(avg_drawdown),
+        "max_drawdown": float(max_drawdown),
+    }
+
+
+# ============================================================================
+# Treynor Ratio (Return per unit of systematic risk)
+# ============================================================================
+
+
+def calculate_treynor_ratio(
+    returns: pl.Series,
+    beta: float,
+    rf_annual: float = RF_ANNUAL_DEFAULT,
+    min_obs: int = 60,
+) -> dict[str, float | None]:
+    """
+    Calculate Treynor Ratio (return per unit of systematic risk).
+
+    Formula: Treynor = (R - Rf) / Beta
+
+    Args:
+        returns: Return series
+        beta: Beta vs benchmark
+        rf_annual: Annual risk-free rate
+        min_obs: Minimum observations required
+
+    Returns:
+        {
+            "treynor_ratio": float | None,
+            "excess_return_annual": float,
+            "warning": str | None,
+        }
+
+    Notes:
+        - Sharpe uses total volatility
+        - Treynor uses only systematic risk (Beta)
+        - Better for well-diversified portfolios
+        - If Beta < 1 and Treynor > Sharpe → excellent
+
+    Example:
+        >>> result = calculate_treynor_ratio(returns, beta=1.05)
+        >>> print(result["treynor_ratio"])  # 0.152 (15.2% per unit beta)
+    """
+    r = returns.drop_nulls().to_numpy()
+
+    if r.size < min_obs:
+        return {
+            "treynor_ratio": None,
+            "excess_return_annual": None,
+            "warning": f"Insufficient data ({r.size} < {min_obs})",
+        }
+
+    if beta is None or abs(beta) < 1e-10:
+        return {
+            "treynor_ratio": None,
+            "excess_return_annual": None,
+            "warning": "Beta is zero or None",
+        }
+
+    # Calculate excess return
+    rf_daily = (1 + rf_annual) ** (1 / TRADING_DAYS_PER_YEAR) - 1
+    excess_returns = r - rf_daily
+    mean_excess = np.mean(excess_returns)
+
+    # Annualize
+    excess_return_annual = mean_excess * TRADING_DAYS_PER_YEAR
+
+    # Treynor Ratio
+    treynor = excess_return_annual / beta
+
+    return {
+        "treynor_ratio": float(treynor),
+        "excess_return_annual": float(excess_return_annual),
+        "warning": None,
+    }
+
+
+# ============================================================================
+# Up/Down Capture Ratios (Asymmetry vs Benchmark)
+# ============================================================================
+
+
+def calculate_capture_ratios(
+    returns: pl.Series,
+    benchmark_returns: pl.Series,
+    dates: pl.Series,
+    benchmark_dates: pl.Series,
+    min_obs: int = 30,
+) -> dict[str, float | None]:
+    """
+    Calculate Up/Down Capture Ratios (asymmetry vs benchmark).
+
+    Formulas:
+        Up Capture = mean(R_p | R_b > 0) / mean(R_b | R_b > 0) × 100
+        Down Capture = mean(R_p | R_b < 0) / mean(R_b | R_b < 0) × 100
+
+    Args:
+        returns: Portfolio/ticker returns
+        benchmark_returns: Benchmark returns
+        dates: Portfolio dates
+        benchmark_dates: Benchmark dates
+        min_obs: Minimum observations required
+
+    Returns:
+        {
+            "up_capture": float | None (percentage),
+            "down_capture": float | None (percentage),
+            "capture_ratio": float | None (up/down),
+            "n_up_months": int,
+            "n_down_months": int,
+            "warning": str | None,
+        }
+
+    Notes:
+        - Up Capture > 100%: Outperform in bull markets
+        - Down Capture < 100%: Protect in bear markets
+        - Ideal: Up > 100%, Down < 100%
+        - Capture Ratio = Up / Down (higher is better)
+
+    Example:
+        >>> result = calculate_capture_ratios(aapl_ret, spy_ret, dates, bench_dates)
+        >>> print(f"Up: {result['up_capture']:.1f}%, Down: {result['down_capture']:.1f}%")
+        # Up: 105.2%, Down: 92.3% (excellent!)
+    """
+    # Align dates (inner join)
+    d_ticker = _as_pl_date(dates).alias("date")
+    d_bench = _as_pl_date(benchmark_dates).alias("date")
+
+    df_ticker = pl.DataFrame({"date": d_ticker, "ret": returns})
+    df_benchmark = pl.DataFrame({"date": d_bench, "ret_bench": benchmark_returns})
+
+    df_aligned = df_ticker.join(df_benchmark, on="date", how="inner")
+
+    n_aligned = df_aligned.height
+
+    if n_aligned < min_obs:
+        return {
+            "up_capture": None,
+            "down_capture": None,
+            "capture_ratio": None,
+            "n_up_months": 0,
+            "n_down_months": 0,
+            "warning": f"Insufficient aligned data ({n_aligned} < {min_obs})",
+        }
+
+    # Extract returns
+    r_p = df_aligned["ret"].to_numpy()
+    r_b = df_aligned["ret_bench"].to_numpy()
+
+    # Separate up/down markets
+    up_mask = r_b > 0
+    down_mask = r_b < 0
+
+    r_p_up = r_p[up_mask]
+    r_b_up = r_b[up_mask]
+
+    r_p_down = r_p[down_mask]
+    r_b_down = r_b[down_mask]
+
+    n_up = int(np.sum(up_mask))
+    n_down = int(np.sum(down_mask))
+
+    # Up Capture
+    if n_up < 2:
+        up_capture = None
+    else:
+        mean_p_up = np.mean(r_p_up)
+        mean_b_up = np.mean(r_b_up)
+        if abs(mean_b_up) < 1e-10:
+            up_capture = None
+        else:
+            up_capture = (mean_p_up / mean_b_up) * 100
+
+    # Down Capture
+    if n_down < 2:
+        down_capture = None
+    else:
+        mean_p_down = np.mean(r_p_down)
+        mean_b_down = np.mean(r_b_down)
+        if abs(mean_b_down) < 1e-10:
+            down_capture = None
+        else:
+            down_capture = (mean_p_down / mean_b_down) * 100
+
+    # Capture Ratio
+    if up_capture is not None and down_capture is not None and abs(down_capture) > 1e-10:
+        capture_ratio = up_capture / down_capture
+    else:
+        capture_ratio = None
+
+    return {
+        "up_capture": float(up_capture) if up_capture is not None else None,
+        "down_capture": float(down_capture) if down_capture is not None else None,
+        "capture_ratio": float(capture_ratio) if capture_ratio is not None else None,
+        "n_up_months": n_up,
+        "n_down_months": n_down,
+        "warning": None,
+    }
+
+
+# ============================================================================
+# Best/Worst Month (Monthly Extremes)
+# ============================================================================
+
+
+def calculate_monthly_extremes(
+    returns: pl.Series,
+    dates: pl.Series,
+) -> dict[str, float | str | None]:
+    """
+    Calculate Best and Worst monthly returns.
+
+    Args:
+        returns: Daily return series
+        dates: Date series
+
+    Returns:
+        {
+            "best_month": float,  # Best monthly return
+            "best_month_date": str,  # Date of best month (YYYY-MM)
+            "worst_month": float,  # Worst monthly return
+            "worst_month_date": str,  # Date of worst month (YYYY-MM)
+            "avg_positive_month": float,  # Average positive month
+            "avg_negative_month": float,  # Average negative month
+            "pct_positive_months": float,  # % positive months
+        }
+
+    Notes:
+        - Converts daily returns to monthly
+        - Shows historical extremes
+        - Required in 90% of professional tearsheets
+
+    Example:
+        >>> result = calculate_monthly_extremes(returns, dates)
+        >>> print(f"Best: {result['best_month']:.2%}, Worst: {result['worst_month']:.2%}")
+        # Best: 12.5%, Worst: -8.3%
+    """
+    # Create DataFrame
+    df = pl.DataFrame({"date": dates, "ret": returns})
+    df = df.drop_nulls()
+
+    if df.height == 0:
+        return {
+            "best_month": np.nan,
+            "best_month_date": None,
+            "worst_month": np.nan,
+            "worst_month_date": None,
+            "avg_positive_month": np.nan,
+            "avg_negative_month": np.nan,
+            "pct_positive_months": np.nan,
+        }
+
+    # Convert to monthly returns
+    # Add year-month column
+    df = df.with_columns([
+        pl.col("date").dt.year().alias("year"),
+        pl.col("date").dt.month().alias("month"),
+    ])
+
+    # Group by year-month and calculate cumulative return
+    monthly = df.group_by(["year", "month"]).agg([
+        ((1 + pl.col("ret")).product() - 1).alias("monthly_ret")
+    ]).sort(["year", "month"])
+
+    if monthly.height == 0:
+        return {
+            "best_month": np.nan,
+            "best_month_date": None,
+            "worst_month": np.nan,
+            "worst_month_date": None,
+            "avg_positive_month": np.nan,
+            "avg_negative_month": np.nan,
+            "pct_positive_months": np.nan,
+        }
+
+    monthly_rets = monthly["monthly_ret"].to_numpy()
+
+    # Best month
+    best_idx = np.argmax(monthly_rets)
+    best_month = float(monthly_rets[best_idx])
+    
+    # Convert to lists for indexing
+    years_list = monthly["year"].to_list()
+    months_list = monthly["month"].to_list()
+    
+    best_year = int(years_list[best_idx])
+    best_mon = int(months_list[best_idx])
+    best_month_date = f"{best_year}-{best_mon:02d}"
+
+    # Worst month
+    worst_idx = np.argmin(monthly_rets)
+    worst_month = float(monthly_rets[worst_idx])
+    worst_year = int(years_list[worst_idx])
+    worst_mon = int(months_list[worst_idx])
+    worst_month_date = f"{worst_year}-{worst_mon:02d}"
+
+    # Average positive/negative months
+    positive_months = monthly_rets[monthly_rets > 0]
+    negative_months = monthly_rets[monthly_rets < 0]
+
+    avg_positive = float(np.mean(positive_months)) if len(positive_months) > 0 else 0.0
+    avg_negative = float(np.mean(negative_months)) if len(negative_months) > 0 else 0.0
+
+    # % positive months
+    pct_positive = (len(positive_months) / len(monthly_rets) * 100) if len(monthly_rets) > 0 else 0.0
+
+    return {
+        "best_month": best_month,
+        "best_month_date": best_month_date,
+        "worst_month": worst_month,
+        "worst_month_date": worst_month_date,
+        "avg_positive_month": avg_positive,
+        "avg_negative_month": avg_negative,
+        "pct_positive_months": float(pct_positive),
+    }
