@@ -37,6 +37,11 @@ from portfolio.features.quant_metrics import (
     calculate_returns,
     calculate_sharpe_ratio,
 )
+from portfolio.features.quant_transforms import (
+    compute_log_returns,
+    compute_relative_volume,
+    compute_intraday_volatility,
+)
 
 
 def export_quant_metrics_to_excel(
@@ -45,6 +50,8 @@ def export_quant_metrics_to_excel(
     end: str,
     benchmark: str = "SPY",
     rf_annual: float = RF_ANNUAL_DEFAULT,
+    vol_lookback: int = 20,
+    vol_method: Literal["parkinson", "garman_klass"] = "parkinson",
     output_format: Literal["bytes", "path"] = "bytes",
     output_path: str | None = None,
 ) -> bytes | str:
@@ -57,6 +64,8 @@ def export_quant_metrics_to_excel(
         end: End date (YYYY-MM-DD)
         benchmark: Benchmark ticker for beta calculation (default: SPY)
         rf_annual: Annual risk-free rate (default: 0.02)
+        vol_lookback: Lookback period for relative volume SMA (default: 20)
+        vol_method: Volatility estimator ('parkinson' or 'garman_klass', default: 'parkinson')
         output_format: 'bytes' or 'path'
         output_path: Path to save file (required if output_format='path')
 
@@ -189,7 +198,7 @@ def export_quant_metrics_to_excel(
     df_data_quality = pl.DataFrame(data_quality_rows)
 
     # 6. Prepare DATA sheet (long format)
-    df_data_long = _prepare_data_sheet(df_prices, df_returns, tickers)
+    df_data_long = _prepare_data_sheet(df_prices, df_returns, tickers, vol_lookback, vol_method)
 
     # 7. Calculate correlation (if ≥2 tickers)
     corr_result = None
@@ -205,7 +214,7 @@ def export_quant_metrics_to_excel(
     
     _generate_summary_sheet(wb, df_summary)
     
-    _generate_metadata_sheet(wb, start, end, benchmark, rf_annual, tickers)
+    _generate_metadata_sheet(wb, start, end, benchmark, rf_annual, tickers, vol_lookback, vol_method)
     
     _generate_data_quality_sheet(wb, df_data_quality)
 
@@ -229,13 +238,16 @@ def export_quant_metrics_to_excel(
 
 
 def _download_prices(tickers: list[str], start: str, end: str) -> pl.DataFrame:
-    """Download adjusted close prices for multiple tickers."""
-    import pandas as pd
+    """Download OHLCV data for multiple tickers.
     
+    Returns:
+        DataFrame with columns: date, open_{ticker}, high_{ticker}, low_{ticker}, 
+        close_{ticker}, adj_close_{ticker}, volume_{ticker}
+    """
+    import pandas as pd
     
     # Download data (set auto_adjust=False to avoid warning)
     data = yf.download(tickers, start=start, end=end, progress=False, group_by="ticker", auto_adjust=False)
-    
     
     # Check if data is empty
     if data is None or len(data) == 0:
@@ -246,20 +258,28 @@ def _download_prices(tickers: list[str], start: str, end: str) -> pl.DataFrame:
         # Single ticker - columns are simple: Open, High, Low, Close, Adj Close, Volume
         df = data.reset_index()
         
-        # Check available columns
-        if "Adj Close" in df.columns:
-            df = df[["Date", "Adj Close"]]
-            df.columns = ["date", f"adj_close_{tickers[0]}"]
-            return pl.from_pandas(df)
-        elif "Close" in df.columns:
-            # Fallback to Close if Adj Close not available
-            # logger.warning(f"'{tickers[0]}' - 'Adj Close' not found, using 'Close' price.")
-            df = df[["Date", "Close"]]
-            df.columns = ["date", f"adj_close_{tickers[0]}"]
-            return pl.from_pandas(df)
-        else:
-            # logger.warning(f"'{tickers[0]}' - Neither 'Adj Close' nor 'Close' price found.")
+        # Extract OHLCV columns
+        cols_to_extract = ["Date"]
+        col_mapping = {"Date": "date"}
+        
+        for col_name, prefix in [
+            ("Open", "open"),
+            ("High", "high"),
+            ("Low", "low"),
+            ("Close", "close"),
+            ("Adj Close", "adj_close"),
+            ("Volume", "volume"),
+        ]:
+            if col_name in df.columns:
+                cols_to_extract.append(col_name)
+                col_mapping[col_name] = f"{prefix}_{tickers[0]}"
+        
+        if len(cols_to_extract) == 1:  # Only Date, no price data
             return pl.DataFrame()
+        
+        df = df[cols_to_extract]
+        df.columns = [col_mapping[c] for c in cols_to_extract]
+        return pl.from_pandas(df)
     else:
         # Multiple tickers - MultiIndex columns
         if isinstance(data.columns, pd.MultiIndex):
@@ -269,17 +289,27 @@ def _download_prices(tickers: list[str], start: str, end: str) -> pl.DataFrame:
                     if ticker in data.columns.levels[0]:
                         df_ticker = data[ticker].reset_index()
                         
-                        # Try Adj Close first, then Close
-                        if "Adj Close" in df_ticker.columns:
-                            df_ticker = df_ticker[["Date", "Adj Close"]]
-                        elif "Close" in df_ticker.columns:
-                            # logger.warning(f"'{ticker}' - 'Adj Close' not found, using 'Close' price.")
-                            df_ticker = df_ticker[["Date", "Close"]]
-                        else:
-                            # logger.warning(f"'{ticker}' - Neither 'Adj Close' nor 'Close' price found. Skipping ticker.")
+                        # Extract OHLCV columns
+                        cols_to_extract = ["Date"]
+                        col_mapping = {"Date": "date"}
+                        
+                        for col_name, prefix in [
+                            ("Open", "open"),
+                            ("High", "high"),
+                            ("Low", "low"),
+                            ("Close", "close"),
+                            ("Adj Close", "adj_close"),
+                            ("Volume", "volume"),
+                        ]:
+                            if col_name in df_ticker.columns:
+                                cols_to_extract.append(col_name)
+                                col_mapping[col_name] = f"{prefix}_{ticker}"
+                        
+                        if len(cols_to_extract) == 1:  # Only Date
                             continue
-                            
-                        df_ticker.columns = ["date", f"adj_close_{ticker}"]
+                        
+                        df_ticker = df_ticker[cols_to_extract]
+                        df_ticker.columns = [col_mapping[c] for c in cols_to_extract]
                         dfs.append(pl.from_pandas(df_ticker))
                 except (KeyError, AttributeError) as e:
                     # logger.warning(f"Error processing data for ticker {ticker}: {e}. Skipping.")
@@ -289,7 +319,6 @@ def _download_prices(tickers: list[str], start: str, end: str) -> pl.DataFrame:
                 return pl.DataFrame()
 
             # Concatenate all dataframes and ensure no duplicate date columns
-            # Strategy: collect all data, then pivot wide
             if len(dfs) == 1:
                 return dfs[0]
             
@@ -299,25 +328,105 @@ def _download_prices(tickers: list[str], start: str, end: str) -> pl.DataFrame:
             # Join each ticker's data
             result = all_dates
             for df in dfs:
-                # Get the price column name (should be adj_close_TICKER)
-                price_col = [c for c in df.columns if c.startswith("adj_close_")][0]
+                # Get all columns except date
+                cols_to_join = [c for c in df.columns if c != "date"]
                 result = result.join(df, on="date", how="left")
 
             return result
         else:
             # Fallback for unexpected format
-            # logger.warning("Unexpected data format from yfinance for multiple tickers. Returning empty DataFrame.")
             return pl.DataFrame()
 
+
+def _pivot_to_long_ohlcv(df_wide: pl.DataFrame, tickers: list[str]) -> pl.DataFrame:
+    """Convert wide OHLCV DataFrame to long format.
+    
+    Args:
+        df_wide: Wide DataFrame with columns like open_{ticker}, high_{ticker}, etc.
+        tickers: List of ticker symbols
+    
+    Returns:
+        Long DataFrame with columns: date, ticker, open, high, low, close, adj_close, volume
+    """
+    if df_wide.is_empty():
+        return pl.DataFrame()
+    
+    rows = []
+    for ticker in tickers:
+        # Build column mapping
+        cols_map = {
+            "date": "date",
+        }
+        cols_to_select = ["date"]
+        
+        for prefix in ["open", "high", "low", "close", "adj_close", "volume"]:
+            col_name = f"{prefix}_{ticker}"
+            if col_name in df_wide.columns:
+                cols_map[col_name] = prefix
+                cols_to_select.append(col_name)
+        
+        # Skip if we don't have at least close or adj_close
+        if f"close_{ticker}" not in df_wide.columns and f"adj_close_{ticker}" not in df_wide.columns:
+            continue
+        
+        # Select and rename columns
+        df_ticker = df_wide.select(cols_to_select)
+        df_ticker = df_ticker.rename(cols_map)
+        
+        # Add ticker column
+        df_ticker = df_ticker.with_columns(pl.lit(ticker).alias("ticker"))
+        
+        # Ensure we have 'close' column (required by quant_transforms)
+        if "close" not in df_ticker.columns and "adj_close" in df_ticker.columns:
+            df_ticker = df_ticker.with_columns(pl.col("adj_close").alias("close"))
+        
+        # CRITICAL FIX: Normalize all numeric columns to Float64 to avoid schema mismatch
+        # yfinance can return volume as Int64 or Float64 depending on the ticker
+        # This causes pl.concat to fail with "type Float64 is incompatible with expected type Int64"
+        numeric_cols = ["open", "high", "low", "close", "adj_close", "volume"]
+        cast_exprs = []
+        for col in numeric_cols:
+            if col in df_ticker.columns:
+                cast_exprs.append(pl.col(col).cast(pl.Float64))
+        
+        if cast_exprs:
+            df_ticker = df_ticker.with_columns(cast_exprs)
+        
+        rows.append(df_ticker)
+    
+    if not rows:
+        return pl.DataFrame()
+    
+    # Concatenate all tickers (now with consistent schema)
+    df_long = pl.concat(rows).sort(["ticker", "date"])
+    
+    return df_long
 
 def _prepare_data_sheet(
     df_prices: pl.DataFrame,
     df_returns: pl.DataFrame,
     tickers: list[str],
+    vol_lookback: int = 20,
+    vol_method: Literal["parkinson", "garman_klass"] = "parkinson",
 ) -> pl.DataFrame:
-    """Prepare DATA sheet in long format."""
+    """Prepare DATA sheet in long format with quant metrics.
+    
+    Returns:
+        DataFrame with columns: date, ticker, adj_close, ret_1d, log_ret, rel_volume, intraday_vol
+    """
+    # First, convert wide OHLCV to long format for quant_transforms functions
+    df_ohlcv_long = _pivot_to_long_ohlcv(df_prices, tickers)
+    
+    # Calculate quant metrics using quant_transforms
+    # Ensure vol_lookback is int (not float)
+    lookback_int = int(vol_lookback)
+    
+    df_log_ret = compute_log_returns(df_ohlcv_long) if not df_ohlcv_long.is_empty() else pl.DataFrame()
+    df_rel_vol = compute_relative_volume(df_ohlcv_long, lookback=lookback_int) if not df_ohlcv_long.is_empty() else pl.DataFrame()
+    df_intra_vol = compute_intraday_volatility(df_ohlcv_long, method=vol_method) if not df_ohlcv_long.is_empty() else pl.DataFrame()
+    
+    # Build base data (date, ticker, adj_close, ret_1d)
     rows = []
-
     for ticker in tickers:
         price_col = f"adj_close_{ticker}"
         ret_col = f"ret_{ticker}"
@@ -342,7 +451,25 @@ def _prepare_data_sheet(
     if not rows:
         return pl.DataFrame()
 
-    return pl.concat(rows).select(["date", "ticker", "adj_close", "ret_1d"]).sort(["ticker", "date"])
+    df_base = pl.concat(rows).select(["date", "ticker", "adj_close", "ret_1d"]).sort(["ticker", "date"])
+    
+    # Join quant metrics
+    if not df_log_ret.is_empty():
+        df_base = df_base.join(df_log_ret, on=["date", "ticker"], how="left")
+    else:
+        df_base = df_base.with_columns(pl.lit(None).alias("log_ret"))
+    
+    if not df_rel_vol.is_empty():
+        df_base = df_base.join(df_rel_vol, on=["date", "ticker"], how="left")
+    else:
+        df_base = df_base.with_columns(pl.lit(None).alias("rel_volume"))
+    
+    if not df_intra_vol.is_empty():
+        df_base = df_base.join(df_intra_vol, on=["date", "ticker"], how="left")
+    else:
+        df_base = df_base.with_columns(pl.lit(None).alias("intraday_vol"))
+    
+    return df_base.select(["date", "ticker", "adj_close", "ret_1d", "log_ret", "rel_volume", "intraday_vol"]).sort(["ticker", "date"])
 
 
 def _generate_data_sheet(wb: Workbook, df: pl.DataFrame) -> None:
@@ -351,13 +478,13 @@ def _generate_data_sheet(wb: Workbook, df: pl.DataFrame) -> None:
 
     # Check if DataFrame is empty
     if df.is_empty():
-        ws.append(["date", "ticker", "adj_close", "ret_1d"])
+        ws.append(["date", "ticker", "adj_close", "ret_1d", "log_ret", "rel_volume", "intraday_vol"])
         _style_header(ws, 1)
         ws.append(["No data available"])
         return
 
     # Header
-    ws.append(["date", "ticker", "adj_close", "ret_1d"])
+    ws.append(["date", "ticker", "adj_close", "ret_1d", "log_ret", "rel_volume", "intraday_vol"])
     _style_header(ws, 1)
 
     # Data
@@ -365,10 +492,13 @@ def _generate_data_sheet(wb: Workbook, df: pl.DataFrame) -> None:
         ws.append(row)
 
     # Format
-    ws.column_dimensions["A"].width = 12
-    ws.column_dimensions["B"].width = 10
-    ws.column_dimensions["C"].width = 12
-    ws.column_dimensions["D"].width = 12
+    ws.column_dimensions["A"].width = 12  # date
+    ws.column_dimensions["B"].width = 10  # ticker
+    ws.column_dimensions["C"].width = 12  # adj_close
+    ws.column_dimensions["D"].width = 12  # ret_1d
+    ws.column_dimensions["E"].width = 12  # log_ret
+    ws.column_dimensions["F"].width = 12  # rel_volume
+    ws.column_dimensions["G"].width = 12  # intraday_vol
 
 
 def _generate_summary_sheet(wb: Workbook, df: pl.DataFrame) -> None:
@@ -409,6 +539,8 @@ def _generate_metadata_sheet(
     benchmark: str,
     rf_annual: float,
     tickers: list[str],
+    vol_lookback: int = 20,
+    vol_method: Literal["parkinson", "garman_klass"] = "parkinson",
 ) -> None:
     """Generate METADATA sheet with standards and definitions."""
     ws = wb.create_sheet("METADATA", 2)
@@ -423,6 +555,14 @@ def _generate_metadata_sheet(
         ["# Returns", ""],
         ["returns_definition", "adj_close_to_adj_close_simple"],
         ["returns_formula", "(adj_close_t - adj_close_{t-1}) / adj_close_{t-1}"],
+        ["", ""],
+        ["# Quant Metrics", ""],
+        ["log_returns_formula", "ln(close_t / close_{t-1})"],
+        ["rel_volume_formula", "volume_t / SMA(volume, lookback)"],
+        ["rel_volume_lookback", vol_lookback],
+        ["intraday_vol_method", vol_method],
+        ["parkinson_formula", "sqrt((ln(H/L))^2 / (4*ln(2)))"],
+        ["garman_klass_formula", "sqrt(0.5*(ln(H/L))^2 - (2*ln(2)-1)*(ln(C/O))^2)"],
         ["", ""],
         ["# Annualization", ""],
         ["trading_days_per_year", TRADING_DAYS_PER_YEAR],

@@ -1185,11 +1185,16 @@ if st.session_state.get("data_ready"):
                             end=str(quant_end_date),
                             benchmark=benchmark_ticker,  # Use selected benchmark
                             rf_annual=0.02,   # Default risk-free rate
+                            vol_lookback=int(vol_lookback),  # Pass volume lookback
+                            vol_method=vol_method,  # Pass volatility method
                         )
                         st.session_state["quant_excel_bytes"] = excel_bytes
                         st.success("✅ Excel file generated successfully!")
                 except Exception as e:
                     st.error(f"Error generating Excel: {e}")
+                    # Show full traceback for debugging
+                    import traceback
+                    st.code(traceback.format_exc(), language="python")
 
     # Show download button if Excel was generated
     if "quant_excel_bytes" in st.session_state:
