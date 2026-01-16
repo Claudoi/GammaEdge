@@ -65,11 +65,12 @@ def compute_relative_volume(df_ohlcv_long: pl.DataFrame, lookback: int = 20) -> 
 
     result = df.with_columns(
         (
-            pl.col("volume") / pl.col("volume").rolling_mean(window_size=lookback).over("ticker")
+            pl.col("volume") / pl.col("volume").rolling_mean(lookback).over("ticker")
         ).alias("rel_volume")
     ).select(["date", "ticker", "rel_volume"])
 
     return result
+
 
 
 def compute_intraday_volatility(
