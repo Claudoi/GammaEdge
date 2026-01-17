@@ -28,3 +28,17 @@ coverage.xml
 htmlcov/
 results/logs/
 logs/
+
+# Local datasets / caches / artifacts
+datasets/
+data_lake/
+*.xlsx
+*.parquet
+*.csv
+*.sig
+RELEASE.json
+RELEASE.sig
+
+# Local scratch files
+probe_*.py
+verify_*.py

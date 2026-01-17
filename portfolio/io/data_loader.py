@@ -146,6 +146,60 @@ def _fetch_yfinance_close(
     return close_df.reset_index()
 
 
+def _fetch_yfinance_ohlcv(
+    tickers: tuple[str, ...],
+    start: str,
+    end: str,
+    interval: str = "1d",
+) -> pd.DataFrame:
+    """
+    Descarga datos OHLCV completos con yfinance (ajustados por dividendos/splits).
+    Devuelve un DataFrame en formato largo: [date, ticker, open, high, low, close, volume].
+    """
+    df = yf.download(
+        list(tickers),
+        start=start,
+        end=end,
+        interval=interval,
+        auto_adjust=True,  # Siempre ajustado para métricas cuantitativas
+        group_by="ticker",
+        threads=True,
+        progress=False,
+    )
+
+    if isinstance(df, pd.Series):
+        df = df.to_frame()
+
+    if df.empty:
+        return pd.DataFrame(columns=["date", "ticker", "open", "high", "low", "close", "volume"])
+
+    rows = []
+    for ticker in tickers:
+        try:
+            if len(tickers) == 1:
+                # Solo un ticker: columnas son directas (Open, High, Low, Close, Volume)
+                ticker_df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
+            else:
+                # Múltiples tickers: MultiIndex (ticker, field)
+                ticker_df = df[ticker][["Open", "High", "Low", "Close", "Volume"]].copy()
+
+            ticker_df = ticker_df.reset_index()
+            ticker_df.columns = ["date", "open", "high", "low", "close", "volume"]
+            ticker_df["ticker"] = ticker
+            rows.append(ticker_df)
+        except KeyError:
+            logger.warning("Ticker %s not found in download; skipping.", ticker)
+            continue
+
+    if not rows:
+        return pd.DataFrame(columns=["date", "ticker", "open", "high", "low", "close", "volume"])
+
+    result = pd.concat(rows, ignore_index=True)
+    result["date"] = pd.to_datetime(result["date"], utc=False)
+    result = result[["date", "ticker", "open", "high", "low", "close", "volume"]]
+    return result.dropna(subset=["close"])
+
+
 def _validate_long_prices(df_long: pl.DataFrame) -> None:
     """
     Valida condiciones mínimas: no duplicados, fechas crecientes por ticker.
@@ -261,3 +315,74 @@ def get_prices_wide(
     if as_pandas:
         return df_wide.to_pandas()
     return df_wide
+
+
+def get_ohlcv_long(
+    tickers: Iterable[str],
+    start: str,
+    end: str,
+    *,
+    interval: str = "1d",
+) -> pl.DataFrame:
+    """
+    Descarga datos OHLCV completos (ajustados por dividendos/splits) en formato largo.
+
+    Devuelve un DataFrame Polars con columnas:
+    - date: Datetime
+    - ticker: Utf8
+    - open, high, low, close: Float64 (ajustados por dividendos)
+    - volume: Float64
+
+    Args:
+        tickers: Símbolos de acciones
+        start: Fecha inicio (YYYY-MM-DD)
+        end: Fecha fin (YYYY-MM-DD)
+        interval: Frecuencia de datos ('1d', '1w', etc.)
+
+    Returns:
+        DataFrame Polars en formato largo ordenado por [ticker, date]
+    """
+    t0 = time.perf_counter()
+    tks = _normalize_tickers(tickers)
+
+    # Descarga via yfinance
+    raw_df = _fetch_yfinance_ohlcv(tks, start, end, interval)
+
+    if raw_df.empty:
+        logger.warning("No OHLCV data returned for tickers: %s", tks)
+        return pl.DataFrame(
+            schema={
+                "date": pl.Datetime,
+                "ticker": pl.Utf8,
+                "open": pl.Float64,
+                "high": pl.Float64,
+                "low": pl.Float64,
+                "close": pl.Float64,
+                "volume": pl.Float64,
+            }
+        )
+
+    # Convertir a Polars
+    pl_df = (
+        pl.from_pandas(raw_df)
+        .with_columns(
+            [
+                pl.col("date").cast(pl.Datetime),
+                pl.col("ticker").cast(pl.Utf8),
+                pl.col("open").cast(pl.Float64),
+                pl.col("high").cast(pl.Float64),
+                pl.col("low").cast(pl.Float64),
+                pl.col("close").cast(pl.Float64),
+                pl.col("volume").cast(pl.Float64),
+            ]
+        )
+        .sort(["ticker", "date"])
+    )
+
+    logger.info(
+        "get_ohlcv_long OK: %d rows, %d tickers in %.3fs",
+        pl_df.height,
+        pl_df.select(pl.col("ticker").n_unique()).item(),
+        time.perf_counter() - t0,
+    )
+    return pl_df
