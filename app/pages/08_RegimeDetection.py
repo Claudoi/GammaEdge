@@ -9,9 +9,7 @@ from __future__ import annotations
 
 import os
 import sys
-from datetime import date
 
-import numpy as np
 import polars as pl
 import streamlit as st
 
@@ -21,7 +19,6 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 from portfolio.features.regime_detection import (
     RegimeDetector,
     compute_regime_performance,
-    detect_regimes,
 )
 from portfolio.viz.regime_plots import (
     plot_regime_duration_histogram,
@@ -32,21 +29,28 @@ from portfolio.viz.regime_plots import (
 )
 from portfolio.viz.plot_utils import show_plot
 
+# Design System
+from app.design_system import COLORS, get_global_styles, metric_grid, section_header
+
 # =============================================================================
 # Page Config
 # =============================================================================
 st.set_page_config(page_title="Regime Detection", layout="wide")
-st.title("🌊 Market Regime Detection (HMM)")
 
-st.markdown("""
-Detect market regimes (Bull/Bear/Crisis) using Hidden Markov Models.
+# Apply global styles
+st.markdown(get_global_styles(), unsafe_allow_html=True)
 
-**Features**:
-- 🎯 3-state HMM (Bull, Bear, Crisis)
-- 📊 5 interactive visualizations
-- 📈 Performance metrics by regime
-- 🔄 Transition probability analysis
-""")
+# Page title with Apple-style
+st.markdown(f"""
+<div style="margin-bottom: 32px;">
+<h1 style="font-size: 2.5rem; font-weight: 600; color: {COLORS['text_primary']}; margin-bottom: 8px;">
+🌊 Market Regime Detection (HMM)
+</h1>
+<p style="font-size: 1rem; color: {COLORS['text_secondary']}; line-height: 1.5;">
+Detect market regimes (Bull/Bear/Crisis) using Hidden Markov Models • 3-state HMM • 5 interactive visualizations
+</p>
+</div>
+""", unsafe_allow_html=True)
 
 # =============================================================================
 # Data Loading
@@ -198,16 +202,15 @@ if "regime_results" in st.session_state:
         returns_col="returns",
     )
     
-    col1, col2, col3 = st.columns(3)
-    
-    # Show summary metrics (perf is pandas DataFrame)
-    for idx, (_, row) in enumerate(perf.iterrows()):  # Fixed: iterrows() for pandas
-        with [col1, col2, col3][idx % 3]:
-            st.metric(
-                f"{row['regime']} Regime",
-                f"{row['mean_return']:.2%} return",
-                f"σ={row['volatility']:.2%}, Sharpe={row['sharpe']:.2f}",
-            )
+    # Performance metrics as grid
+    st.markdown(metric_grid([
+        {
+            'label': f"{row['regime']} Regime",
+            'value': f"{row['mean_return']:.2%}",
+            'icon': '🐂' if 'Bull' in str(row['regime']) else ('🐻' if 'Bear' in str(row['regime']) else '⚠️'),
+        }
+        for _, row in perf.iterrows()
+    ], columns=3), unsafe_allow_html=True)
     
     st.dataframe(
         perf.round(4),  # Already pandas, no to_pandas() needed
@@ -218,7 +221,34 @@ if "regime_results" in st.session_state:
     # ==========================================================================
     # Interactive Visualizations
     # ==========================================================================
-    st.subheader("4️⃣ Interactive Visualizations")
+    st.markdown(section_header(
+        "Interactive Visualizations",
+        "Explore regime dynamics through multiple perspectives",
+        "📊"
+    ), unsafe_allow_html=True)
+    
+    # Apply tab styling
+    st.markdown(f"""
+<style>
+.stTabs [data-baseweb="tab-list"] {{
+gap: 8px;
+background-color: {COLORS['bg_secondary']};
+border-radius: 12px;
+padding: 4px;
+}}
+.stTabs [data-baseweb="tab"] {{
+padding: 12px 24px;
+border-radius: 8px;
+font-weight: 500;
+transition: background-color 0.2s ease;
+color: {COLORS['text_secondary']};
+}}
+.stTabs [aria-selected="true"] {{
+background-color: {COLORS['accent_primary']} !important;
+color: {COLORS['text_primary']} !important;
+}}
+</style>
+""", unsafe_allow_html=True)
     
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
         "📈 Regime States",
@@ -302,9 +332,32 @@ if "regime_results" in st.session_state:
             mime="text/csv",
         )
     
-    # Store for downstream use
-    st.session_state["current_regime"] = df_regimes.tail(1)["regime_label"].item()
-    st.info(f"💡 Current regime: **{st.session_state['current_regime']}**")
+    # Current Regime Hero Card
+    current_regime = df_regimes.tail(1)["regime_label"].item()
+    st.session_state["current_regime"] = current_regime
+    
+    regime_colors = {
+        'Bull': ('#30D158', '🐂'),
+        'Bear': ('#FF9F0A', '🐻'),
+        'Crisis': ('#FF453A', '⚠️'),
+    }
+    
+    color, icon = regime_colors.get(current_regime, ('#0A84FF', '📊'))
+    
+    st.markdown(f"""
+<div style="background: linear-gradient(135deg, {color}22, {color}11); border: 2px solid {color}; border-radius: 16px; padding: 48px; margin: 32px 0; text-align: center;">
+<div style="font-size: 4rem; margin-bottom: 16px;">{icon}</div>
+<div style="font-size: 0.875rem; color: rgba(235,235,245,0.6); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.1em;">
+CURRENT MARKET REGIME
+</div>
+<div style="font-size: 3rem; font-weight: 700; color: {color}; margin-bottom: 8px;">
+{current_regime}
+</div>
+<div style="font-size: 1rem; color: rgba(235,235,245,0.8); margin-top: 16px;">
+Detected for {asset_name} as of latest data point
+</div>
+</div>
+""", unsafe_allow_html=True)
 
 else:
     st.info("👆 Click **Run Regime Detection** to get started.")
@@ -314,35 +367,35 @@ else:
 # =============================================================================
 with st.expander("ℹ️ How to interpret regimes"):
     st.markdown("""
-    ### Regime Interpretation
-    
-    **Bull Market** (Regime 0):
-    - Positive returns
-    - Low volatility
-    - Small drawdowns
-    - High Sharpe ratio
-    
-    **Bear Market** (Regime 1):
-    - Negative returns
-    - Medium volatility
-    - Moderate drawdowns
-    - Negative or low Sharpe
-    
-    **Crisis** (Regime 2):
-    - Large negative returns
-    - High volatility
-    - Deep drawdowns
-    - Strongly negative Sharpe
-    
-    ### Transition Matrix
-    
-    - **Diagonal values**: Regime persistence probability
-    - **Off-diagonal**: Regime switch probability
-    - Higher diagonal = more persistent regimes
-    
-    ### Applications
-    
-    1. **Regime-conditional strategies**: Adjust allocation based on current regime
-    2. **Risk management**: Reduce exposure in Bear/Crisis regimes
-    3. **Performance attribution**: Decompose returns by market state
-    """)
+### Regime Interpretation
+
+**Bull Market** (Regime 0):
+- Positive returns
+- Low volatility
+- Small drawdowns
+- High Sharpe ratio
+
+**Bear Market** (Regime 1):
+- Negative returns
+- Medium volatility
+- Moderate drawdowns
+- Negative or low Sharpe
+
+**Crisis** (Regime 2):
+- Large negative returns
+- High volatility
+- Deep drawdowns
+- Strongly negative Sharpe
+
+### Transition Matrix
+
+- **Diagonal values**: Regime persistence probability
+- **Off-diagonal**: Regime switch probability
+- Higher diagonal = more persistent regimes
+
+### Applications
+
+1. **Regime-conditional strategies**: Adjust allocation based on current regime
+2. **Risk management**: Reduce exposure in Bear/Crisis regimes
+3. **Performance attribution**: Decompose returns by market state
+""", unsafe_allow_html=True)

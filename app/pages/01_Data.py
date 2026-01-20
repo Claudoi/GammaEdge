@@ -47,6 +47,9 @@ from portfolio.features.quant_charts import (
 )
 from portfolio.viz.plot_utils import show_plot
 
+# Design System
+from app.design_system import COLORS, get_global_styles, metric_grid, section_header
+
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Local helpers
@@ -619,7 +622,21 @@ def _verify_and_load_dataset(dataset_path: Path) -> dict:
 # Page config
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Data", layout="wide")
-st.title("📦 Data Module")
+
+# Apply global styles
+st.markdown(get_global_styles(), unsafe_allow_html=True)
+
+# Page title with Apple-style
+st.markdown(f"""
+<div style="margin-bottom: 32px;">
+<h1 style="font-size: 2.5rem; font-weight: 600; color: {COLORS['text_primary']}; margin-bottom: 8px;">
+📦 Data Module
+</h1>
+<p style="font-size: 1rem; color: {COLORS['text_secondary']}; line-height: 1.5;">
+Load historical data, clean series, and compute quantitative metrics
+</p>
+</div>
+""", unsafe_allow_html=True)
 
 # Initialise session_state
 if "data_payload" not in st.session_state:
@@ -837,19 +854,26 @@ if st.session_state.get("data_ready"):
         st.caption(f"Returns shape: {df_ret_wide.shape[0]} x {df_ret_wide.shape[1] - 1}")
         st.dataframe(df_ret_wide.tail(10).to_pandas().round(6), width="stretch")
 
-    # Data Health
-    st.subheader("🩺 Data Health")
-    c1, c2, c3, c4, c5 = st.columns(5)
+    # Data Health - Apple-style metric grid
+    st.markdown(section_header(
+        "Data Health",
+        "Overview of dataset completeness and freshness",
+        "🩺"
+    ), unsafe_allow_html=True)
+    
     n_rows = df_prices.height
     n_tickers = df_prices.select(pl.col("ticker").n_unique()).item()
     n_dates = df_prices.select(pl.col("date").n_unique()).item()
     missing_prices = df_prices.filter(pl.col("price").is_null()).height
     data_age = age_seconds("prices_long", price_cfg)
-    c1.metric("Tickers", n_tickers)
-    c2.metric("Dates", n_dates)
-    c3.metric("Rows", n_rows)
-    c4.metric("Missing Prices", missing_prices)
-    c5.metric("Data age", _fmt_age(data_age))
+    
+    st.markdown(metric_grid([
+        {'label': 'Assets in Universe', 'value': n_tickers, 'icon': '📊'},
+        {'label': 'Trading Days', 'value': f"{n_dates:,}", 'icon': '📅'},
+        {'label': 'Total Observations', 'value': f"{n_rows:,}", 'icon': '🔢'},
+        {'label': 'Missing Data Points', 'value': missing_prices, 'icon': '⚠️', 'negative': missing_prices > 0},
+        {'label': 'Data Freshness', 'value': _fmt_age(data_age), 'icon': '⏱️'},
+    ], columns=5), unsafe_allow_html=True)
 
     # Universe snapshot
     uni = df_prices.group_by("ticker").agg(pl.len().alias("n_obs")).sort("n_obs", descending=True)
@@ -878,14 +902,22 @@ if st.session_state.get("data_ready"):
 
     # Summary stats (per asset)
     if st.checkbox("Show summary stats", value=True, key="show_stats"):
-        st.subheader("Summary stats (per asset, periodic)")
+        st.markdown(section_header(
+            "Summary Statistics",
+            "Risk-return metrics computed from historical data",
+            "📊"
+        ), unsafe_allow_html=True)
         st.dataframe(
             stats.sort("sharpe", nulls_last=True, descending=True).to_pandas(),
             width="stretch",
         )
 
     # Metadata
-    st.subheader("🔖 Metadata")
+    st.markdown(section_header(
+        "Metadata",
+        "Data pipeline execution details",
+        "🔖"
+    ), unsafe_allow_html=True)
     st.dataframe(eff.to_pandas(), width="stretch")
 
     # Export
@@ -1073,7 +1105,36 @@ if st.session_state.get("data_ready"):
                             st.success("✅ No data quality issues detected")
                         
                         # Visual Analysis Section
-                        st.subheader("📈 Visual Analysis")
+                        st.markdown(section_header(
+                            "Visual Analysis",
+                            "Interactive charts for risk-return exploration",
+                            "📈"
+                        ), unsafe_allow_html=True)
+                        
+                        # Apply tab styling
+                        st.markdown(f"""
+                        <style>
+                        .stTabs [data-baseweb="tab-list"] {{
+                            gap: 8px;
+                            background-color: {COLORS['bg_secondary']};
+                            border-radius: 12px;
+                            padding: 4px;
+                        }}
+                        
+                        .stTabs [data-baseweb="tab"] {{
+                            padding: 12px 24px;
+                            border-radius: 8px;
+                            font-weight: 500;
+                            transition: background-color 0.2s ease;
+                            color: {COLORS['text_secondary']};
+                        }}
+                        
+                        .stTabs [aria-selected="true"] {{
+                            background-color: {COLORS['accent_primary']} !important;
+                            color: {COLORS['text_primary']} !important;
+                        }}
+                        </style>
+                        """, unsafe_allow_html=True)
                         
                         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
                             "📈 Equity Curves",
