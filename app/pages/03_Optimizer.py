@@ -55,6 +55,9 @@ from portfolio.viz.plot_utils import (
     weights_path_gammas,
 )
 
+# Design System
+from app.design_system import COLORS, get_global_styles, data_hero_card, metric_grid, section_header
+
 
 def _opt_key(tag: str) -> str:
     """
@@ -69,7 +72,21 @@ def _opt_key(tag: str) -> str:
 # Page config
 # ─────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Optimizer", layout="wide")
-st.title("🚀 Optimizer")
+
+# Apply global styles
+st.markdown(get_global_styles(), unsafe_allow_html=True)
+
+# Page title with Apple-style
+st.markdown(f"""
+<div style="margin-bottom: 32px;">
+<h1 style="font-size: 2.5rem; font-weight: 600; color: {COLORS['text_primary']}; margin-bottom: 8px;">
+🚀 Optimizer
+</h1>
+<p style="font-size: 1rem; color: {COLORS['text_secondary']}; line-height: 1.5;">
+Portfolio construction with HRP, Risk Parity, Mean-Variance, Black-Litterman, and CVaR optimization
+</p>
+</div>
+""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────
 # Defensive handoff from 02_RiskModel
@@ -430,11 +447,28 @@ if w_out is not None:
             key=_opt_key("rc-bar"),
         )
 
-    # Portfolio stats (core.metrics)
+    # Portfolio stats - Apple-style dashboard
     mu_p, sigma_p, sharpe = portfolio_stats(w_out, mu, Sigma, rf=rf)
-    st.caption(
-        f"μ={mu_p:.4f} · σ={sigma_p:.4f} · Sharpe={sharpe:.3f} · Gini(weights)={gini(w_out):.3f}"
-    )
+    
+    # Annualize for display
+    mu_p_ann = mu_p * 252
+    sigma_p_ann = sigma_p * np.sqrt(252)
+    
+    # Hero metric: Sharpe Ratio
+    st.markdown(data_hero_card(
+        title="Portfolio Sharpe Ratio",
+        value=sharpe,
+        subtitle=f"Expected Return: {mu_p_ann:.2%} | Volatility: {sigma_p_ann:.2%}",
+        icon="📈",
+        format_value=True
+    ), unsafe_allow_html=True)
+    
+    # Supporting metrics grid
+    st.markdown(metric_grid([
+        {'label': 'Expected Return (ann.)', 'value': f"{mu_p_ann:.2%}", 'icon': '💰'},
+        {'label': 'Volatility (ann.)', 'value': f"{sigma_p_ann:.2%}", 'icon': '📊'},
+        {'label': 'Gini Coefficient', 'value': f"{gini(w_out):.3f}", 'icon': '⚖️'},
+    ], columns=3), unsafe_allow_html=True)
 
     # Export weights — defensive projection before exporting
     w_export = project_to_box_simplex(w_out, w_min, w_max)
@@ -446,13 +480,23 @@ if w_out is not None:
 
     # Active diagnostics: γ-sweep and TE frontier
     if mode == "Active (TE penalized)" and diag:
-        st.subheader("Diagnostics (Active)")
-        colA, colB, colC = st.columns(3)
-        colA.metric("TE (ann proxy)", f"{diag.get('te', np.nan):.4f}")
-        colB.metric("Active return (μ'Δw)", f"{diag.get('active_ret', np.nan):.4f}")
-        colC.metric("Expo penalty", f"{diag.get('expo_pen', np.nan):.4f}")
+        st.markdown(section_header(
+            "Active Portfolio Diagnostics",
+            "Tracking error analysis and γ-penalty sensitivity",
+            "🎯"
+        ), unsafe_allow_html=True)
+        
+        st.markdown(metric_grid([
+            {'label': 'Tracking Error (ann.)', 'value': f"{diag.get('te', np.nan):.4f}", 'icon': '📏'},
+            {'label': "Active Return (μ'Δw)", 'value': f"{diag.get('active_ret', np.nan):.4f}", 'icon': '🎯'},
+            {'label': 'Exposure Penalty', 'value': f"{diag.get('expo_pen', np.nan):.4f}", 'icon': '⚖️'},
+        ], columns=3), unsafe_allow_html=True)
 
-        st.markdown("### γ sweep & TE Frontier")
+        st.markdown(section_header(
+            "γ Sweep & TE Frontier",
+            "Efficient frontier for tracking error vs active return",
+            "📈"
+        ), unsafe_allow_html=True)
         gammas = np.geomspace(0.01, 1000.0, 25)
         X_use, lb_use, ub_use = (X, lb, ub) if use_expos else (None, None, None)
         Ws, TE, AR, Loss = te_frontier_sweep(

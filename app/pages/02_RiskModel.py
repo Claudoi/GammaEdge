@@ -39,11 +39,37 @@ from portfolio.viz.plot_utils import (
 )
 from portfolio.viz.rmt_plots import plot_eigenvalue_spectrum
 
+# Design System
+from app.design_system import COLORS, get_global_styles
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Config & guards
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Risk Model", layout="wide")
-st.title("📐 Risk Model")
+
+# Apply global styles
+st.markdown(get_global_styles(), unsafe_allow_html=True)
+
+# Page title with Apple-style
+st.markdown(f"""
+<div style="margin-bottom: 32px;">
+    <h1 style="
+        font-size: 2.5rem;
+        font-weight: 600;
+        color: {COLORS['text_primary']};
+        margin-bottom: 8px;
+    ">
+        📐 Risk Model
+    </h1>
+    <p style="
+        font-size: 1rem;
+        color: {COLORS['text_secondary']};
+        line-height: 1.5;
+    ">
+        Estimate expected returns (μ) and covariance matrix (Σ) with configurable shrinkage and PCA
+    </p>
+</div>
+""", unsafe_allow_html=True)
 
 if "returns_wide" not in st.session_state:
     st.warning("Load data first in the Data page.")

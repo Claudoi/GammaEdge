@@ -55,12 +55,26 @@ DEFAULT_PLOTLY_CONFIG: dict[str, Any] = {
     "toImageButtonOptions": {"format": "svg", "filename": "gammaedge_plot"},
 }
 
+# Try to import GammaEdge theme (optional - gracefully fallback if not available)
+try:
+    from app.viz.plotly_theme import apply_gammaedge_theme
+    _HAS_GAMMAEDGE_THEME = True
+except ImportError:
+    _HAS_GAMMAEDGE_THEME = False
+    apply_gammaedge_theme = None  # type: ignore
+
 
 def apply_fig_defaults(fig: go.Figure) -> go.Figure:
-    fig.update_layout(
-        template="plotly_white",
-        margin=dict(l=40, r=20, t=30, b=40),
-    )
+    """Apply default styling to Plotly figures, including GammaEdge theme if available."""
+    # Apply GammaEdge theme first if available
+    if _HAS_GAMMAEDGE_THEME and apply_gammaedge_theme is not None:
+        fig = apply_gammaedge_theme(fig)
+    else:
+        # Fallback to basic template
+        fig.update_layout(
+            template="plotly_white",
+            margin=dict(l=40, r=20, t=30, b=40),
+        )
     return fig
 
 
