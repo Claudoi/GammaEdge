@@ -448,25 +448,23 @@ if w_out is not None:
         )
 
     # Portfolio stats - Apple-style dashboard
+    # NOTE: mu and Sigma are ALREADY ANNUALIZED from RiskModel (see 02_RiskModel.py line 395)
+    # Therefore mu_p and sigma_p are already in annual units - do NOT re-annualize
     mu_p, sigma_p, sharpe = portfolio_stats(w_out, mu, Sigma, rf=rf)
-    
-    # Annualize for display
-    mu_p_ann = mu_p * 252
-    sigma_p_ann = sigma_p * np.sqrt(252)
     
     # Hero metric: Sharpe Ratio
     st.markdown(data_hero_card(
         title="Portfolio Sharpe Ratio",
         value=sharpe,
-        subtitle=f"Expected Return: {mu_p_ann:.2%} | Volatility: {sigma_p_ann:.2%}",
+        subtitle=f"Expected Return: {mu_p:.2%} | Volatility: {sigma_p:.2%}",
         icon="📈",
         format_value=True
     ), unsafe_allow_html=True)
     
     # Supporting metrics grid
     st.markdown(metric_grid([
-        {'label': 'Expected Return (ann.)', 'value': f"{mu_p_ann:.2%}", 'icon': '💰'},
-        {'label': 'Volatility (ann.)', 'value': f"{sigma_p_ann:.2%}", 'icon': '📊'},
+        {'label': 'Expected Return (ann.)', 'value': f"{mu_p:.2%}", 'icon': '💰'},
+        {'label': 'Volatility (ann.)', 'value': f"{sigma_p:.2%}", 'icon': '📊'},
         {'label': 'Gini Coefficient', 'value': f"{gini(w_out):.3f}", 'icon': '⚖️'},
     ], columns=3), unsafe_allow_html=True)
 

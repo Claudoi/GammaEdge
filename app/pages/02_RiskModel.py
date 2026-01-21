@@ -885,8 +885,10 @@ if st.session_state.get("risk_ready"):
     Sigma_clean = 0.5 * (Sigma_clean + Sigma_clean.T)
 
     # Persist to session_state for Optimizer / Backtest
-    st.session_state["mu_vec"] = mu_vec
-    st.session_state["cov_mat"] = Sigma_clean
+    # CRITICAL: These values are ALREADY ANNUALIZED (see _annualize() at line 395)
+    # Downstream modules (Optimizer, Backtest) should NOT re-annualize these values
+    st.session_state["mu_vec"] = mu_vec  # Annual expected returns
+    st.session_state["cov_mat"] = Sigma_clean  # Annual covariance matrix
     st.session_state["asset_names"] = names
 
     # Risk meta / config
