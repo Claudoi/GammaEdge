@@ -42,3 +42,5 @@ RELEASE.sig
 # Local scratch files
 probe_*.py
 verify_*.py
+
+TFG.txt
