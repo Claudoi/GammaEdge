@@ -1,125 +1,124 @@
 # GammaEdge
-### Institutional-Grade Quantitative Analytics Platform
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue?logo=python&logoColor=white)
 ![Polars](https://img.shields.io/badge/Polars-Fast-blue?logo=polars&logoColor=white)
 ![Coverage](https://img.shields.io/badge/Coverage-65%25%2B-success?logo=codecov&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?logo=Open%20Source%20Initiative&logoColor=white)
 
-**GammaEdge** is a production-ready computational framework designed to bridge the gap between **academic theory** and **institutional reality**. It unifies advanced portfolio optimization, robust risk modeling, and realistic backtesting into a single, mathematically rigorous ecosystem.
+Portfolio optimization and backtesting framework implementing modern quantitative methods. Includes covariance shrinkage, Random Matrix Theory filtering, multiple optimization engines, and vectorized backtesting with realistic transaction costs.
 
-Unlike standard libraries that assume ideal market conditions, GammaEdge is engineered for **financial reality**: it handles ill-conditioned covariance matrices, non-normal return distributions, market impact costs, and structural regime changes natively.
-
----
-
-## 🎯 The Philosophy: "Robustness is Alpha"
-
-Quantitative finance is not about finding the "perfect" portfolio in-sample; it is about minimizing the **estimation error** that destroys out-of-sample performance.
-
-GammaEdge addresses the core failures of naive quantitative implementations:
-1.  **Numerical Stability**: Where standard optimizers fail on singular matrices, our `ensure_psd` engine employs a **6-step fallback chain** (including spectral clipping and iterative jitter) to guarantee convergence.
-2.  **Signal vs. Noise**: We utilize **Random Matrix Theory (Marcenko-Pastur)** to surgically filter noise from covariance matrices, preventing the optimizer from allocating capital to spurious correlations.
-3.  **Realistic Friction**: Our backtesting engine discards the "zero-cost" fantasy, implementing an institutional **Square-Root Impact Model** (Almgren-Chriss) and rigorous turnover accounting.
+The implementation prioritizes numerical stability and addresses common issues with sample covariance matrices in limited time series. We use a multi-step fallback approach for ill-conditioned matrices and apply spectral filtering to separate signal from noise.
 
 ---
 
-## 🚀 Key Capabilities
+## Features
 
-### 1. Advanced Risk Modeling
-*   **Covariance Shrinkage**: Implementation of **Ledoit-Wolf** and **Oracle Approximating Shrinkage (OAS)** to stabilize estimators in high dimensions ($N \approx T$).
-*   **Noise Filtering**: **RMT Denoising** ensures that the eigenspectrum of your risk model reflects true market structure, not sampling noise.
-*   **Black-Litterman**: A Bayesian framework utilizing **Idzorek's method** to integrate subjective views with market equilibrium, allowing for calibrated confidence levels.
+### Risk Models
+- Ledoit-Wolf and Oracle Approximating Shrinkage (OAS) for covariance estimation
+- Random Matrix Theory (Marcenko-Pastur) eigenvalue denoising
+- Black-Litterman framework with Idzorek's method for view incorporation
 
-### 2. Convex Optimization Engine
-*   **Beyond Mean-Variance**: Full support for **CVaR (Conditional Value-at-Risk)** optimization via linear programming for tail-risk management.
-*   **Hierarchy-Based**: **Hierarchical Risk Parity (HRP)** (López de Prado) utilizes graph theory to build diversified portfolios without requiring unstable return forecasts.
-*   **Risk Parity**: Construction of "All-Weather" style portfolios that equalise risk contributions across assets or factors.
-*   **Constraints**: Solver-agnostic implementation of box constraints, cardinality limits, and sector exposure bounds via **Projected Gradient Descent (PGD)**.
+### Optimization
+Seven optimizer implementations:
+- **Mean-Variance**: Classic Markowitz with projected gradient descent
+- **CVaR**: Conditional Value-at-Risk minimization via linear programming
+- **Hierarchical Risk Parity**: Graph-based diversification without return forecasts
+- **Risk Parity**: Equal risk contribution across assets
+- **Tracking Error**: Minimize deviation from benchmark
+- **Robust**: Uncertainty set-based optimization
+- **Black-Litterman**: Bayesian combination of equilibrium and views
 
-### 3. Institutional Backtesting
-*   **Vectorized Speed**: A high-performance engine capable of simulating decades of daily changes in milliseconds, powered by **Polars** and **NumPy**.
-*   **Drift Reconstruction**: Accurate modelling of portfolio drift between rebalance periods to capture exact turnover requirements.
-*   **Transaction Costs**: Configurable linear and non-linear cost models to simulate liquidity constraints and market impact.
+Constraint support: box limits, cardinality, sector exposure, turnover caps
 
-### 4. TIER 1 Alpha Research (New)
-*   **Regime Detection**: **Hidden Markov Models (HMM)** to identify latent market states (Volatile/Trending) and adapt strategies dynamically.
-*   **ML Predictors**: **XGBoost** integration with **SHAP** explainability for non-linear return forecasting.
-*   **Factor Models**: Native integration of **Fama-French 3 & 5 Factor** models for alpha decomposition.
+### Backtesting
+Vectorized backtesting engine with:
+- Portfolio drift reconstruction between rebalances
+- Transaction cost modeling (linear and non-linear)
+- Almgren-Chriss square-root market impact
+- Multiple rebalancing strategies (calendar-based, threshold-based)
 
-### 5. Attribution & Analytics
-*   **Brinson-Fachler**: Exact decomposition of active return into Allocation, Selection, and Interaction effects.
-*   **Euler Risk Contributions**: Marginal contribution to portfolio volatility metrics, enabling precise risk budgeting.
-*   **Scenario Analysis**: Stress-testing portfolios against historical crashes (2008, Covid-19) and synthetic shocks.
+### ML and Regime Detection
+- Hidden Markov Models for regime identification
+- XGBoost predictors with SHAP interpretability
+- Fama-French 3 and 5-factor model integration
+
+### Analytics
+- Brinson-Fachler attribution (Allocation, Selection, Interaction)
+- Euler risk contributions for marginal risk analysis
+- Historical scenario analysis (2008 crisis, Covid-19)
+- Standard metrics: Sharpe, Sortino, Calmar, VaR, CVaR, etc.
 
 ---
 
-## 🏗 System Architecture
-
-GammaEdge is built as a modular functional pipeline, emphasizing data immutability and type safety.
+## Architecture
 
 ```mermaid
 graph LR
-    Data[Data Ingestion<br/>(Yahoo/S3)] --> Cleaning[Statistical Cleaning<br/>(Winsorization/Imputation)]
-    Cleaning --> Risk[Risk Model<br/>(Shrinkage/RMT)]
-    Risk --> Optim[Optimizer<br/>(CVaR/MVO/HRP)]
-    Optim --> Backtest[Backtest Engine<br/>(Vectorized/Costs)]
-    Backtest --> Attribution[Attribution<br/>(Brinson/Euler)]
-    Backtest --> Reporting[Reporting<br/>(HTML/PDF)]
+    Data[Data<br/>Yahoo/S3] --> Clean[Cleaning<br/>Winsorization]
+    Clean --> Risk[Risk Model<br/>Shrinkage/RMT]
+    Risk --> Optim[Optimizer<br/>CVaR/MVO/HRP]
+    Optim --> Backtest[Backtest<br/>Vectorized]
+    Backtest --> Attribution[Attribution<br/>Brinson/Euler]
+    Backtest --> Report[Reporting<br/>HTML/PDF]
 ```
 
-### Stack Highlights
-*   **Core**: Python 3.11+, NumPy, SciPy
-*   **Data**: Polars (High-performance DataFrames), yfinance
-*   **ML/Stats**: scikit-learn, statsmodels, hmmlearn, XGBoost
-*   **Interface**: Streamlit (Apple-style design system), Plotly, FastAPI
+**Core libraries**: NumPy, SciPy, Polars, scikit-learn, statsmodels, hmmlearn, XGBoost  
+**Interface**: Streamlit application with 8 pages, FastAPI backend
 
 ---
 
-## ⚡ Quick Start
-
-### Prerequisites
-*   Python 3.11 or 3.12 (Recommended)
-*   [Poetry](https://python-poetry.org/) (Recommended for dependency management)
-
-### Installation
+## Installation
 
 ```bash
-# Clone the repository
 git clone https://github.com/Claudoi/GammaEdge.git
 cd GammaEdge
-
-# Install dependencies via Poetry
 poetry install
-
-# Launch the Quant Platform
 poetry run streamlit run app/Home.py
 ```
 
-### Example Usage: Optimal Portfolio Construction
+## Example
 
 ```python
 from portfolio.optim.cvar import solve_cvar_lp
 from portfolio.features.risk_models import estimate_covariance, clean_covariance_rmt
-import numpy as np
 
-# 1. Robust Estimation
-Sigma_noisy = estimate_covariance(returns, method="lw")
-Sigma_clean = clean_covariance_rmt(Sigma_noisy, T=252, N=50)
+# Covariance with shrinkage and RMT filtering
+Sigma = estimate_covariance(returns, method="lw")
+Sigma_clean = clean_covariance_rmt(Sigma, T=252, N=50)
 
-# 2. CVaR Optimization (Minimizing 95% Tail Risk)
-# We minimize Expected Shortfall (CVaR) instead of Variance for robust downside protection.
+# CVaR optimization (95% confidence)
 weights = solve_cvar_lp(
     returns_matrix=returns,
     alpha=0.95,
     w_min=0.0,
-    w_max=0.10  # 10% Position Limit
+    w_max=0.10
 )
-
-print(f"Optimal Allocation: {weights}")
 ```
-
 
 ---
 
-**Developed by Claudio Martel**
-*Based on research by Markowitz, Ledoit-Wolf, López de Prado, and Rockafellar.*
+## Implementation Notes
+
+**Numerical Stability**: Six-step fallback chain for singular matrices (spectral clipping, iterative jitter, ridge regularization, diagonal loading, pseudoinverse, identity fallback)
+
+**RMT Filtering**: Eigenvalue separation based on Marcenko-Pastur distribution to filter noise from sample covariance
+
+**Transaction Costs**: Square-root model with permanent and temporary impact components
+
+**Testing**: 65%+ coverage on core portfolio modules, property-based testing with Hypothesis
+
+---
+
+## References
+
+Based on methods from:
+- Markowitz (1952): Portfolio Selection
+- Ledoit & Wolf (2004): Honey, I Shrunk the Sample Covariance Matrix
+- López de Prado (2016): Building Diversified Portfolios that Outperform Out of Sample
+- Rockafellar & Uryasev (2000): Optimization of Conditional Value-at-Risk
+- Almgren & Chriss (2001): Optimal Execution of Portfolio Transactions
+
+---
+
+**Author**: Claudio Martel  
+**License**: MIT
