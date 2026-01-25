@@ -54,13 +54,21 @@ Vectorized backtesting engine with:
 ## Architecture
 
 ```mermaid
-graph LR
-    Data[Data<br/>Yahoo/S3] --> Clean[Cleaning<br/>Winsorization]
-    Clean --> Risk[Risk Model<br/>Shrinkage/RMT]
-    Risk --> Optim[Optimizer<br/>CVaR/MVO/HRP]
-    Optim --> Backtest[Backtest<br/>Vectorized]
-    Backtest --> Attribution[Attribution<br/>Brinson/Euler]
-    Backtest --> Report[Reporting<br/>HTML/PDF]
+graph TD
+    A[📥 Data Ingestion] --> B[🧹 Cleaning & Winsorization]
+    B --> C[📊 Risk Model]
+    C --> D[⚙️ Optimization Engine]
+    D --> E[🔄 Vectorized Backtest]
+    E --> F[📈 Attribution Analysis]
+    E --> G[📋 Report Generation]
+    
+    style A fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff
+    style B fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff
+    style C fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff
+    style D fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff
+    style E fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff
+    style F fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff
+    style G fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff
 ```
 
 **Core libraries**: NumPy, SciPy, Polars, scikit-learn, statsmodels, hmmlearn, XGBoost  
