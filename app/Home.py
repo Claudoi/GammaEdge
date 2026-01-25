@@ -132,7 +132,7 @@ st.markdown(f"""
 <div class="module-card" style="background: {COLORS['bg_secondary']}; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 32px 24px; transition: box-shadow 0.3s ease;">
 <div style="font-size: 2.5rem; margin-bottom: 16px; text-align: center;">📊</div>
 <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 12px; text-align: center;">
-Data &amp; Metrics
+Data & Metrics
 </h3>
 <p style="font-size: 0.875rem; color: {COLORS['text_secondary']}; line-height: 1.5; text-align: center;">
 Load returns, clean series, analyze data quality, and export quantitative metrics
@@ -141,7 +141,7 @@ Load returns, clean series, analyze data quality, and export quantitative metric
 <div class="module-card" style="background: {COLORS['bg_secondary']}; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 32px 24px; transition: box-shadow 0.3s ease;">
 <div style="font-size: 2.5rem; margin-bottom: 16px; text-align: center;">🧠</div>
 <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 12px; text-align: center;">
-Model &amp; Optimize
+Model & Optimize
 </h3>
 <p style="font-size: 0.875rem; color: {COLORS['text_secondary']}; line-height: 1.5; text-align: center;">
 Build covariance, run optimizers, backtest with transaction costs and constraints
@@ -150,7 +150,7 @@ Build covariance, run optimizers, backtest with transaction costs and constraint
 <div class="module-card" style="background: {COLORS['bg_secondary']}; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 32px 24px; transition: box-shadow 0.3s ease;">
 <div style="font-size: 2.5rem; margin-bottom: 16px; text-align: center;">🚀</div>
 <h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 12px; text-align: center;">
-Deploy &amp; Monitor
+Deploy & Monitor
 </h3>
 <p style="font-size: 0.875rem; color: {COLORS['text_secondary']}; line-height: 1.5; text-align: center;">
 Attribute performance, generate reports, stress-test with regime detection
@@ -163,7 +163,6 @@ box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }}
 </style>
 """, unsafe_allow_html=True)
-
 
 # Quick Start Section
 st.markdown("---")

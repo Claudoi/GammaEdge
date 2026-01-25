@@ -1135,7 +1135,6 @@ if st.session_state.get("data_ready"):
                         }}
                         </style>
                         """, unsafe_allow_html=True)
-
                         
                         tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
                             "📈 Equity Curves",
