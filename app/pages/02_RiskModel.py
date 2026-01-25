@@ -39,11 +39,37 @@ from portfolio.viz.plot_utils import (
 )
 from portfolio.viz.rmt_plots import plot_eigenvalue_spectrum
 
+# Design System
+from app.design_system import COLORS, get_global_styles
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Config & guards
 # ──────────────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Risk Model", layout="wide")
-st.title("📐 Risk Model")
+
+# Apply global styles
+st.markdown(get_global_styles(), unsafe_allow_html=True)
+
+# Page title with Apple-style
+st.markdown(f"""
+<div style="margin-bottom: 32px;">
+    <h1 style="
+        font-size: 2.5rem;
+        font-weight: 600;
+        color: {COLORS['text_primary']};
+        margin-bottom: 8px;
+    ">
+        📐 Risk Model
+    </h1>
+    <p style="
+        font-size: 1rem;
+        color: {COLORS['text_secondary']};
+        line-height: 1.5;
+    ">
+        Estimate expected returns (μ) and covariance matrix (Σ) with configurable shrinkage and PCA
+    </p>
+</div>
+""", unsafe_allow_html=True)
 
 if "returns_wide" not in st.session_state:
     st.warning("Load data first in the Data page.")
@@ -859,8 +885,10 @@ if st.session_state.get("risk_ready"):
     Sigma_clean = 0.5 * (Sigma_clean + Sigma_clean.T)
 
     # Persist to session_state for Optimizer / Backtest
-    st.session_state["mu_vec"] = mu_vec
-    st.session_state["cov_mat"] = Sigma_clean
+    # CRITICAL: These values are ALREADY ANNUALIZED (see _annualize() at line 395)
+    # Downstream modules (Optimizer, Backtest) should NOT re-annualize these values
+    st.session_state["mu_vec"] = mu_vec  # Annual expected returns
+    st.session_state["cov_mat"] = Sigma_clean  # Annual covariance matrix
     st.session_state["asset_names"] = names
 
     # Risk meta / config

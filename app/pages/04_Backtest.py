@@ -39,6 +39,9 @@ from portfolio.viz.plot_utils import (
     show_plot,
 )
 
+# Design System
+from app.design_system import COLORS, get_global_styles
+
 
 # ─────────────────────────────────────────────────────────────────────
 # Utility functions
@@ -290,7 +293,30 @@ def build_benchmark_weights(
 # Page configuration
 # ─────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Backtest", layout="wide")
-st.title("📊 Backtest")
+
+# Apply global styles
+st.markdown(get_global_styles(), unsafe_allow_html=True)
+
+# Page title with Apple-style
+st.markdown(f"""
+<div style="margin-bottom: 32px;">
+    <h1 style="
+        font-size: 2.5rem;
+        font-weight: 600;
+        color: {COLORS['text_primary']};
+        margin-bottom: 8px;
+    ">
+        📊 Backtest
+    </h1>
+    <p style="
+        font-size: 1rem;
+        color: {COLORS['text_secondary']};
+        line-height: 1.5;
+    ">
+        Rolling rebalance with transaction costs, bootstrap metrics, and attribution analysis
+    </p>
+</div>
+""", unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────
 # Input validation from previous pages (01/02/03)
