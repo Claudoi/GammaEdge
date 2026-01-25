@@ -2,9 +2,20 @@
 from __future__ import annotations
 
 import inspect
+import sys
+import os
+from pathlib import Path
 from typing import Any
 
+# Add project root to sys.path to allow imports from 'app'
+root_path = str(Path(__file__).parent.parent)
+if root_path not in sys.path:
+    sys.path.append(root_path)
+
 import streamlit as st
+
+# Design System
+from app.design_system import COLORS, get_global_styles
 
 # ============================================================================
 # Plotly compatibility monkey-patch
@@ -97,162 +108,141 @@ st.set_page_config(
 )
 
 # ============================================================================
-# UI helpers
-# ============================================================================
-
-
-def _pill(text: str) -> None:
-    """Small rounded label."""
-    st.markdown(
-        f"""
-        <span style="
-            display:inline-block;
-            padding:2px 10px;
-            border-radius:999px;
-            background:rgba(255,255,255,0.08);
-            border:1px solid rgba(255,255,255,0.12);
-            font-size:0.78rem;
-        ">{text}</span>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-# ============================================================================
 # Layout
 # ============================================================================
 
-# Subtle background
-st.markdown(
-    """
-    <style>
-    .stApp {
-        background: radial-gradient(circle at top left, #101520 0, #05060a 40%, #020308 100%);
-        color: #e5e7eb;
-    }
-    section.main > div {
-        padding-top: 1rem;
-    }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
+# Apply global styles
+st.markdown(get_global_styles(), unsafe_allow_html=True)
 
-# Hero
-col_left, col_right = st.columns([2.2, 1.3], gap="large")
+# Hero Section - Clean and Spacious
+st.markdown(f"""
+<div style="padding: 80px 0 64px 0; text-align: center; max-width: 1200px; margin: 0 auto;">
+<h1 style="font-size: 3.5rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 16px; color: {COLORS['text_primary']};">
+GammaEdge
+</h1>
+<p style="font-size: 1.25rem; font-weight: 400; color: {COLORS['text_secondary']}; margin-bottom: 64px;">
+Quantitative Portfolio Analytics · Precise. Powerful. Professional.
+</p>
+</div>
+""", unsafe_allow_html=True)
 
-with col_left:
-    st.markdown("### GammaEdge")
-    st.markdown(
-        """
-        <div style="font-size:2.2rem; font-weight:700; line-height:1.1;">
-            Quant Portfolio Analytics &nbsp;<span style="opacity:0.75;">Playground</span>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-    st.markdown("")
-    _pill("Black-Litterman • Vectorized Engine • VaR/CVaR • HRP")
+# Module Cards Grid
+st.markdown(f"""
+<div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; max-width: 1200px; margin: 0 auto 64px auto;">
+<div class="module-card" style="background: {COLORS['bg_secondary']}; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 32px 24px; transition: box-shadow 0.3s ease;">
+<div style="font-size: 2.5rem; margin-bottom: 16px; text-align: center;">📊</div>
+<h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 12px; text-align: center;">
+Data &amp; Metrics
+</h3>
+<p style="font-size: 0.875rem; color: {COLORS['text_secondary']}; line-height: 1.5; text-align: center;">
+Load returns, clean series, analyze data quality, and export quantitative metrics
+</p>
+</div>
+<div class="module-card" style="background: {COLORS['bg_secondary']}; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 32px 24px; transition: box-shadow 0.3s ease;">
+<div style="font-size: 2.5rem; margin-bottom: 16px; text-align: center;">🧠</div>
+<h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 12px; text-align: center;">
+Model &amp; Optimize
+</h3>
+<p style="font-size: 0.875rem; color: {COLORS['text_secondary']}; line-height: 1.5; text-align: center;">
+Build covariance, run optimizers, backtest with transaction costs and constraints
+</p>
+</div>
+<div class="module-card" style="background: {COLORS['bg_secondary']}; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 32px 24px; transition: box-shadow 0.3s ease;">
+<div style="font-size: 2.5rem; margin-bottom: 16px; text-align: center;">🚀</div>
+<h3 style="font-size: 1.25rem; font-weight: 600; margin-bottom: 12px; text-align: center;">
+Deploy &amp; Monitor
+</h3>
+<p style="font-size: 0.875rem; color: {COLORS['text_secondary']}; line-height: 1.5; text-align: center;">
+Attribute performance, generate reports, stress-test with regime detection
+</p>
+</div>
+</div>
+<style>
+.module-card:hover {{
+box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+}}
+</style>
+""", unsafe_allow_html=True)
 
-    st.markdown(
-        """
-        <p style="margin-top:1rem; max-width:560px; opacity:0.85;">
-        Build, backtest and attribute multi-asset portfolios with a fully local,
-        research-grade toolbox. Data in, risk out. No magic, only math.
-        </p>
-        """,
-        unsafe_allow_html=True,
-    )
 
-    st.markdown("")
-    c1, c2 = st.columns([1.2, 1.0])
-    with c1:
-        st.page_link(
-            "pages/01_Data.py",
-            label="🚀 Start: Load & Inspect Data",
-        )
-    with c2:
-        st.page_link(
-            "pages/03_Optimizer.py",
-            label="🧠 Go to Optimizer",
-        )
-
-    st.markdown("")
-    st.caption(
-        "Tip: run from repo root with `poetry run streamlit run app/Home.py` so imports and pages resolve correctly."
-    )
-
-with col_right:
-    st.markdown(
-        """
-        <div style="
-            border-radius:24px;
-            padding:18px 18px 14px 18px;
-            background:linear-gradient(145deg, rgba(96,165,250,0.16), rgba(56,189,248,0.04));
-            border:1px solid rgba(148,163,184,0.6);
-            box-shadow:0 20px 40px rgba(15,23,42,0.65);
-        ">
-          <div style="font-size:0.9rem; opacity:0.85; margin-bottom:0.2rem;">Session status</div>
-          <div style="font-size:1.15rem; font-weight:600; margin-bottom:0.6rem;">
-            Environment checks
-          </div>
-          <ul style="padding-left:1.1rem; margin:0; font-size:0.88rem; line-height:1.5;">
-            <li>✅ Linting: <code>ruff check .</code></li>
-            <li>✅ Types: <code>mypy portfolio app</code></li>
-            <li>✅ Tests: <code>pytest -q</code> (coverage ≥ 65%)</li>
-          </ul>
-          <div style="margin-top:0.7rem; font-size:0.8rem; opacity:0.78;">
-            Ready to experiment with scenarios, reporting and attribution.
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
+# Quick Start Section
 st.markdown("---")
 
-# ============================================================================
-# Navigation cards
-# ============================================================================
-
-st.markdown("#### Modules")
+st.markdown(f"""
+<div style="margin: 48px 0 24px 0;">
+<h2 style="font-size: 2rem; font-weight: 600; margin-bottom: 32px; text-align: center; color: {COLORS['text_primary']};">
+Quick Start
+</h2>
+</div>
+""", unsafe_allow_html=True)
 
 col1, col2, col3 = st.columns(3, gap="large")
 
 with col1:
-    st.markdown("##### 1. Data & Risk Model")
-    st.page_link("pages/01_Data.py", label=" 01 – Data")
-    st.page_link("pages/02_RiskModel.py", label=" 02 – Risk Model")
-    st.markdown(
-        "<p style='font-size:0.83rem; opacity:0.8;'>Load returns, clean series, "
-        "and build covariance structures (sample / EWMA).</p>",
-        unsafe_allow_html=True,
+    st.page_link(
+        "pages/01_Data.py",
+        label="📦 Data Module",
+        use_container_width=True,
+    )
+    st.caption(
+        "Load historical data, clean series, compute quantitative metrics"
     )
 
 with col2:
-    st.markdown("##### 2. Construction & Backtest")
-    st.page_link("pages/03_Optimizer.py", label=" 03 – Optimizer")
-    st.page_link("pages/04_Backtest.py", label=" 04 – Backtest")
-    st.markdown(
-        "<p style='font-size:0.83rem; opacity:0.8;'>Run HRP, min-var, risk parity or "
-        "tracking-error portfolios and backtest with turnover controls.</p>",
-        unsafe_allow_html=True,
+    st.page_link(
+        "pages/03_Optimizer.py",
+        label="🔬 Optimizer",
+        use_container_width=True,
+    )
+    st.caption(
+        "Run HRP, Risk Parity, Mean-Variance, Black-Litterman, CVaR optimization"
     )
 
 with col3:
-    st.markdown("##### 3. Attribution & Reports")
-    st.page_link("pages/05_Attribution.py", label=" 05 – Attribution")
-    st.page_link("pages/06_Reporting.py", label=" 06 – Reporting")
-    st.page_link("pages/07_Scenarios.py", label=" 07 – Scenarios")
-    st.markdown(
-        "<p style='font-size:0.83rem; opacity:0.8;'>Decompose performance by factors, "
-        "generate PDF/HTML reports and stress-test the portfolio.</p>",
-        unsafe_allow_html=True,
+    st.page_link(
+        "pages/04_Backtest.py",
+        label="📈 Backtest",
+        use_container_width=True,
+    )
+    st.caption(
+        "Rolling rebalance, transaction costs, bootstrap metrics, grid search"
     )
 
 st.markdown("---")
 
-st.caption(
-    "GammaEdge is a research sandbox. Results are for educational and prototyping "
-    "purposes only – not investment advice."
-)
+# All Modules Section
+st.markdown(f"""
+<div style="margin: 48px 0 24px 0;">
+<h2 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 24px; color: {COLORS['text_primary']};">
+All Modules
+</h2>
+</div>
+""", unsafe_allow_html=True)
+
+col1, col2, col3 = st.columns(3, gap="large")
+
+with col1:
+    st.markdown("**Data & Risk Model**")
+    st.page_link("pages/01_Data.py", label="01 – Data")
+    st.page_link("pages/02_RiskModel.py", label="02 – Risk Model")
+
+with col2:
+    st.markdown("**Construction & Backtest**")
+    st.page_link("pages/03_Optimizer.py", label="03 – Optimizer")
+    st.page_link("pages/04_Backtest.py", label="04 – Backtest")
+    st.page_link("pages/08_RegimeDetection.py", label="08 – Regime Detection")
+
+with col3:
+    st.markdown("**Attribution & Reports**")
+    st.page_link("pages/05_Attribution.py", label="05 – Attribution")
+    st.page_link("pages/06_Reporting.py", label="06 – Reporting")
+    st.page_link("pages/07_Scenarios.py", label="07 – Scenarios")
+
+st.markdown("---")
+
+# Footer
+st.markdown(f"""
+<div style="text-align: center; margin-top: 64px; padding: 24px 0; color: {COLORS['text_tertiary']}; font-size: 0.875rem;">
+GammaEdge is a research sandbox. Results are for educational and prototyping purposes only – not investment advice.
+</div>
+""", unsafe_allow_html=True)
