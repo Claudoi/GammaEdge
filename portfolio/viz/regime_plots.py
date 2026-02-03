@@ -48,11 +48,16 @@ def plot_regime_states(
     # Compute cumulative returns (equity curve)
     df_pd["equity"] = (1 + df_pd[returns_col]).cumprod()
     
-    # Regime colors
+    # Regime colors (supports up to 4 regimes)
     regime_colors = {
         "Bull": "rgba(0, 255, 0, 0.2)",      # Green
         "Bear": "rgba(255, 165, 0, 0.2)",    # Orange
         "Crisis": "rgba(255, 0, 0, 0.2)",    # Red
+        "Volatile": "rgba(128, 0, 128, 0.2)", # Purple
+        "Regime 0": "rgba(0, 255, 0, 0.2)",
+        "Regime 1": "rgba(255, 165, 0, 0.2)",
+        "Regime 2": "rgba(255, 0, 0, 0.2)",
+        "Regime 3": "rgba(128, 0, 128, 0.2)",
     }
     
     fig = go.Figure()
@@ -134,8 +139,12 @@ def plot_regime_probabilities(
     
     fig = go.Figure()
     
-    regime_names = ["Bull", "Bear", "Crisis"][:n_regimes]
-    colors = ["green", "orange", "red"][:n_regimes]
+    # Dynamic regime names and colors based on n_regimes
+    regime_names_full = ["Bull", "Bear", "Crisis", "Volatile"]
+    colors_full = ["green", "orange", "red", "purple"]
+    
+    regime_names = regime_names_full[:n_regimes]
+    colors = colors_full[:n_regimes]
     
     for i in range(n_regimes):
         fig.add_trace(go.Scatter(
@@ -185,7 +194,9 @@ def plot_regime_transitions(
     n_regimes = transition_matrix.shape[0]
     
     if regime_labels is None:
-        regime_labels = ["Bull", "Bear", "Crisis"][:n_regimes]
+        # Dynamic labels based on actual number of regimes
+        default_labels = ["Bull", "Bear", "Crisis", "Volatile"]
+        regime_labels = default_labels[:n_regimes]
     
     # Annotate with percentages
     annotations = []
@@ -245,7 +256,17 @@ def plot_regime_performance(
         >>> fig = plot_regime_performance(perf)
         >>> fig.show()
     """
-    colors = {"Bull": "green", "Bear": "orange", "Crisis": "red"}
+    # Dynamic colors supporting up to 4 regimes
+    colors = {
+        "Bull": "green",
+        "Bear": "orange",
+        "Crisis": "red",
+        "Volatile": "purple",
+        "Regime 0": "green",
+        "Regime 1": "orange",
+        "Regime 2": "red",
+        "Regime 3": "purple",
+    }
     
     fig = go.Figure()
     
@@ -328,7 +349,17 @@ def plot_regime_duration_histogram(
     
     fig = go.Figure()
     
-    colors = {"Bull": "green", "Bear": "orange", "Crisis": "red"}
+    # Dynamic colors supporting up to 4 regimes
+    colors = {
+        "Bull": "green",
+        "Bear": "orange",
+        "Crisis": "red",
+        "Volatile": "purple",
+        "Regime 0": "green",
+        "Regime 1": "orange",
+        "Regime 2": "red",
+        "Regime 3": "purple",
+    }
     
     for regime, durations in regime_durations.items():
         if durations:
