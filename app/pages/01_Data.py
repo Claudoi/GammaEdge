@@ -795,8 +795,10 @@ elif mode == "Live Mode (Research)":
         )
         st.session_state["data_payload"] = payload # Keep original name for consistency with render block
         
-        # Save tickers for auto-population in Quant Metrics
+        # Save tickers and dates for auto-population in Quant Metrics
         st.session_state["loaded_tickers"] = ",".join(tickers)
+        st.session_state["loaded_start_date"] = start
+        st.session_state["loaded_end_date"] = end
         
         st.success(f"✅ Loaded {len(tickers)} tickers")
         st.session_state["data_ready"] = True
@@ -987,18 +989,21 @@ if st.session_state.get("data_ready"):
     with col_dates:
         col_start, col_end = st.columns(2)
         with col_start:
+            # Use loaded dates from Data module if available
+            default_start = st.session_state.get("loaded_start_date", date(2010, 1, 1))
             quant_start_date = st.date_input(
                 "Start date",
-                value=date(2010, 1, 1),
+                value=default_start,
                 min_value=date(1900, 1, 1),
                 max_value=date.today(),
                 key="quant_start_date",
-                help="Select start date. Data availability depends on ticker (some go back to 1900s).",
+                help="Auto-populated from Data module. Select start date for metrics calculation.",
             )
         with col_end:
+            default_end = st.session_state.get("loaded_end_date", date.today())
             quant_end_date = st.date_input(
                 "End date",
-                value=date.today(),
+                value=default_end,
                 min_value=date(1900, 1, 1),
                 max_value=date.today(),
                 key="quant_end_date",
