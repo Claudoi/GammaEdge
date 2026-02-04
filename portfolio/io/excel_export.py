@@ -212,19 +212,6 @@ def export_quant_metrics_to_excel(
         )
 
         # Summary row - use actual ticker n_obs (not aligned)
-        # Skip ticker if it has no valid data (all key metrics are None)
-        # This happens when ticker is invalid or has insufficient data for the period
-        key_metrics = [
-            cagr_result["cagr"],
-            beta_result["beta"],
-            sharpe_result["sharpe_ratio"],
-            mdd_result["max_drawdown"]
-        ]
-        
-        if all(m is None for m in key_metrics):
-            # Ticker has no usable data, skip it
-            continue
-        
         summary_rows.append({
             "ticker": ticker,
             "beta": beta_result["beta"],
@@ -509,6 +496,11 @@ def _prepare_data_sheet(
             df_ticker = df_ticker.with_columns(pl.lit(None).alias("ret_1d"))
 
         df_ticker = df_ticker.with_columns(pl.lit(ticker).alias("ticker"))
+        
+        # FILTER: Only keep rows where ticker has actual price data (not None/NaN)
+        # This removes rows before ticker's actual start date
+        df_ticker = df_ticker.filter(pl.col("adj_close").is_not_null())
+        
         rows.append(df_ticker)
 
     if not rows:
