@@ -121,9 +121,9 @@ with st.sidebar:
 # =============================================================================
 # Run Regime Detection
 # =============================================================================
-st.subheader("1️⃣ Detect Regimes")
+st.subheader("1. Detect Regimes")
 
-if st.button("🚀 Run Regime Detection", type="primary"):
+if st.button("Run Regime Detection", type="primary"):
     with st.spinner("Detecting regimes with HMM..."):
         # Prepare data
         df_asset = df_ret_wide.select(["date", selected_asset]).rename(
@@ -165,7 +165,7 @@ if "regime_results" in st.session_state:
     # ==========================================================================
     # Regime Statistics
     # ==========================================================================
-    st.subheader("2️⃣ Regime Statistics")
+    st.subheader("2. Regime Statistics")
     
     col1, col2 = st.columns([1, 1])
     
@@ -194,7 +194,7 @@ if "regime_results" in st.session_state:
     # ==========================================================================
     # Performance by Regime
     # ==========================================================================
-    st.subheader("3️⃣ Performance by Regime")
+    st.subheader("3. Performance by Regime")
     
     perf = compute_regime_performance(
         df_regimes,
@@ -207,7 +207,7 @@ if "regime_results" in st.session_state:
         {
             'label': f"{row['regime']} Regime",
             'value': f"{row['mean_return']:.2%}",
-            'icon': '🐂' if 'Bull' in str(row['regime']) else ('🐻' if 'Bear' in str(row['regime']) else '⚠️'),
+            'icon': '',
         }
         for _, row in perf.iterrows()
     ], columns=3), unsafe_allow_html=True)
@@ -224,7 +224,7 @@ if "regime_results" in st.session_state:
     st.markdown(section_header(
         "Interactive Visualizations",
         "Explore regime dynamics through multiple perspectives",
-        "📊"
+        ""
     ), unsafe_allow_html=True)
     
     # Apply tab styling
@@ -251,11 +251,11 @@ color: {COLORS['text_primary']} !important;
 """, unsafe_allow_html=True)
     
     tab1, tab2, tab3, tab4, tab5 = st.tabs([
-        "📈 Regime States",
-        "📊 Probabilities",
-        "🔄 Transitions",
-        "💰 Performance",
-        "⏱️ Duration",
+        "Regime States",
+        "Probabilities",
+        "Transitions",
+        "Performance",
+        "Duration",
     ])
     
     with tab1:
@@ -308,7 +308,7 @@ color: {COLORS['text_primary']} !important;
     # ==========================================================================
     # Export
     # ==========================================================================
-    st.subheader("5️⃣ Export Results")
+    st.subheader("5. Export Results")
     
     col1, col2 = st.columns(2)
     
@@ -337,12 +337,12 @@ color: {COLORS['text_primary']} !important;
     st.session_state["current_regime"] = current_regime
     
     regime_colors = {
-        'Bull': ('#30D158', '🐂'),
-        'Bear': ('#FF9F0A', '🐻'),
-        'Crisis': ('#FF453A', '⚠️'),
+        'Bull': ('#30D158', ''),
+        'Bear': ('#FF9F0A', ''),
+        'Crisis': ('#FF453A', ''),
     }
     
-    color, icon = regime_colors.get(current_regime, ('#0A84FF', '📊'))
+    color, icon = regime_colors.get(current_regime, ('#0A84FF', ''))
     
     st.markdown(f"""
 <div style="background: linear-gradient(135deg, {color}22, {color}11); border: 2px solid {color}; border-radius: 16px; padding: 48px; margin: 32px 0; text-align: center;">
@@ -360,12 +360,12 @@ Detected for {asset_name} as of latest data point
 """, unsafe_allow_html=True)
 
 else:
-    st.info("👆 Click **Run Regime Detection** to get started.")
+    st.info("Click **Run Regime Detection** to get started.")
 
 # =============================================================================
 # Help Section
 # =============================================================================
-with st.expander("ℹ️ How to interpret regimes"):
+with st.expander("How to interpret regimes"):
     st.markdown("""
 ### Regime Interpretation
 
