@@ -212,6 +212,19 @@ def export_quant_metrics_to_excel(
         )
 
         # Summary row - use actual ticker n_obs (not aligned)
+        # Skip ticker if it has no valid data (all key metrics are None)
+        # This happens when ticker is invalid or has insufficient data for the period
+        key_metrics = [
+            cagr_result["cagr"],
+            beta_result["beta"],
+            sharpe_result["sharpe_ratio"],
+            mdd_result["max_drawdown"]
+        ]
+        
+        if all(m is None for m in key_metrics):
+            # Ticker has no usable data, skip it
+            continue
+        
         summary_rows.append({
             "ticker": ticker,
             "beta": beta_result["beta"],
