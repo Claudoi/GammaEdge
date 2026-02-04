@@ -1034,7 +1034,7 @@ if st.session_state.get("data_ready"):
                 "Risk-Free Rate (Annual %)",
                 min_value=0.0,
                 max_value=10.0,
-                value=2.0,
+                value=4.2,
                 step=0.1,
                 format="%.1f",
                 key="quant_rf_annual",
@@ -1057,7 +1057,7 @@ if st.session_state.get("data_ready"):
                 ],
                 index=0,
                 key="benchmark_preset",
-                help="Benchmarks updated to use Indices/Yields for maximum historical data availability.",
+                help="Benchmarks to use Indices/Yields for maximum historical data availability.",
             )
         
         with col_custom:
