@@ -878,7 +878,14 @@ if st.session_state.get("data_ready"):
     # Universe snapshot
     uni = df_prices.group_by("ticker").agg(pl.len().alias("n_obs")).sort("n_obs", descending=True)
     st.write("Universe snapshot (observations per ticker)")
-    fig_uni = px.bar(uni.to_pandas(), x="n_obs", y="ticker", orientation="h")
+    fig_uni = px.bar(
+        uni.to_pandas(), 
+        x="n_obs", 
+        y="ticker", 
+        orientation="h",
+        title="Number of Observations per Ticker",
+        labels={"n_obs": "Observations", "ticker": "Ticker"}
+    )
     show_plot(fig_uni, config={"scrollZoom": True, "displayModeBar": True})
 
     # Missing report (returns, wide)
