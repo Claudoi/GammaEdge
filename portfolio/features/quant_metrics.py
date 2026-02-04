@@ -27,8 +27,8 @@ import polars as pl
 # ============================================================================
 
 TRADING_DAYS_PER_YEAR = 252
-RF_ANNUAL_DEFAULT = 0.02
-RF_DAILY_DEFAULT = (1 + RF_ANNUAL_DEFAULT) ** (1 / TRADING_DAYS_PER_YEAR) - 1  # 0.00007926
+RF_ANNUAL_DEFAULT = 0.04  # Updated for 2026 (Federal Funds ~4%)
+RF_DAILY_DEFAULT = (1 + RF_ANNUAL_DEFAULT) ** (1 / TRADING_DAYS_PER_YEAR) - 1  # ~0.000155
 
 
 # ============================================================================
@@ -127,7 +127,7 @@ def calculate_beta_alpha(
     benchmark_returns: pl.Series,
     dates: pl.Series,
     benchmark_dates: pl.Series,
-    min_obs: int = 30,
+    min_obs: int = 60,  # Aligned with Sharpe Ratio for consistency
 ) -> dict[str, float | None]:
     """
     Calculate Beta and Alpha via OLS regression.

@@ -2,9 +2,10 @@
 Production-Grade Excel Export for Quant Metrics
 
 Exports quantitative metrics to audit-ready Excel workbook with 5 sheets:
-- DATA: Time series (date, ticker, adj_close, ret_1d)
-- SUMMARY: Period metrics per ticker (beta, alpha, sharpe, etc.)
-- METADATA: Standards and definitions
+- DATA: Time series (date, ticker, adj_close, ret_1d, log_ret, rel_volume, intraday_vol)
+- SUMMARY: Period metrics per ticker (18 total: beta, alpha, sharpe, sortino, treynor, 
+           info ratio, annual vol, max drawdown, cagr, calmar, moments, data quality)
+- METADATA: Standards, formulas, and academic references
 - DATA_QUALITY: Coverage, gaps, warnings
 - CORRELATION: Correlation matrix + sample sizes (if ≥2 tickers)
 """
@@ -32,10 +33,12 @@ from portfolio.features.quant_metrics import (
     calculate_calmar,
     calculate_correlation_matrix,
     calculate_data_quality,
+    calculate_information_ratio,
     calculate_max_drawdown,
     calculate_moments,
     calculate_returns,
     calculate_sharpe_ratio,
+    calculate_sortino_ratio,
 )
 from portfolio.features.quant_transforms import (
     compute_log_returns,
@@ -128,8 +131,16 @@ def export_quant_metrics_to_excel(
         if price_col not in df_prices.columns or ret_col not in df_returns.columns:
             continue
 
+        # Extract ticker data and FILTER NULLS to get actual observations
         ticker_prices = df_prices.select(["date", price_col]).rename({price_col: "adj_close"})
         ticker_returns = df_returns.select(["date", ret_col]).rename({ret_col: "ret"})
+        
+        # CRITICAL FIX: Drop null prices and returns BEFORE extracting dates
+        # This ensures ticker_dates only contains dates where ticker actually has data
+        ticker_prices = ticker_prices.drop_nulls(["adj_close"])
+        ticker_returns = ticker_returns.drop_nulls(["ret"])
+        
+        # Now extract dates from FILTERED data
         ticker_dates = ticker_returns["date"]
 
         # Beta & Alpha
@@ -167,6 +178,32 @@ def export_quant_metrics_to_excel(
         # Moments
         moments_result = calculate_moments(ticker_returns["ret"])
 
+        # Sortino Ratio
+        sortino_result = calculate_sortino_ratio(
+            returns=ticker_returns["ret"],
+            rf_annual=rf_annual,
+        )
+
+        # Information Ratio
+        ir_result = calculate_information_ratio(
+            returns=ticker_returns["ret"],
+            benchmark_returns=bench_returns["ret"],
+            dates=ticker_dates,
+            benchmark_dates=bench_dates,
+        )
+
+        # Annual Volatility (complement to Sharpe)
+        # Use volatility from Sharpe calculation (already computed)
+        annual_volatility = None
+        if sharpe_result["volatility"] is not None:
+            annual_volatility = sharpe_result["volatility"] * (TRADING_DAYS_PER_YEAR ** 0.5)
+
+        # Treynor Ratio (CAGR - RF) / Beta
+        treynor_ratio = None
+        if cagr_result["cagr"] is not None and beta_result["beta"] is not None:
+            if abs(beta_result["beta"]) > 1e-6:  # Avoid division by zero
+                treynor_ratio = (cagr_result["cagr"] - rf_annual) / beta_result["beta"]
+
         # Data Quality
         dq_result = calculate_data_quality(
             dates=ticker_dates,
@@ -174,7 +211,7 @@ def export_quant_metrics_to_excel(
             ticker=ticker,
         )
 
-        # Summary row
+        # Summary row - use actual ticker n_obs (not aligned)
         summary_rows.append({
             "ticker": ticker,
             "beta": beta_result["beta"],
@@ -182,19 +219,32 @@ def export_quant_metrics_to_excel(
             "alpha_annual": beta_result["alpha_annual"],
             "r_squared": beta_result["r_squared"],
             "sharpe_ratio": sharpe_result["sharpe_ratio"],
+            "sortino_ratio": sortino_result["sortino_ratio"],
+            "information_ratio": ir_result["information_ratio"],
+            "treynor_ratio": treynor_ratio,
             "max_drawdown": mdd_result["max_drawdown"],
             "cagr": cagr_result["cagr"],
             "calmar_ratio": calmar,
+            "annual_volatility": annual_volatility,
             "skewness": moments_result["skewness"],
             "kurtosis": moments_result["kurtosis"],
-            "n_obs": beta_result["n_obs"],
+            "n_obs": dq_result["n_obs"],
+            "n_obs_aligned": beta_result["n_obs"],
+            "data_loss_pct": beta_result["data_loss_pct"],
         })
 
         # Data quality row
         data_quality_rows.append(dq_result)
 
     # 5. Create DataFrames
-    df_summary = pl.DataFrame(summary_rows)
+    # CRITICAL: Force column order to match headers (Polars may reorder otherwise)
+    column_order = [
+        "ticker", "beta", "alpha_daily", "alpha_annual", "r_squared",
+        "sharpe_ratio", "sortino_ratio", "information_ratio", "treynor_ratio",
+        "max_drawdown", "cagr", "calmar_ratio", "annual_volatility",
+        "skewness", "kurtosis", "n_obs", "n_obs_aligned", "data_loss_pct",
+    ]
+    df_summary = pl.DataFrame(summary_rows).select(column_order)
     df_data_quality = pl.DataFrame(data_quality_rows)
 
     # 6. Prepare DATA sheet (long format)
@@ -513,12 +563,18 @@ def _generate_summary_sheet(wb: Workbook, df: pl.DataFrame) -> None:
         "alpha_annual",
         "r_squared",
         "sharpe_ratio",
+        "sortino_ratio",  # Phase 1
+        "information_ratio",  # Phase 1
+        "treynor_ratio",  # Phase 3
         "max_drawdown",
         "cagr",
         "calmar_ratio",
+        "annual_volatility",  # Phase 3
         "skewness",
         "kurtosis",
-        "n_obs",
+        "n_obs",  # Total observations for ticker
+        "n_obs_aligned",  # Observations used for beta (aligned with benchmark)
+        "data_loss_pct",  # % of ticker data not aligned with benchmark
     ]
     ws.append(headers)
     _style_header(ws, 1)
@@ -586,16 +642,60 @@ def _generate_metadata_sheet(
         ["sharpe_std", "std(returns)"],
         ["sharpe_formula", "mean(r - rf) / std(r) * sqrt(252)"],
         ["", ""],
+        ["# Sortino", ""],
+        ["sortino_downside", "Only penalizes downside volatility (returns < target)"],
+        ["sortino_formula", "mean(r - rf) / downside_deviation * sqrt(252)"],
+        ["sortino_target", "0 (uses excess returns < 0)"],
+        ["", ""],
+        ["# Information Ratio", ""],
+        ["info_ratio_desc", "Measures excess return per unit of tracking error vs benchmark"],
+        ["info_ratio_formula", "(mean_excess_annual) / tracking_error"],
+        ["tracking_error", "std(r_ticker - r_benchmark) * sqrt(252)"],
+        ["info_ratio_interpretation", "> 0.5 is good, > 1.0 is excellent"],
+        ["", ""],
+        ["# Treynor Ratio", ""],
+        ["treynor_desc", "Risk-adjusted return per unit of systematic risk (beta)"],
+        ["treynor_formula", "(CAGR - rf_annual) / beta"],
+        ["treynor_vs_sharpe", "Uses beta instead of total volatility"],
+        ["treynor_interpretation", "Higher is better; compare only assets with same benchmark"],
+        ["", ""],
+        ["# Annual Volatility", ""],
+        ["annual_vol_desc", "Annualized standard deviation of returns"],
+        ["annual_vol_formula", "std(daily_returns) * sqrt(252)"],
+        ["annual_vol_interpretation", "Lower = less risky; typical stocks: 15-35%"],
+        ["", ""],
         ["# Sample Sizes", ""],
         ["min_obs_sharpe", 60],
-        ["min_obs_beta", 30],
+        ["min_obs_beta", 60],  # Updated: was 30, now 60 for consistency
+        ["min_obs_sortino", 60],
+        ["min_obs_information_ratio", 30],
         ["min_obs_cagr", 252],
+        ["", ""],
+        ["# Academic References", ""],
+        ["sharpe_reference", "Sharpe (1966) - Mutual Fund Performance"],
+        ["sortino_reference", "Sortino & Price (1994) - Performance Measurement"],
+        ["treynor_reference", "Treynor (1965) - How to Rate Management"],
+        ["info_ratio_reference", "Goodwin (1998) - The Information Ratio"],
+        ["beta_reference", "Sharpe (1964) - Capital Asset Pricing Model"],
+        ["", ""],
+        ["# Observation Counts", ""],
+        ["n_obs", "Total non-null observations for each ticker (actual data availability)"],
+        ["n_obs_aligned", "Observations used for beta/alpha calculation (inner join with benchmark)"],
+        ["data_loss_pct", "Percentage of ticker data not aligned with benchmark dates"],
+        ["note", "n_obs_aligned may be less than n_obs if benchmark has gaps or different date range"],
         ["", ""],
         ["# Export Info", ""],
         ["date_range", f"{start} to {end}"],
         ["tickers", ", ".join(tickers)],
         ["generated_at", datetime.now().isoformat()],
         ["gammaedge_version", "1.0.0"],
+        ["", ""],
+        ["# Quality Standards", ""],
+        ["annualization", "252 trading days per year (NYSE standard)"],
+        ["return_type", "Simple returns: (P_t / P_t-1) - 1"],
+        ["price_adjustment", "Dividend and split adjusted (adj_close)"],
+        ["correlation_method", "Pearson correlation on aligned dates"],
+        ["statistical_software", "Polars + NumPy (institutional-grade)"],
     ]
 
     for row in metadata:
