@@ -1047,18 +1047,24 @@ if st.session_state.get("data_ready"):
         with col_bench:
             benchmark_preset = st.selectbox(
                 "Benchmark",
-                options=["SPY (S&P 500)", "QQQ (Nasdaq 100)", "IWM (Russell 2000)", 
-                         "AGG (US Bonds)", "GLD (Gold)", "Custom"],
+                options=[
+                    "^GSPC (S&P 500)", 
+                    "^NDX (Nasdaq 100)", 
+                    "^RUT (Russell 2000)", 
+                    "^TNX (US 10Y Treasury Yield)", 
+                    "^XAU (Gold/Silver Index)", 
+                    "Custom"
+                ],
                 index=0,
                 key="benchmark_preset",
-                help="Select benchmark for beta/alpha/IR calculations",
+                help="Benchmarks updated to use Indices/Yields for maximum historical data availability.",
             )
         
         with col_custom:
             if "Custom" in benchmark_preset:
                 benchmark_ticker = st.text_input(
                     "Custom Benchmark Ticker",
-                    value="SPY",
+                    value="^GSPC",
                     key="custom_benchmark",
                     help="Enter custom benchmark ticker symbol",
                 )
