@@ -774,7 +774,7 @@ elif mode == "Live Mode (Research)":
     # ──────────────────────────────────────────────────────────────────────────────
     # Action (compute) – store in session_state
     # ──────────────────────────────────────────────────────────────────────────────
-    if st.button("Load & Preview", type="primary"):
+    if st.button("🔄 Load & Preview", type="primary", use_container_width=True):
         if not tickers:
             st.error("Please provide at least one ticker.")
             st.stop()
@@ -793,7 +793,14 @@ elif mode == "Live Mode (Research)":
             gap_thr=int(gap_thr),
             topk_out=int(topk_out),
         )
-        st.session_state["data_payload"] = payload
+        st.session_state["data_payload"] = payload # Keep original name for consistency with render block
+        
+        # Save tickers and dates for auto-population in Quant Metrics
+        st.session_state["loaded_tickers"] = ",".join(tickers)
+        st.session_state["loaded_start_date"] = start
+        st.session_state["loaded_end_date"] = end
+        
+        st.success(f"✅ Loaded {len(tickers)} tickers")
         st.session_state["data_ready"] = True
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -968,12 +975,13 @@ if st.session_state.get("data_ready"):
         "Data is dividend-adjusted (availability depends on ticker history)."
     )
 
-    # Ticker input for Quant Metrics (independent from Live Mode)
+    # Ticker input for Quant Metrics (auto-populated from Data module if available)
+    default_quant_tickers = st.session_state.get("loaded_tickers", "AAPL,MSFT,GOOGL")
     quant_tickers_input = st.text_input(
         "Tickers for Quant Metrics (comma-separated)",
-        value="AAPL,MSFT,GOOGL",
+        value=default_quant_tickers,
         key="quant_tickers",
-        help="Enter ticker symbols separated by commas. Example: AAPL,MSFT,TSLA",
+        help="Enter ticker symbols separated by commas. Auto-populated from Data module when you load data.",
     )
 
     col_dates, col_params = st.columns([2, 2])
@@ -981,18 +989,21 @@ if st.session_state.get("data_ready"):
     with col_dates:
         col_start, col_end = st.columns(2)
         with col_start:
+            # Use loaded dates from Data module if available
+            default_start = st.session_state.get("loaded_start_date", date(2010, 1, 1))
             quant_start_date = st.date_input(
                 "Start date",
-                value=date(2010, 1, 1),
+                value=default_start,
                 min_value=date(1900, 1, 1),
                 max_value=date.today(),
                 key="quant_start_date",
-                help="Select start date. Data availability depends on ticker (some go back to 1900s).",
+                help="Auto-populated from Data module. Select start date for metrics calculation.",
             )
         with col_end:
+            default_end = st.session_state.get("loaded_end_date", date.today())
             quant_end_date = st.date_input(
                 "End date",
-                value=date.today(),
+                value=default_end,
                 min_value=date(1900, 1, 1),
                 max_value=date.today(),
                 key="quant_end_date",
@@ -1013,12 +1024,22 @@ if st.session_state.get("data_ready"):
             )
         with col_method:
             vol_method = st.selectbox(
-                "Volatility estimator",
-                options=["parkinson", "garman_klass"],
-                index=0,
-                key="vol_method",
-                help="Parkinson uses High-Low; Garman-Klass uses OHLC.",
+                "Volatility Estimator",
+                ["parkinson", "garman_klass"],
+                key="quant_vol_method",
+                help="Parkinson: Uses High/Low. Garman-Klass: Uses OHLC."
             )
+            
+            rf_annual = st.number_input(
+                "Risk-Free Rate (Annual %)",
+                min_value=0.0,
+                max_value=10.0,
+                value=4.2,
+                step=0.1,
+                format="%.1f",
+                key="quant_rf_annual",
+                help="Annual risk-free rate for Sharpe, Sortino, and Treynor ratios. Default: 2% (US 10Y Treasury ~2024)"
+            ) / 100.0  # Convert percentage to decimal
         
         # Benchmark selector
         st.markdown("**Benchmark Selection**")
@@ -1026,18 +1047,24 @@ if st.session_state.get("data_ready"):
         with col_bench:
             benchmark_preset = st.selectbox(
                 "Benchmark",
-                options=["SPY (S&P 500)", "QQQ (Nasdaq 100)", "IWM (Russell 2000)", 
-                         "AGG (US Bonds)", "GLD (Gold)", "Custom"],
+                options=[
+                    "^GSPC (S&P 500)", 
+                    "^NDX (Nasdaq 100)", 
+                    "^RUT (Russell 2000)", 
+                    "^TNX (US 10Y Treasury Yield)", 
+                    "^XAU (Gold/Silver Index)", 
+                    "Custom"
+                ],
                 index=0,
                 key="benchmark_preset",
-                help="Select benchmark for beta/alpha/IR calculations",
+                help="Benchmarks to use Indices/Yields for maximum historical data availability.",
             )
         
         with col_custom:
             if "Custom" in benchmark_preset:
                 benchmark_ticker = st.text_input(
                     "Custom Benchmark Ticker",
-                    value="SPY",
+                    value="^GSPC",
                     key="custom_benchmark",
                     help="Enter custom benchmark ticker symbol",
                 )
@@ -1251,10 +1278,10 @@ if st.session_state.get("data_ready"):
                             tickers=quant_tickers,
                             start=str(quant_start_date),
                             end=str(quant_end_date),
-                            benchmark=benchmark_ticker,  # Use selected benchmark
-                            rf_annual=0.02,   # Default risk-free rate
-                            vol_lookback=int(vol_lookback),  # Pass volume lookback
-                            vol_method=vol_method,  # Pass volatility method
+                            benchmark=benchmark_ticker,
+                            rf_annual=rf_annual,  # Use user-selected RF rate
+                            vol_lookback=int(vol_lookback),
+                            vol_method=vol_method,
                         )
                         st.session_state["quant_excel_bytes"] = excel_bytes
                         st.success("✅ Excel file generated successfully!")
