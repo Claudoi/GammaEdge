@@ -18,8 +18,7 @@ import pandas as pd
 import plotly.express as px
 import polars as pl
 import streamlit as st
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
@@ -447,6 +446,15 @@ def _verify_openssh_signature_pure(
     sig_path: Path, data_path: Path, allowed_signers_path: Path
 ) -> bool:
     """Pure Python verification of OpenSSH signatures to avoid subprocess hangs."""
+    try:
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
+    except ImportError:
+        raise ImportError(
+            "Audit Mode requires the 'cryptography' package. "
+            "Install it with: pip install cryptography"
+        )
+
     try:
         # 1. Load Public Key
         with open(allowed_signers_path) as f:
