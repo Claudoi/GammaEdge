@@ -433,6 +433,8 @@ if w_out is not None:
     st.session_state["opt_weights"] = np.asarray(w_out, dtype=float)
     st.session_state["opt_mode"] = mode
     st.session_state["bench_weights"] = np.asarray(w_bench, dtype=float)
+    st.session_state["opt_rf"] = rf
+    st.session_state["opt_bench_kind"] = bench_kind
 
     c1, c2 = st.columns([2, 1])
     with c1:

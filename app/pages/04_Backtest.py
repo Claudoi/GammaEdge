@@ -397,7 +397,11 @@ with st.sidebar:
 
     st.markdown("---")
     st.subheader("Benchmark (for Brinson)")
-    bench_mode = st.selectbox("Benchmark mode", ["equal", "static_first_day"], index=0)
+    _opt_bench = st.session_state.get("opt_bench_kind", "Equal-Weight")
+    _bench_default_idx = 0 if _opt_bench == "Equal-Weight" else 1
+    bench_mode = st.selectbox(
+        "Benchmark mode", ["equal", "static_first_day"], index=_bench_default_idx,
+    )
 
     st.markdown("---")
     st.subheader("Hyperparameter Grid Search")
@@ -534,6 +538,9 @@ if not do_grid:
         st.session_state["bt"] = bt_obj
         st.session_state["df_ret_wide"] = df_pl
         st.session_state["returns_wide"] = df_pl
+        # Persist metrics for Attribution / Reporting pages
+        st.session_state["metrics_df"] = bt_metrics.compute_backtest_metrics(bt_obj)
+        st.session_state["bench_meta"] = {"scheme": bench_mode}
         with contextlib.suppress(Exception):
             st.toast("Artifacts saved for 05_Attribution.", icon="💾")
 
@@ -880,6 +887,7 @@ if not do_grid and bt is not None:
             st.session_state["df_brinson"] = df_brinson
             st.session_state["Wb_daily"] = Wb_daily
             st.session_state["groups_idx"] = groups_idx
+            st.session_state["group_map"] = groups_map
 
         except Exception as e:
             st.info(f"Brinson attribution not available: {e}")

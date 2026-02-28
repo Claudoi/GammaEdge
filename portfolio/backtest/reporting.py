@@ -378,16 +378,36 @@ class ReportFigure:
     height: int = 700
 
 
+def _kaleido_available() -> bool:
+    """Check if kaleido can render (requires Chrome on newer versions)."""
+    try:
+        import kaleido  # noqa: F401
+        # Quick smoke-test: create a tiny figure and try to render it
+        _test_fig = go.Figure(go.Scatter(x=[0], y=[0]))
+        _test_fig.to_image(format="png", width=50, height=50, engine="kaleido")
+        return True
+    except Exception:
+        return False
+
+
 def _fig_to_png_bytes(fig: go.Figure, width: int = 1100, height: int = 600) -> bytes:
-    """Render a Plotly figure to PNG bytes using kaleido (returns bytes)."""
-    png_any = fig.to_image(format="png", width=width, height=height, engine="kaleido")
+    """Render a Plotly figure to PNG bytes using kaleido (returns bytes).
+
+    Raises RuntimeError if kaleido/Chrome is not available.
+    """
+    try:
+        png_any = fig.to_image(format="png", width=width, height=height, engine="kaleido")
+    except Exception as exc:
+        raise RuntimeError(
+            "Cannot render figures to PNG (kaleido requires Chrome). "
+            "HTML export will use interactive charts instead."
+        ) from exc
     if isinstance(png_any, bytes):
         return png_any
     if isinstance(png_any, bytearray):
         return bytes(png_any)
     if isinstance(png_any, memoryview):
         return png_any.tobytes()
-    # Last resort: cast so mypy is satisfied; will error at runtime if incompatible
     return cast(bytes, png_any)
 
 
@@ -626,6 +646,50 @@ def _render_figures_block(fig_srcs: list[tuple[str, str]]) -> str:
     return "\n".join(parts) if parts else "<p>No figures.</p>"
 
 
+def _render_figures_block_interactive(
+    figures: list[ReportFigure],
+) -> str:
+    """
+    Render figures as interactive Plotly charts (no kaleido/Chrome needed).
+    Uses Plotly.js CDN for the first figure, then reuses it for subsequent ones.
+    Grouped by logical sections.
+    """
+    if not figures:
+        return "<p>No figures.</p>"
+
+    # Group by section name, preserving input order
+    grouped: dict[str, list[ReportFigure]] = {name: [] for name in _SECTION_ORDER}
+    for rf in figures:
+        section = _classify_figure_section(rf.title)
+        if section not in grouped:
+            grouped[section] = []
+        grouped[section].append(rf)
+
+    parts: list[str] = []
+    first = True
+    for section in _SECTION_ORDER:
+        figs = grouped.get(section) or []
+        if not figs:
+            continue
+        parts.append(f"<h3>{section}</h3>")
+        for rf in figs:
+            # Include plotly.js only with first figure, reuse for rest
+            plotly_js = "cdn" if first else False
+            first = False
+            fig_html = rf.fig.to_html(
+                full_html=False,
+                include_plotlyjs=plotly_js,
+                config={"responsive": True, "displayModeBar": True},
+            )
+            parts.append(
+                f'<div class="imgwrap">'
+                f'{fig_html}'
+                f'<div class="caption">{rf.title}</div></div>'
+            )
+
+    return "\n".join(parts) if parts else "<p>No figures.</p>"
+
+
 def render_html(
     ctx: dict[str, Any],
     figures: list[ReportFigure],
@@ -634,7 +698,11 @@ def render_html(
     h1: str = "Portfolio Report",
 ) -> bytes:
     """
-    Render a complete HTML with inline base64 PNG figures (no external assets).
+    Render a complete HTML report.
+
+    Strategy:
+    - If kaleido/Chrome is available: inline static PNG images (self-contained).
+    - Otherwise: interactive Plotly charts via CDN (richer experience, needs internet).
 
     Figures are automatically grouped into logical sections:
     - Performance Overview
@@ -643,11 +711,17 @@ def render_html(
     - Factor Decomposition (PCA)
     - Other Figures
     """
-    fig_srcs: list[tuple[str, str]] = []
-    for rf in figures:
-        png = _fig_to_png_bytes(rf.fig, rf.width, rf.height)
-        src = _png_bytes_to_b64_img_src(png)
-        fig_srcs.append((rf.title, src))
+    use_static = _kaleido_available()
+
+    if use_static:
+        fig_srcs: list[tuple[str, str]] = []
+        for rf in figures:
+            png = _fig_to_png_bytes(rf.fig, rf.width, rf.height)
+            src = _png_bytes_to_b64_img_src(png)
+            fig_srcs.append((rf.title, src))
+        figures_block = _render_figures_block(fig_srcs)
+    else:
+        figures_block = _render_figures_block_interactive(figures)
 
     html = _HTML_SHELL.format(
         title=page_title,
@@ -657,29 +731,27 @@ def render_html(
         period_end=ctx.get("period_end", "—"),
         metrics_block=_render_metrics_block(ctx),
         tables_block=_render_tables_block(ctx),
-        figures_block=_render_figures_block(fig_srcs),
+        figures_block=figures_block,
     )
     return html.encode("utf-8")
 
 
 def render_pdf(
-    ctx: dict[str, Any],  # noqa: ARG001 (ctx reserved for future metadata usage)
+    ctx: dict[str, Any],
     figures: list[ReportFigure],
     *,
     title: str = "GammaEdge Report",
 ) -> bytes:
     """
-    Render a simple PDF using reportlab and the same figures.
-    If reportlab is not available, raises a RuntimeError.
+    Render a PDF using reportlab.
+
+    Strategy:
+    - If kaleido/Chrome is available: embed static PNG figures.
+    - Otherwise: generate a metrics-only PDF (tables + metadata, no charts).
+    - If reportlab is missing: raises RuntimeError.
     """
     if canvas is None or A4 is None or ImageReader is None:
         raise RuntimeError("reportlab is not installed; please `pip install reportlab`")
-
-    # Render figures first
-    rendered: list[tuple[str, bytes]] = []
-    for rf in figures:
-        png = _fig_to_png_bytes(rf.fig, rf.width, rf.height)
-        rendered.append((rf.title, png))
 
     buffer = io.BytesIO()
     c = canvas.Canvas(buffer, pagesize=A4)
@@ -699,18 +771,76 @@ def render_pdf(
     c.setFont("Helvetica", 10)
     c.drawString(margin, h_page - margin - 18, meta)
 
-    for i, (fig_title, png_bytes) in enumerate(rendered):
-        if i > 0:
+    # Metrics on first page
+    y_cursor = h_page - margin - 50
+    metrics = ctx.get("metrics", {})
+    if metrics:
+        c.setFont("Helvetica-Bold", 12)
+        c.drawString(margin, y_cursor, "Key Metrics")
+        y_cursor -= 18
+        c.setFont("Helvetica", 9)
+        for k, v in metrics.items():
+            val_str = f"{v:.4f}" if isinstance(v, float) else str(v)
+            c.drawString(margin + 8, y_cursor, f"{k}: {val_str}")
+            y_cursor -= 14
+            if y_cursor < margin + 20:
+                c.showPage()
+                y_cursor = h_page - margin
+
+    # Try to render figures with kaleido
+    use_static = _kaleido_available()
+
+    if use_static:
+        rendered: list[tuple[str, bytes]] = []
+        for rf in figures:
+            try:
+                png = _fig_to_png_bytes(rf.fig, rf.width, rf.height)
+                rendered.append((rf.title, png))
+            except Exception:
+                continue
+
+        for i, (fig_title, png_bytes) in enumerate(rendered):
             c.showPage()
-        img = ImageReader(io.BytesIO(png_bytes))
-        iw, ih = img.getSize()
-        scale = min(max_w / iw, max_h / ih)
-        draw_w, draw_h = iw * scale, ih * scale
-        x = margin
-        y = (h_page - margin - 40) - draw_h  # below header
-        c.drawImage(img, x, y, width=draw_w, height=draw_h, preserveAspectRatio=True, mask="auto")
+            # Page header
+            c.setFont("Helvetica-Bold", 16)
+            c.drawString(margin, h_page - margin, title)
+            c.setFont("Helvetica", 10)
+            c.drawString(margin, h_page - margin - 18, meta)
+
+            img = ImageReader(io.BytesIO(png_bytes))
+            iw, ih = img.getSize()
+            scale = min(max_w / iw, max_h / ih)
+            draw_w, draw_h = iw * scale, ih * scale
+            x = margin
+            y = (h_page - margin - 40) - draw_h
+            c.drawImage(
+                img, x, y, width=draw_w, height=draw_h,
+                preserveAspectRatio=True, mask="auto",
+            )
+            c.setFont("Helvetica", 10)
+            c.drawString(margin, y - 14, fig_title)
+    else:
+        # Fallback: note in the PDF that figures need the HTML export
+        c.showPage()
+        c.setFont("Helvetica-Bold", 14)
+        c.drawString(margin, h_page - margin, "Figures")
         c.setFont("Helvetica", 10)
-        c.drawString(margin, y - 14, fig_title)
+        c.drawString(
+            margin, h_page - margin - 20,
+            "Interactive charts are available in the HTML export.",
+        )
+        c.drawString(
+            margin, h_page - margin - 36,
+            "(Static PNG rendering requires Chrome/kaleido, not available in this environment.)",
+        )
+        # List figure titles
+        y_cursor = h_page - margin - 60
+        for rf in figures:
+            c.drawString(margin + 8, y_cursor, f"• {rf.title}")
+            y_cursor -= 16
+            if y_cursor < margin + 20:
+                c.showPage()
+                y_cursor = h_page - margin
 
     c.showPage()
     c.save()
