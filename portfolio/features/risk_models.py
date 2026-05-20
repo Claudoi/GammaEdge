@@ -324,12 +324,22 @@ def covariance(
         lam = float(ewma_lambda)
         mu = np.nanmean(X, axis=0, keepdims=True)
         Xc = X - mu
-        Sigma = np.zeros((N, N), dtype=np.float64)
-        for t in range(T):
-            xt = Xc[t : t + 1, :]
-            if np.isnan(xt).any():
-                continue
-            Sigma = lam * Sigma + (1.0 - lam) * (xt.T @ xt)
+
+        # Vectorized EWMA: equivalent to the recurrence
+        #   Σ_T = (1-λ) * Σ_t λ^(T_eff-1-t) x_t x_t^T
+        # computed as X_w^T @ X with X_w = X * w[:, None] and
+        # w[t] = (1-λ) * λ^(T_eff-1-t). Rows containing NaN are dropped,
+        # matching the original loop's `continue` semantics.
+        valid_mask = ~np.isnan(Xc).any(axis=1)
+        Xc_valid = Xc[valid_mask]
+        T_eff = Xc_valid.shape[0]
+        if T_eff == 0:
+            Sigma = np.eye(N, dtype=np.float64) * 1e-6
+        else:
+            exponents = np.arange(T_eff - 1, -1, -1, dtype=np.float64)
+            weights = (1.0 - lam) * (lam**exponents)
+            Xc_weighted = Xc_valid * weights[:, None]
+            Sigma = Xc_weighted.T @ Xc_valid
     else:
         raise ValueError(f"Unknown covariance method: {method}")
 
