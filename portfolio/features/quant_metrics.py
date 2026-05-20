@@ -16,6 +16,8 @@ Standards:
 
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import polars as pl
 
@@ -247,7 +249,7 @@ def calculate_sharpe_ratio(
     rf_annual: float = RF_ANNUAL_DEFAULT,
     min_obs: int = 60,
     annualize: bool = True,
-) -> dict[str, float | None]:
+) -> dict[str, float | str | None]:
     """
     Calculate Sharpe Ratio.
 
@@ -614,7 +616,7 @@ def calculate_moments(
 def calculate_correlation_matrix(
     returns_wide: pl.DataFrame,
     return_col_prefix: str = "ret_",
-) -> dict[str, pl.DataFrame | None]:
+) -> dict[str, pl.DataFrame | str | None]:
     """
     Calculate pairwise correlation matrix on returns.
 
@@ -705,7 +707,7 @@ def calculate_data_quality(
     dates: pl.Series,
     benchmark_dates: pl.Series,
     ticker: str,
-) -> dict[str, any]:
+) -> dict[str, Any]:
     """
     Calculate data coverage and gaps.
 
@@ -821,7 +823,7 @@ def calculate_sortino_ratio(
     target_return: float = 0.0,
     min_obs: int = 60,
     annualize: bool = True,
-) -> dict[str, float | None]:
+) -> dict[str, float | str | None]:
     """
     Calculate Sortino Ratio (penalizes only downside volatility).
 
@@ -910,7 +912,7 @@ def calculate_information_ratio(
     dates: pl.Series,
     benchmark_dates: pl.Series,
     min_obs: int = 30,
-) -> dict[str, float | None]:
+) -> dict[str, float | str | None]:
     """
     Calculate Information Ratio (excess return / tracking error).
 
@@ -1215,7 +1217,7 @@ def calculate_treynor_ratio(
     beta: float,
     rf_annual: float = RF_ANNUAL_DEFAULT,
     min_obs: int = 60,
-) -> dict[str, float | None]:
+) -> dict[str, float | str | None]:
     """
     Calculate Treynor Ratio (return per unit of systematic risk).
 
@@ -1289,7 +1291,7 @@ def calculate_capture_ratios(
     dates: pl.Series,
     benchmark_dates: pl.Series,
     min_obs: int = 30,
-) -> dict[str, float | None]:
+) -> dict[str, float | str | None]:
     """
     Calculate Up/Down Capture Ratios (asymmetry vs benchmark).
 
