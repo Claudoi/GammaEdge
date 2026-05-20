@@ -21,19 +21,23 @@ def test_resample_simple_returns():
 
 def test_fetch_yfinance_missing_ticker_raises():
     """SILENT-2: If yfinance returns fewer tickers than requested, raise ValueError."""
-    mock_close = pd.DataFrame(
-        {
-            "AAPL": np.random.default_rng(0).normal(150, 5, 20),
-            "MSFT": np.random.default_rng(1).normal(300, 10, 20),
-        },
-        index=pd.date_range("2024-01-01", periods=20),
+    dates = pd.date_range("2024-01-01", periods=20, name="Date")
+    rng = np.random.default_rng(0)
+    # Build ticker-first MultiIndex: (ticker, field) — matches group_by="ticker" output
+    arrays = [
+        ["AAPL", "AAPL", "MSFT", "MSFT"],
+        ["Close", "Open", "Close", "Open"],
+    ]
+    columns = pd.MultiIndex.from_arrays(arrays, names=["Ticker", "Price"])
+    mock_df = pd.DataFrame(
+        rng.normal(200, 10, (20, 4)),
+        index=dates,
+        columns=columns,
     )
-    mock_close.index.name = "Date"
-    mock_df = pd.concat({"Close": mock_close}, axis=1)
 
     with (
         patch("portfolio.io.data_loader.yf.download", return_value=mock_df),
-        pytest.raises(ValueError, match="INVALID_TICKER"),
+        pytest.raises(ValueError, match="yfinance failed to download data for:"),
     ):
         _fetch_yfinance_close(
             tickers=("AAPL", "MSFT", "INVALID_TICKER"),
@@ -46,15 +50,19 @@ def test_fetch_yfinance_missing_ticker_raises():
 
 def test_fetch_yfinance_all_tickers_present_ok():
     """If yfinance returns all tickers, no exception should be raised."""
-    mock_close = pd.DataFrame(
-        {
-            "AAPL": np.random.default_rng(0).normal(150, 5, 20),
-            "MSFT": np.random.default_rng(1).normal(300, 10, 20),
-        },
-        index=pd.date_range("2024-01-01", periods=20),
+    dates = pd.date_range("2024-01-01", periods=20, name="Date")
+    rng = np.random.default_rng(0)
+    # Build ticker-first MultiIndex: (ticker, field) — matches group_by="ticker" output
+    arrays = [
+        ["AAPL", "AAPL", "MSFT", "MSFT"],
+        ["Close", "Open", "Close", "Open"],
+    ]
+    columns = pd.MultiIndex.from_arrays(arrays, names=["Ticker", "Price"])
+    mock_df = pd.DataFrame(
+        rng.normal(200, 10, (20, 4)),
+        index=dates,
+        columns=columns,
     )
-    mock_close.index.name = "Date"
-    mock_df = pd.concat({"Close": mock_close}, axis=1)
 
     with patch("portfolio.io.data_loader.yf.download", return_value=mock_df):
         result = _fetch_yfinance_close(
@@ -65,6 +73,6 @@ def test_fetch_yfinance_all_tickers_present_ok():
             adjust=True,
         )
     # Result should contain both tickers
-    result_cols = set(result.columns) - {"Date", "date"}
+    result_cols = set(result.columns) - {"Date"}
     assert "AAPL" in result_cols
     assert "MSFT" in result_cols
