@@ -131,9 +131,7 @@ class EnhancedCalendar:
         # Fallback
         if d.weekday() >= 5:
             return False
-        if d in self._holidays:
-            return False
-        return True
+        return d not in self._holidays
 
     def is_early_close(self, d: date) -> bool:
         """Verifica si es día con cierre temprano."""

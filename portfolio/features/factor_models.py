@@ -205,7 +205,6 @@ def compute_factor_loadings(
     se_residual = np.sqrt(ss_res / (n - k - 1))
 
     # Standard error of alpha
-    X_centered = X - X.mean(axis=0)
     X_var = np.var(X, axis=0, ddof=1)
     se_alpha = se_residual * np.sqrt(1 / n + np.sum(X.mean(axis=0) ** 2 / (n * X_var)))
 

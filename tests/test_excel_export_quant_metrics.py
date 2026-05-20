@@ -9,10 +9,8 @@ Tests verify:
 """
 
 import io
-from datetime import date
 
 import openpyxl
-import polars as pl
 import pytest
 
 from portfolio.io.excel_export import export_quant_metrics_to_excel
@@ -172,7 +170,9 @@ class TestMetadataSheet:
         ws = wb["METADATA"]
 
         # Extract all keys from column A
-        keys = [cell.value for cell in ws["A"] if cell.value and not str(cell.value).startswith("#")]
+        keys = [
+            cell.value for cell in ws["A"] if cell.value and not str(cell.value).startswith("#")
+        ]
 
         required_keys = [
             "provider",
@@ -266,7 +266,9 @@ class TestCorrelationSheet:
 
         # Read correlation values
         corr_values = {}
-        for i, row in enumerate(ws.iter_rows(min_row=3, max_row=2 + len(headers), values_only=True), start=0):
+        for _i, row in enumerate(
+            ws.iter_rows(min_row=3, max_row=2 + len(headers), values_only=True), start=0
+        ):
             ticker = row[0]
             corr_values[ticker] = row[1 : len(headers) + 1]
 

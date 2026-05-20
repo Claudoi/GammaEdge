@@ -132,15 +132,9 @@ class TurnoverControlledOptimizer:
         n = self.n_assets
         mu = expected_returns
 
-        if covariance is None:
-            sigma = np.eye(n) * 0.01
-        else:
-            sigma = covariance
+        sigma = np.eye(n) * 0.01 if covariance is None else covariance
 
-        if prev_weights is None:
-            w_prev = np.ones(n) / n
-        else:
-            w_prev = prev_weights
+        w_prev = np.ones(n) / n if prev_weights is None else prev_weights
 
         lam = self.config.risk_aversion
         gamma = self.config.turnover_penalty  # γ alto
@@ -157,7 +151,7 @@ class TurnoverControlledOptimizer:
         ]
 
         bounds = []
-        for i, asset in enumerate(self.config.assets):
+        for _i, asset in enumerate(self.config.assets):
             if asset == "BIL":
                 bounds.append((self.config.min_weight, self.config.max_weight_cash))
             else:
@@ -295,7 +289,7 @@ class AllocationBacktestV2:
         days_since_rebalance = self.config.min_holding_days  # Allow first rebalance
         n_rebalances = 0
 
-        for i, row in enumerate(df.iter_rows(named=True)):
+        for _i, row in enumerate(df.iter_rows(named=True)):
             d = row["date"]
 
             # Forward returns del día
@@ -308,10 +302,7 @@ class AllocationBacktestV2:
                 exp_rets = rets
 
             # Covariance
-            if covariance_func:
-                cov = covariance_func(df.filter(pl.col("date") < d))
-            else:
-                cov = None
+            cov = covariance_func(df.filter(pl.col("date") < d)) if covariance_func else None
 
             # Optimizar (con γ alto)
             raw_target = self.optimizer.optimize(exp_rets, cov, current_weights)
@@ -348,7 +339,7 @@ class AllocationBacktestV2:
             new_equity = equity[-1] * (1 + port_return)
             equity.append(new_equity)
 
-            weights_history.append({a: w for a, w in zip(assets, new_weights)})
+            weights_history.append(dict(zip(assets, new_weights, strict=False)))
             returns_history.append(port_return)
             turnovers.append(turnover)
 

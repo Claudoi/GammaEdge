@@ -187,10 +187,12 @@ class InstrumentMaster:
 
         # Lookup histórico
         for mapping in self._ticker_history:
-            if mapping.ticker.upper() == ticker.upper():
-                if mapping.valid_from <= as_of:
-                    if mapping.valid_to is None or mapping.valid_to > as_of:
-                        return mapping.instrument_id
+            if (
+                mapping.ticker.upper() == ticker.upper()
+                and mapping.valid_from <= as_of
+                and (mapping.valid_to is None or mapping.valid_to > as_of)
+            ):
+                return mapping.instrument_id
 
         return None
 
@@ -204,10 +206,12 @@ class InstrumentMaster:
     def get_ticker_as_of(self, instrument_id: str, as_of: date) -> str | None:
         """Obtiene el ticker que tenía un instrumento en una fecha."""
         for mapping in self._ticker_history:
-            if mapping.instrument_id == instrument_id:
-                if mapping.valid_from <= as_of:
-                    if mapping.valid_to is None or mapping.valid_to > as_of:
-                        return mapping.ticker
+            if (
+                mapping.instrument_id == instrument_id
+                and mapping.valid_from <= as_of
+                and (mapping.valid_to is None or mapping.valid_to > as_of)
+            ):
+                return mapping.ticker
         return None
 
     def get_instrument(self, instrument_id: str) -> Instrument | None:

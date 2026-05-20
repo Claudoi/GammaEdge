@@ -190,7 +190,7 @@ class V1FeatureBuilder:
             return pl.DataFrame()
 
         df_wide = dfs[0]
-        for i, df_other in enumerate(dfs[1:], start=1):
+        for _i, df_other in enumerate(dfs[1:], start=1):
             df_wide = df_wide.join(
                 df_other,
                 on=date_col,

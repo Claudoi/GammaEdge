@@ -11,7 +11,7 @@ import polars as pl
 
 logger = logging.getLogger(__name__)
 
-from portfolio.core.compat import dataclass_compat as dataclass
+from portfolio.core.compat import dataclass_compat as dataclass  # noqa: E402  # after logger setup
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Types / dataclasses
@@ -163,20 +163,15 @@ def backtest_vectorized(
     tickers_all = [c for c in df.columns if c != "date"]
     float_cols = {t for t in tickers_all if df[t].dtype in (pl.Float32, pl.Float64)}
     total_nulls = sum(df.select(tickers_all).null_count().row(0))
-    total_nans = sum(
-        df.select([
-            pl.col(t).is_nan().sum().alias(t)
-            for t in float_cols
-        ]).row(0)
-    )
+    total_nans = sum(df.select([pl.col(t).is_nan().sum().alias(t) for t in float_cols]).row(0))
     if total_nulls > 0 or total_nans > 0:
-        not_null_mask = pl.all_horizontal(*[
-            pl.col(t).is_not_null() & (
-                pl.col(t).is_nan().not_() if t in float_cols
-                else pl.lit(True)
-            )
-            for t in tickers_all
-        ])
+        not_null_mask = pl.all_horizontal(
+            *[
+                pl.col(t).is_not_null()
+                & (pl.col(t).is_nan().not_() if t in float_cols else pl.lit(True))
+                for t in tickers_all
+            ]
+        )
         valid_rows = df.filter(not_null_mask)
         if valid_rows.is_empty():
             return {"error": "No common valid date across all tickers"}

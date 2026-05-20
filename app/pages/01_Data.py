@@ -450,11 +450,11 @@ def _verify_openssh_signature_pure(
     try:
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-    except ImportError:
+    except ImportError as exc:
         raise ImportError(
             "Audit Mode requires the 'cryptography' package. "
             "Install it with: pip install cryptography"
-        )
+        ) from exc
 
     try:
         # 1. Load Public Key

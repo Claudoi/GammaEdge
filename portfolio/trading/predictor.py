@@ -310,14 +310,19 @@ class WalkForwardValidator:
             predictor.fit(df_train_feat, df_train_ret)
 
             # Función para expected returns
-            def expected_returns_func(df_history):
+            # Bind loop vars via defaults so each closure captures this iteration's values.
+            def expected_returns_func(
+                df_history,
+                _df_test_feat=df_test_feat,
+                _predictor=predictor,
+            ):
                 # Merge con features
                 if df_history.height == 0:
                     return np.zeros(len(self.allocation_config.assets))
 
                 last_date = df_history["date"].max()
-                feat_row = df_test_feat.filter(pl.col(date_col) <= last_date).tail(1)
-                return predictor.predict(feat_row)
+                feat_row = _df_test_feat.filter(pl.col(date_col) <= last_date).tail(1)
+                return _predictor.predict(feat_row)
 
             # Rolling covariance
             def covariance_func(df_history):

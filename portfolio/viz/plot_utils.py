@@ -58,6 +58,7 @@ DEFAULT_PLOTLY_CONFIG: dict[str, Any] = {
 # Try to import GammaEdge theme (optional - gracefully fallback if not available)
 try:
     from app.viz.plotly_theme import apply_gammaedge_theme
+
     _HAS_GAMMAEDGE_THEME = True
 except ImportError:
     _HAS_GAMMAEDGE_THEME = False

@@ -152,7 +152,7 @@ class GoldenExcelExporter:
 
         # Exportar
         try:
-            import xlsxwriter
+            import xlsxwriter  # noqa: F401  # availability check; used by _export_with_xlsxwriter
 
             self._export_with_xlsxwriter(df_data, df_instruments, metadata, output_path)
         except ImportError:
@@ -282,7 +282,6 @@ class GoldenExcelExporter:
                 "border": 1,
             }
         )
-        date_format = workbook.add_format({"num_format": "yyyy-mm-dd"})
         number_format = workbook.add_format({"num_format": "#,##0.00"})
         pct_format = workbook.add_format({"num_format": "0.00%"})
 

@@ -805,7 +805,7 @@ class DatasetFreezer:
             common_start = common_end = None
 
         # Schema hash
-        schema_info = {name: str(dtype) for name, dtype in zip(df.columns, df.dtypes)}
+        schema_info = {name: str(dtype) for name, dtype in zip(df.columns, df.dtypes, strict=False)}
         schema_hash = hashlib.sha256(json.dumps(schema_info, sort_keys=True).encode()).hexdigest()[
             :16
         ]
@@ -850,7 +850,6 @@ class DatasetFreezer:
             header_fmt = workbook.add_format(
                 {"bold": True, "bg_color": "#1a1a2e", "font_color": "white", "border": 1}
             )
-            date_fmt = workbook.add_format({"num_format": "yyyy-mm-dd"})
 
             # 1. DATA
             ws_data = workbook.add_worksheet("DATA")

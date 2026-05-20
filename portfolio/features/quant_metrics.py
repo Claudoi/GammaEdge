@@ -16,11 +16,8 @@ Standards:
 
 from __future__ import annotations
 
-from typing import Literal
-
 import numpy as np
 import polars as pl
-
 
 # ============================================================================
 # Constants
@@ -39,13 +36,13 @@ RF_DAILY_DEFAULT = (1 + RF_ANNUAL_DEFAULT) ** (1 / TRADING_DAYS_PER_YEAR) - 1  #
 def _as_pl_date(s: pl.Series) -> pl.Series:
     """
     Normalize any date-like Series to Polars Date.
-    
+
     Handles:
       - pl.Date (already correct)
       - pl.Datetime (cast to Date)
       - Python date/datetime stored as object
       - ISO strings
-    
+
     This prevents "Hash Inner Join between object and object" errors.
     """
     if s.dtype == pl.Date:
@@ -110,9 +107,7 @@ def calculate_returns(
         ret_col = f"ret_{ticker}"
 
         # Simple return: (P_t - P_{t-1}) / P_{t-1}
-        returns_exprs.append(
-            (pl.col(price_col) / pl.col(price_col).shift(1) - 1.0).alias(ret_col)
-        )
+        returns_exprs.append((pl.col(price_col) / pl.col(price_col).shift(1) - 1.0).alias(ret_col))
 
     return prices_wide.select(returns_exprs)
 
@@ -397,12 +392,12 @@ def calculate_max_drawdown(
 
     # Find peak and trough indices
     mdd_idx = np.argmin(drawdown)
-    peak_idx = np.argmax(running_max[:mdd_idx + 1]) if mdd_idx > 0 else 0
+    peak_idx = np.argmax(running_max[: mdd_idx + 1]) if mdd_idx > 0 else 0
 
     # Find recovery (if any)
     recovery_idx = None
     if mdd_idx < len(p) - 1:
-        future_prices = p[mdd_idx + 1:]
+        future_prices = p[mdd_idx + 1 :]
         peak_price = running_max[mdd_idx]
         recovery_mask = future_prices >= peak_price
         if np.any(recovery_mask):
@@ -689,14 +684,10 @@ def calculate_correlation_matrix(
 
     # Create DataFrames
     corr_df = pl.DataFrame(corr_matrix, schema=tickers)
-    corr_df = corr_df.with_columns(pl.Series("ticker", tickers)).select(
-        ["ticker"] + tickers
-    )
+    corr_df = corr_df.with_columns(pl.Series("ticker", tickers)).select(["ticker"] + tickers)
 
     sample_df = pl.DataFrame(sample_sizes, schema=tickers)
-    sample_df = sample_df.with_columns(pl.Series("ticker", tickers)).select(
-        ["ticker"] + tickers
-    )
+    sample_df = sample_df.with_columns(pl.Series("ticker", tickers)).select(["ticker"] + tickers)
 
     return {
         "correlation_matrix": corr_df,
@@ -1050,10 +1041,7 @@ def calculate_tail_ratio(
     downside_tail = float(np.percentile(r, (1 - percentile) * 100))
 
     # Tail ratio
-    if abs(downside_tail) < 1e-10:
-        tail_ratio = np.nan
-    else:
-        tail_ratio = abs(upside_tail) / abs(downside_tail)
+    tail_ratio = np.nan if abs(downside_tail) < 1e-10 else abs(upside_tail) / abs(downside_tail)
 
     return {
         "tail_ratio": float(tail_ratio),
@@ -1201,7 +1189,7 @@ def calculate_ulcer_index(
     drawdown = ((p / running_max) - 1.0) * 100  # Convert to percentage
 
     # Ulcer Index = sqrt(mean(drawdown²))
-    drawdown_squared = drawdown ** 2
+    drawdown_squared = drawdown**2
     ulcer_index = np.sqrt(np.mean(drawdown_squared))
 
     # Average drawdown
@@ -1381,10 +1369,7 @@ def calculate_capture_ratios(
     else:
         mean_p_up = np.mean(r_p_up)
         mean_b_up = np.mean(r_b_up)
-        if abs(mean_b_up) < 1e-10:
-            up_capture = None
-        else:
-            up_capture = (mean_p_up / mean_b_up) * 100
+        up_capture = None if abs(mean_b_up) < 1e-10 else (mean_p_up / mean_b_up) * 100
 
     # Down Capture
     if n_down < 2:
@@ -1392,10 +1377,7 @@ def calculate_capture_ratios(
     else:
         mean_p_down = np.mean(r_p_down)
         mean_b_down = np.mean(r_b_down)
-        if abs(mean_b_down) < 1e-10:
-            down_capture = None
-        else:
-            down_capture = (mean_p_down / mean_b_down) * 100
+        down_capture = None if abs(mean_b_down) < 1e-10 else (mean_p_down / mean_b_down) * 100
 
     # Capture Ratio
     if up_capture is not None and down_capture is not None and abs(down_capture) > 1e-10:
@@ -1467,15 +1449,19 @@ def calculate_monthly_extremes(
 
     # Convert to monthly returns
     # Add year-month column
-    df = df.with_columns([
-        pl.col("date").dt.year().alias("year"),
-        pl.col("date").dt.month().alias("month"),
-    ])
+    df = df.with_columns(
+        [
+            pl.col("date").dt.year().alias("year"),
+            pl.col("date").dt.month().alias("month"),
+        ]
+    )
 
     # Group by year-month and calculate cumulative return
-    monthly = df.group_by(["year", "month"]).agg([
-        ((1 + pl.col("ret")).product() - 1).alias("monthly_ret")
-    ]).sort(["year", "month"])
+    monthly = (
+        df.group_by(["year", "month"])
+        .agg([((1 + pl.col("ret")).product() - 1).alias("monthly_ret")])
+        .sort(["year", "month"])
+    )
 
     if monthly.height == 0:
         return {
@@ -1493,11 +1479,11 @@ def calculate_monthly_extremes(
     # Best month
     best_idx = np.argmax(monthly_rets)
     best_month = float(monthly_rets[best_idx])
-    
+
     # Convert to lists for indexing
     years_list = monthly["year"].to_list()
     months_list = monthly["month"].to_list()
-    
+
     best_year = int(years_list[best_idx])
     best_mon = int(months_list[best_idx])
     best_month_date = f"{best_year}-{best_mon:02d}"
@@ -1517,7 +1503,9 @@ def calculate_monthly_extremes(
     avg_negative = float(np.mean(negative_months)) if len(negative_months) > 0 else 0.0
 
     # % positive months
-    pct_positive = (len(positive_months) / len(monthly_rets) * 100) if len(monthly_rets) > 0 else 0.0
+    pct_positive = (
+        (len(positive_months) / len(monthly_rets) * 100) if len(monthly_rets) > 0 else 0.0
+    )
 
     return {
         "best_month": best_month,

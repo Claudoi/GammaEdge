@@ -455,7 +455,7 @@ class CorporateActionsProcessor:
                 how="left",
             )
             .with_columns(
-                pl.when(pl.col("_is_anomaly") == True)
+                pl.when(pl.col("_is_anomaly"))
                 .then(pl.lit("suspect"))
                 .when(pl.col("is_event_day"))
                 .then(pl.lit("event_day"))
