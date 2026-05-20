@@ -17,6 +17,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 
 # Design System
 from app.design_system import get_global_styles
+from app.viz.plotly_theme import apply_gammaedge_theme
 from portfolio.backtest import attribution as bt_attr  # expand/align helpers
 from portfolio.backtest.kpis import compute_kpis
 from portfolio.backtest.reporting import (
@@ -33,7 +34,7 @@ from portfolio.backtest.reporting import (
 # ---------------------------------------------------------------------
 st.set_page_config(page_title="Reporting", layout="wide")
 st.markdown(get_global_styles(), unsafe_allow_html=True)
-st.title("📄 Reporting")
+st.title("Reporting")
 st.caption(
     "Generate HTML and PDF reports with equity, drawdown, weights, attribution and benchmark context."
 )
@@ -54,24 +55,28 @@ def _to_pandas(df: object):
 # Inputs from previous pages (expected in session_state)
 # ---------------------------------------------------------------------
 bt = st.session_state.get("bt")
-df_ret_wide = st.session_state.get("df_ret_wide", st.session_state.get("returns_wide"))
+returns_wide = st.session_state.get("returns_wide")
 group_map = st.session_state.get("group_map")
 metrics_df = st.session_state.get("metrics_df")  # optional KPIs
 df_brinson = st.session_state.get("df_brinson")  # optional Brinson table
 bench_meta = st.session_state.get("bench_meta")  # optional metadata about benchmark
 
-if bt is None or df_ret_wide is None:
+if returns_wide is None:
+    st.warning("Carga datos en la página 01_Data antes de generar el reporte.")
+    st.stop()
+
+if bt is None:
     st.warning(
-        "⚠️ Run pages 02–05 first so we can build the report (risk model, backtest, attribution)."
+        "Run pages 02–05 first so we can build the report (risk model, backtest, attribution)."
     )
     st.stop()
 
 # Normalize returns table to Polars + Datetime
-if not isinstance(df_ret_wide, pl.DataFrame):
-    df_ret_wide = pl.from_pandas(df_ret_wide)
+if not isinstance(returns_wide, pl.DataFrame):
+    returns_wide = pl.from_pandas(returns_wide)
 
-if df_ret_wide.schema.get("date") != pl.Datetime:
-    df_ret_wide = df_ret_wide.with_columns(pl.col("date").cast(pl.Datetime, strict=False))
+if returns_wide.schema.get("date") != pl.Datetime:
+    returns_wide = returns_wide.with_columns(pl.col("date").cast(pl.Datetime, strict=False))
 
 # ---------------------------------------------------------------------
 # Extract BT artifacts
@@ -90,7 +95,7 @@ if not dates_bt or equity.size == 0 or W_reb.size == 0 or not tickers:
 # Align returns to backtest date grid and expand weights to daily
 # ---------------------------------------------------------------------
 # 1) Filter returns to backtest dates (unique & sorted)
-df_ret_bt = df_ret_wide.filter(pl.col("date").is_in(dates_bt)).unique(subset=["date"]).sort("date")
+df_ret_bt = returns_wide.filter(pl.col("date").is_in(dates_bt)).unique(subset=["date"]).sort("date")
 
 # 2) Rebalance dates fallback if shapes mismatch
 if len(rb_dates_any) != W_reb.shape[0]:
@@ -122,7 +127,7 @@ report: BacktestReport = build_backtest_report(
 # ---------------------------------------------------------------------
 # Display meta info (benchmark & groups)
 # ---------------------------------------------------------------------
-st.markdown("### 🧭 Context Summary")
+st.markdown("### Context Summary")
 colA, colB = st.columns(2)
 bench_scheme = bench_meta.get("scheme") if bench_meta else "Equal-Weight"
 colA.metric("Benchmark Scheme", bench_scheme)
@@ -131,19 +136,19 @@ colB.metric("Groups", f"{len(group_map) if group_map else 0} assets mapped")
 # ---------------------------------------------------------------------
 # Show figures
 # ---------------------------------------------------------------------
-st.markdown("### 📈 Charts")
+st.markdown("### Charts")
 
 col1, col2 = st.columns(2)
-col1.plotly_chart(report.figures["equity"], use_container_width=True)
-col2.plotly_chart(report.figures["drawdown"], use_container_width=True)
+col1.plotly_chart(apply_gammaedge_theme(report.figures["equity"]), use_container_width=True)
+col2.plotly_chart(apply_gammaedge_theme(report.figures["drawdown"]), use_container_width=True)
 
-st.plotly_chart(report.figures["weights"], use_container_width=True)
-st.plotly_chart(report.figures["top_contrib"], use_container_width=True)
+st.plotly_chart(apply_gammaedge_theme(report.figures["weights"]), use_container_width=True)
+st.plotly_chart(apply_gammaedge_theme(report.figures["top_contrib"]), use_container_width=True)
 
 # ---------------------------------------------------------------------
 # Show tables
 # ---------------------------------------------------------------------
-st.subheader("📊 Tables")
+st.subheader("Tables")
 for name, df in report.tables.items():
     st.write(f"**{name}**")
     st.dataframe(_to_pandas(df), width="stretch")
@@ -189,13 +194,13 @@ ctx = build_context(
 # ---------------------------------------------------------------------
 # Export buttons: HTML + PDF
 # ---------------------------------------------------------------------
-st.subheader("📤 Export")
+st.subheader("Export")
 
 figures: list[ReportFigure] = [
-    ReportFigure("Equity", report.figures["equity"]),
-    ReportFigure("Drawdown", report.figures["drawdown"]),
-    ReportFigure("Weights", report.figures["weights"]),
-    ReportFigure("Top Contributors", report.figures["top_contrib"]),
+    ReportFigure("Equity", apply_gammaedge_theme(report.figures["equity"])),
+    ReportFigure("Drawdown", apply_gammaedge_theme(report.figures["drawdown"])),
+    ReportFigure("Weights", apply_gammaedge_theme(report.figures["weights"])),
+    ReportFigure("Top Contributors", apply_gammaedge_theme(report.figures["top_contrib"])),
 ]
 
 # HTML export
