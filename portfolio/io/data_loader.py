@@ -12,7 +12,7 @@ import yfinance as yf
 
 from portfolio.core.compat import dataclass_compat as dataclass
 
-from .cache import load_df, save_df
+from .cache import load_pl, save_pl
 
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.INFO)
@@ -264,18 +264,17 @@ def get_prices_long(
     cache_key = cfg.cache_key()
 
     if use_cache and not force_refresh:
-        cached = load_df("prices_long", cache_key)  # probablemente devuelve pandas
+        cached = load_pl("prices_long", cache_key)
         if cached is not None:
             try:
-                pl_cached = pl.from_pandas(cached)
                 # Validar esquema mínimo
-                if set(pl_cached.columns) >= {"date", "ticker", "price"}:
+                if set(cached.columns) >= {"date", "ticker", "price"}:
                     logger.info("Loaded prices_long from cache: %s", cache_key)
-                    _validate_long_prices(pl_cached)
+                    _validate_long_prices(cached)
                     logger.info("get_prices_long OK (cache) in %.3fs", time.perf_counter() - t0)
-                    return pl_cached
+                    return cached
             except Exception as e:  # pragma: no cover
-                logger.warning("Cache exists but couldn't be parsed to Polars: %s", e)
+                logger.warning("Cache exists but couldn't be validated: %s", e)
 
     # Descarga
     raw_close_pd = _fetch_yfinance_close(tks, cfg.start, cfg.end, cfg.interval, cfg.adjust)
@@ -285,10 +284,10 @@ def get_prices_long(
     df_long = df_long.unique(subset=["date", "ticker"], keep="last")
     _validate_long_prices(df_long)
 
-    # Guardar en caché como pandas para no romper compatibilidad
+    # Guardar en caché nativamente como Polars (mismo formato parquet)
     if use_cache:
         try:
-            save_df("prices_long", cache_key, df_long.to_pandas())
+            save_pl("prices_long", cache_key, df_long)
         except Exception as e:  # pragma: no cover
             logger.warning("Failed to save prices_long to cache: %s", e)
 
@@ -305,10 +304,12 @@ def get_prices_wide(
     adjust: bool = True,
     force_refresh: bool = False,
     use_cache: bool = True,
-    as_pandas: bool = False,
-) -> pl.DataFrame | pd.DataFrame:
+) -> pl.DataFrame:
     """
     Igual que `get_prices_long` pero devuelve una matriz **ancha** (columnas por ticker).
+
+    Devuelve siempre Polars; los consumidores que necesiten pandas (sklearn,
+    statsmodels) deben convertir explícitamente con ``.to_pandas()``.
     """
     df_long = get_prices_long(
         tickers=tickers,
@@ -320,11 +321,7 @@ def get_prices_wide(
         use_cache=use_cache,
     )
 
-    df_wide = df_long.pivot(values="price", index="date", on="ticker").sort("date")
-
-    if as_pandas:
-        return df_wide.to_pandas()
-    return df_wide
+    return df_long.pivot(values="price", index="date", on="ticker").sort("date")
 
 
 def get_ohlcv_long(
