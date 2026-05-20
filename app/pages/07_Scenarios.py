@@ -4,6 +4,7 @@ from __future__ import annotations
 import inspect
 
 # --- stdlib ---
+import logging
 import os
 import sys
 from typing import Any, Literal, cast
@@ -44,15 +45,21 @@ from portfolio.viz.plot_utils import (
     show_plot,
 )
 
+logger = logging.getLogger(__name__)
+
 # ─────────────────────────────────────────────────────────────────────
 # Page config
 # ─────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Scenarios", layout="wide")
 st.markdown(get_global_styles(), unsafe_allow_html=True)
-st.title("🧪 Scenarios")
+st.title("Scenarios")
 st.caption(
     "Stress-tests on the return matrix with robust turnover reconstruction and clean comparisons vs Baseline."
 )
+
+# Initialize session_state counters used by this page
+if "_auto_key_counter" not in st.session_state:
+    st.session_state["_auto_key_counter"] = 0
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -195,23 +202,23 @@ def _ensure_turnover_with_drift(bt: dict, df_wide: pl.DataFrame) -> tuple[list, 
 # ─────────────────────────────────────────────────────────────────────
 # Data handoff from previous pages
 # ─────────────────────────────────────────────────────────────────────
-df_ret_wide = st.session_state.get("df_ret_wide", st.session_state.get("returns_wide", None))
-if df_ret_wide is None:
+returns_wide = st.session_state.get("returns_wide")
+if returns_wide is None:
     st.warning("Missing `returns_wide`. Run pages 01→04 first.")
     st.stop()
 
-if isinstance(df_ret_wide, pd.DataFrame):
-    df_ret_wide = pl.from_pandas(df_ret_wide)
-if not isinstance(df_ret_wide, pl.DataFrame):
+if isinstance(returns_wide, pd.DataFrame):
+    returns_wide = pl.from_pandas(returns_wide)
+if not isinstance(returns_wide, pl.DataFrame):
     st.error("`returns_wide` must be Polars or Pandas.")
     st.stop()
 
-if df_ret_wide.schema.get("date") != pl.Datetime:
-    df_ret_wide = df_ret_wide.with_columns(pl.col("date").cast(pl.Datetime))
+if returns_wide.schema.get("date") != pl.Datetime:
+    returns_wide = returns_wide.with_columns(pl.col("date").cast(pl.Datetime))
 
-tickers = [c for c in df_ret_wide.columns if c != "date"]
+tickers = [c for c in returns_wide.columns if c != "date"]
 N = len(tickers)
-if N == 0 or df_ret_wide.height < 10:
+if N == 0 or returns_wide.height < 10:
     st.error("Dataset too small for scenarios.")
     st.stop()
 
@@ -371,7 +378,7 @@ def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────
 st.subheader("Baseline (reference)")
 with st.spinner("Running baseline..."):
-    df_base = df_ret_wide.select(["date", *tickers]).sort("date")
+    df_base = returns_wide.select(["date", *tickers]).sort("date")
     base_bt = _run_engine(df_base)
 
 show_plot(
@@ -498,7 +505,7 @@ with st.sidebar:
     )
     crash_enable = st.checkbox("One-day crash", value=False)
     crash_day = st.number_input(
-        "Crash day index (0-based)", 0, max(1, df_ret_wide.height - 1), 0, 1
+        "Crash day index (0-based)", 0, max(1, returns_wide.height - 1), 0, 1
     )
     crash_drop_bps = st.number_input(
         "Crash size (bps)", -5000.0, 5000.0, -500.0, 10.0, help="e.g., −500 bps = −5% one-day gap."
@@ -570,7 +577,7 @@ def _flatten_metrics_row(m: pl.DataFrame | pd.DataFrame) -> dict[str, float]:
                     except Exception:
                         pass
     except Exception:
-        pass
+        logger.exception("Scenarios page: failed to flatten metrics row")
     return out
 
 
@@ -796,7 +803,7 @@ def _try_engine_cagr(df_wide: pl.DataFrame) -> float:
             rp = eq[1:] / eq[:-1] - 1.0
             return _cagr_from_portfolio_returns(rp)
     except Exception:
-        pass
+        logger.debug("Scenarios page: engine CAGR fallback to NaN", exc_info=True)
     return float("nan")
 
 
@@ -878,4 +885,4 @@ try:
             key=next_key("dl-scenario-metrics"),
         )
 except Exception:
-    pass
+    logger.exception("Scenarios page: failed to render export download buttons")
