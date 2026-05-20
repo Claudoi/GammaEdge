@@ -1,8 +1,9 @@
 # Test for backtest engine
-from datetime import date, timedelta
+from datetime import date
+
 import numpy as np
 import polars as pl
-import pytest
+
 from portfolio.backtest.engine import backtest_vectorized
 
 
@@ -39,7 +40,7 @@ def test_backtest_nan_block_raises_warning(caplog):
 
     assert "error" not in result, f"Unexpected error: {result.get('error')}"
     equity = result["equity"]
-    eq_vals = equity["equity"].to_numpy() if hasattr(equity, "to_numpy") else np.array(equity)
+    eq_vals = np.asarray(equity, dtype=float)
     assert not np.isnan(eq_vals).any(), "Equity curve contains NaN — NaN block not handled"
     assert any("gap" in r.message.lower() or "nan" in r.message.lower()
                for r in caplog.records), "Expected warning about data gaps"
@@ -62,5 +63,5 @@ def test_backtest_all_valid_unchanged():
     )
     assert "error" not in result
     equity = result["equity"]
-    eq_vals = equity["equity"].to_numpy() if hasattr(equity, "to_numpy") else np.array(equity)
+    eq_vals = np.asarray(equity, dtype=float)
     assert not np.isnan(eq_vals).any()

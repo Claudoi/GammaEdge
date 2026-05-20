@@ -158,22 +158,21 @@ def backtest_vectorized(
     # Ordenar y asegurar fechas
     df = df_ret_wide.sort("date")
 
-    # ── NaN validation (CRITICAL-3) ────────────────────────────────────────────
     # Polars distinguishes null (missing) from NaN (float not-a-number).
     # We must check both to catch numpy np.nan values stored as float columns.
     tickers_all = [c for c in df.columns if c != "date"]
+    float_cols = {t for t in tickers_all if df[t].dtype in (pl.Float32, pl.Float64)}
     total_nulls = sum(df.select(tickers_all).null_count().row(0))
     total_nans = sum(
         df.select([
             pl.col(t).is_nan().sum().alias(t)
-            for t in tickers_all
-            if df[t].dtype in (pl.Float32, pl.Float64)
+            for t in float_cols
         ]).row(0)
     )
     if total_nulls > 0 or total_nans > 0:
         not_null_mask = pl.all_horizontal(*[
             pl.col(t).is_not_null() & (
-                pl.col(t).is_nan().not_() if df[t].dtype in (pl.Float32, pl.Float64)
+                pl.col(t).is_nan().not_() if t in float_cols
                 else pl.lit(True)
             )
             for t in tickers_all
@@ -189,7 +188,6 @@ def backtest_vectorized(
             df.filter(pl.col("date") < first_valid).height,
         )
         df = valid_rows
-    # ──────────────────────────────────────────────────────────────────────────
 
     dates = df["date"]
 
