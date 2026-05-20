@@ -261,7 +261,7 @@ El sistema implementa un patr\'on de dise\~no en capas conc\'entricas:
 ]
 \node[node] (data) at (0,0) {Data Ingestion\\(Polars/Parquet)};
 \node[node] (core) at (4,0) {Computational Core\\(NumPy/SciPy/CVXPY)};
-\node[node] (api) at (8,1) {REST API\\(FastAPI Mock)};
+\node[node] (api) at (8,1) {REST API\\(FastAPI)};
 \node[node] (ui) at (8,-1) {Research UI\\(Streamlit)};
 
 \draw[arrow] (data) -- (core);
@@ -273,9 +273,14 @@ El sistema implementa un patr\'on de dise\~no en capas conc\'entricas:
 \end{figure}
 
 \begin{remark}
-La capa FastAPI incluida en el repositorio representa un prototipo de la interfaz REST
-prevista para versiones futuras del sistema. En la versi\'on actual, toda la interacci\'on
-se realiza a trav\'es de la interfaz Streamlit.
+La interfaz REST de GammaEdge se expone mediante FastAPI con dos endpoints
+operativos en la versi\'on actual: \texttt{POST /api/v1/optimize} (con m\'etodos
+\texttt{mean\_variance}, \texttt{min\_variance}, \texttt{risk\_parity} y \texttt{hrp})
+y \texttt{GET /health} como liveness probe. La validaci\'on de entrada
+se realiza con modelos Pydantic v2 (\texttt{api/schemas/}), garantizando
+detecci\'on de valores no finitos, dimensiones consistentes y tickers \'unicos
+antes de invocar el motor de optimizaci\'on. Endpoints adicionales para
+backtesting, modelos de riesgo y escenarios se contemplan en trabajo futuro.
 \end{remark}
 
 \subsection{Sistema de Dise\~no At\'omico}

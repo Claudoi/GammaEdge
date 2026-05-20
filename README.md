@@ -106,6 +106,44 @@ weights = solve_cvar_lp(
 
 ---
 
+## REST API
+
+GammaEdge exposes a REST interface built on FastAPI alongside the Streamlit UI.
+
+### Run the server
+
+```bash
+poetry run uvicorn api.main:app --reload
+```
+
+Interactive documentation is available at `http://localhost:8000/docs` (Swagger UI) and `http://localhost:8000/redoc` (ReDoc).
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| GET | `/health` | Liveness probe. |
+| POST | `/api/v1/optimize` | Portfolio optimization (`mean_variance`, `min_variance`, `risk_parity`, `hrp`). |
+
+### Example
+
+```bash
+curl -X POST http://localhost:8000/api/v1/optimize \
+  -H "Content-Type: application/json" \
+  -d '{
+        "returns": [[0.01, 0.02, -0.01], [0.005, 0.015, 0.008]],
+        "tickers": ["AAPL", "MSFT", "GOOGL"],
+        "method": "mean_variance",
+        "rf": 0.04
+      }'
+```
+
+The response includes per-ticker weights, annualized metrics (expected return, volatility, Sharpe ratio) and a timestamp.
+
+Input validation is enforced with Pydantic v2 models (`api/schemas/`), which reject non-finite values, inconsistent dimensions, and duplicate tickers before the optimizer is invoked.
+
+---
+
 ## Implementation Notes
 
 **Numerical Stability**: Six-step fallback chain for singular matrices (spectral clipping, iterative jitter, ridge regularization, diagonal loading, pseudoinverse, identity fallback)
