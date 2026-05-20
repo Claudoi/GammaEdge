@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import os
 import sys
 from datetime import datetime
@@ -16,6 +17,8 @@ import streamlit as st
 # Local project imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+# Design System
+from app.design_system import COLORS, get_global_styles
 from portfolio.core.compat import UTC
 from portfolio.features.risk_models import (
     black_litterman_mu,
@@ -39,8 +42,7 @@ from portfolio.viz.plot_utils import (
 )
 from portfolio.viz.rmt_plots import plot_eigenvalue_spectrum
 
-# Design System
-from app.design_system import COLORS, get_global_styles
+logger = logging.getLogger(__name__)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Config & guards
@@ -51,7 +53,8 @@ st.set_page_config(page_title="Risk Model", layout="wide")
 st.markdown(get_global_styles(), unsafe_allow_html=True)
 
 # Page title with Apple-style
-st.markdown(f"""
+st.markdown(
+    f"""
 <div style="margin-bottom: 32px;">
     <h1 style="
         font-size: 2.5rem;
@@ -59,7 +62,7 @@ st.markdown(f"""
         color: {COLORS['text_primary']};
         margin-bottom: 8px;
     ">
-        📐 Risk Model
+        Risk Model
     </h1>
     <p style="
         font-size: 1rem;
@@ -69,10 +72,12 @@ st.markdown(f"""
         Estimate expected returns (μ) and covariance matrix (Σ) with configurable shrinkage and PCA
     </p>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
-if "returns_wide" not in st.session_state:
-    st.warning("Load data first in the Data page.")
+if "returns_wide" not in st.session_state or st.session_state["returns_wide"] is None:
+    st.warning("Carga datos en la página 01_Data antes de configurar el modelo de riesgo.")
     st.stop()
 
 df_ret_wide: pl.DataFrame = st.session_state["returns_wide"]
@@ -157,8 +162,12 @@ def _json_default(o: Any) -> Any:
     if hasattr(o, "isoformat"):
         try:
             return o.isoformat()
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.debug(
+                "RiskModel page: isoformat() failed for %s (%s); falling back to type checks",
+                type(o).__name__,
+                exc,
+            )
 
     if isinstance(o, np.integer):
         return int(o)
@@ -712,7 +721,7 @@ if st.session_state.get("risk_ready"):
     # ──────────────────────────────────────────────────────────────────────
     # Black–Litterman (views) – interactive posterior μ
     # ──────────────────────────────────────────────────────────────────────
-    with st.expander("🧠 Black–Litterman (Views)", expanded=False):
+    with st.expander("Black–Litterman (Views)", expanded=False):
         st.caption("Build absolute or relative views and adjust Ω from confidence.")
         col_bl1, col_bl2, col_bl3 = st.columns(3)
         with col_bl1:
@@ -761,7 +770,7 @@ if st.session_state.get("risk_ready"):
                 0.05,
                 key="bl_abs_conf",
             )
-            if st.button("➕ Add absolute view"):
+            if st.button("Add absolute view"):
                 st.session_state["bl_views"].append(
                     {
                         "kind": "absolute",
@@ -792,7 +801,7 @@ if st.session_state.get("risk_ready"):
                 0.05,
                 key="bl_rel_conf",
             )
-            if st.button("➕ Add relative view"):
+            if st.button("Add relative view"):
                 if long_a == short_a:
                     st.warning("Long and short assets cannot be the same.")
                 else:
@@ -810,7 +819,7 @@ if st.session_state.get("risk_ready"):
         if st.session_state["bl_views"]:
             st.write("**Current views**")
             st.dataframe(pl.DataFrame(st.session_state["bl_views"]).to_pandas(), width="stretch")
-            if st.button("🗑️ Clear views"):
+            if st.button("Clear views"):
                 st.session_state["bl_views"] = []
 
         # Compute posterior μ
@@ -924,7 +933,7 @@ if st.session_state.get("risk_ready"):
     # ──────────────────────────────────────────────────────────────────────
     # Export artifacts
     # ──────────────────────────────────────────────────────────────────────
-    st.subheader("📤 Export artifacts")
+    st.subheader("Export artifacts")
     colx, coly, colz, colw, colm = st.columns(5)
 
     # μ (expected returns) CSV export
