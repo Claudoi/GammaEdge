@@ -1,12 +1,15 @@
 # portfolio/backtest/engine.py
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Literal, cast
 
 import numpy as np
 import pandas as pd
 import polars as pl
+
+logger = logging.getLogger(__name__)
 
 from portfolio.core.compat import dataclass_compat as dataclass
 
@@ -154,6 +157,40 @@ def backtest_vectorized(
 
     # Ordenar y asegurar fechas
     df = df_ret_wide.sort("date")
+
+    # ── NaN validation (CRITICAL-3) ────────────────────────────────────────────
+    # Polars distinguishes null (missing) from NaN (float not-a-number).
+    # We must check both to catch numpy np.nan values stored as float columns.
+    tickers_all = [c for c in df.columns if c != "date"]
+    total_nulls = sum(df.select(tickers_all).null_count().row(0))
+    total_nans = sum(
+        df.select([
+            pl.col(t).is_nan().sum().alias(t)
+            for t in tickers_all
+            if df[t].dtype in (pl.Float32, pl.Float64)
+        ]).row(0)
+    )
+    if total_nulls > 0 or total_nans > 0:
+        not_null_mask = pl.all_horizontal(*[
+            pl.col(t).is_not_null() & (
+                pl.col(t).is_nan().not_() if df[t].dtype in (pl.Float32, pl.Float64)
+                else pl.lit(True)
+            )
+            for t in tickers_all
+        ])
+        valid_rows = df.filter(not_null_mask)
+        if valid_rows.is_empty():
+            return {"error": "No common valid date across all tickers"}
+        first_valid = valid_rows["date"].min()
+        logger.warning(
+            "Data has NaN gaps across tickers. Truncating backtest to first "
+            "common valid date: %s (dropped %d rows)",
+            first_valid,
+            df.filter(pl.col("date") < first_valid).height,
+        )
+        df = valid_rows
+    # ──────────────────────────────────────────────────────────────────────────
+
     dates = df["date"]
 
     # 1. Identificar fechas de rebalanceo
