@@ -15,6 +15,8 @@ import streamlit as st
 # ---------------------------------------------------------------------
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+# Design System
+from app.design_system import get_global_styles
 from portfolio.backtest import attribution as bt_attr  # expand/align helpers
 from portfolio.backtest.kpis import compute_kpis
 from portfolio.backtest.reporting import (
@@ -30,6 +32,7 @@ from portfolio.backtest.reporting import (
 # Streamlit config
 # ---------------------------------------------------------------------
 st.set_page_config(page_title="Reporting", layout="wide")
+st.markdown(get_global_styles(), unsafe_allow_html=True)
 st.title("📄 Reporting")
 st.caption(
     "Generate HTML and PDF reports with equity, drawdown, weights, attribution and benchmark context."

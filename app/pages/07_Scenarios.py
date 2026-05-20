@@ -20,6 +20,8 @@ import streamlit as st
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 # --- local modules ---
+# Design System
+from app.design_system import get_global_styles
 from portfolio.backtest import metrics as bt_metrics
 from portfolio.backtest.allocators import make_allocator
 from portfolio.backtest.engine import backtest_rebalanced
@@ -46,6 +48,7 @@ from portfolio.viz.plot_utils import (
 # Page config
 # ─────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Scenarios", layout="wide")
+st.markdown(get_global_styles(), unsafe_allow_html=True)
 st.title("🧪 Scenarios")
 st.caption(
     "Stress-tests on the return matrix with robust turnover reconstruction and clean comparisons vs Baseline."

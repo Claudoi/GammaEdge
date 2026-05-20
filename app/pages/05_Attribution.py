@@ -14,6 +14,8 @@ import streamlit as st
 # Repo root for local imports
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+# Design System
+from app.design_system import get_global_styles
 from portfolio.attribution.euler import euler_risk_contributions
 from portfolio.attribution.factor_decomposition import euler_factor_contributions
 from portfolio.backtest import attribution as bt_attr
@@ -47,6 +49,7 @@ def _safe_metrics_to_dict(metrics_df_obj: Any) -> dict[str, float] | None:
 
 
 st.set_page_config(page_title="Attribution & Reporting", layout="wide")
+st.markdown(get_global_styles(), unsafe_allow_html=True)
 st.title("📊 Attribution & Reporting")
 st.caption(
     "Performance (Brinson) and risk (Euler) attribution on top of the backtest, "
