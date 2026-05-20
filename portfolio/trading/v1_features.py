@@ -14,7 +14,7 @@ Features robustos y macro-oriented:
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import polars as pl
 
@@ -25,10 +25,10 @@ logger = logging.getLogger(__name__)
 class V1FeatureConfig:
     """Configuración de features para V1."""
 
-    assets: list[str] = None
+    assets: list[str] = field(default_factory=lambda: ["QQQ", "VOO", "BIL"])
 
     # Returns
-    return_horizons: list[int] = None
+    return_horizons: list[int] = field(default_factory=lambda: [1, 5, 20])
 
     # Volatility
     vol_window: int = 20
@@ -38,12 +38,6 @@ class V1FeatureConfig:
 
     # Drawdown
     drawdown_window: int = 20
-
-    def __post_init__(self):
-        if self.assets is None:
-            self.assets = ["QQQ", "VOO", "BIL"]
-        if self.return_horizons is None:
-            self.return_horizons = [1, 5, 20]
 
 
 class V1FeatureBuilder:
@@ -194,7 +188,8 @@ class V1FeatureBuilder:
             df_wide = df_wide.join(
                 df_other,
                 on=date_col,
-                how="outer_coalesce",
+                how="full",
+                coalesce=True,
             )
 
         return df_wide.sort(date_col)
@@ -221,8 +216,11 @@ class V1FeatureBuilder:
         # Risk-off signal (high vol regime)
         if "vol_20d_QQQ" in df.columns:
             # Si vol > 2x median → risk-off
-            vol_median = df["vol_20d_QQQ"].median()
-            if vol_median and vol_median > 0:
+            vol_median_raw = df["vol_20d_QQQ"].median()
+            vol_median: float | None = (
+                float(vol_median_raw) if isinstance(vol_median_raw, (int, float)) else None
+            )
+            if vol_median is not None and vol_median > 0:
                 df = df.with_columns(
                     (pl.col("vol_20d_QQQ") > 2 * vol_median).alias("regime_high_vol")
                 )
