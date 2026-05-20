@@ -7,6 +7,8 @@ import logging
 import numpy as np
 from scipy.optimize import linprog
 
+logger = logging.getLogger(__name__)
+
 
 def cvar_minimization(
     R: np.ndarray,  # (T, N) returns (periodic)
@@ -121,7 +123,12 @@ def cvar_minimization(
     )
 
     if not res.success:
-        raise RuntimeError(f"CVaR LP failed: {res.message}")
+        logger.warning(
+            "CVaR LP failed (%s); falling back to equal-weight. "
+            "Consider adding more diversification or reducing constraints.",
+            res.message,
+        )
+        return np.full(N, budget / N, dtype=np.float64)
 
     w_opt = np.asarray(res.x[:N], dtype=np.float64)  # 👈 ensure proper type
     s = float(np.sum(w_opt))
@@ -129,9 +136,6 @@ def cvar_minimization(
         w_opt = w_opt / s * budget
 
     return np.asarray(w_opt, dtype=np.float64)
-
-
-logger = logging.getLogger(__name__)
 
 
 # =============================================================================
@@ -147,18 +151,18 @@ def generate_bootstrap_scenarios(
 ) -> np.ndarray:
     """
     Generate bootstrap scenarios from historical returns.
-    
+
     Uses block bootstrap to preserve time-series dependencies.
-    
+
     Args:
         returns: Historical returns matrix (T, N)
         n_scenarios: Number of scenarios to generate
         block_size: Block size for block bootstrap
         random_state: Random seed for reproducibility
-        
+
     Returns:
         Scenarios array (n_scenarios, N)
-        
+
     Example:
         >>> returns = np.random.normal(0.001, 0.02, (252, 3))
         >>> scenarios = generate_bootstrap_scenarios(returns, n_scenarios=500)
@@ -166,19 +170,19 @@ def generate_bootstrap_scenarios(
     """
     if random_state is not None:
         np.random.seed(random_state)
-    
+
     T, N = returns.shape
     scenarios = []
-    
+
     for _ in range(n_scenarios):
         # Sample random block start
         start_idx = np.random.randint(0, T - block_size + 1)
         block = returns[start_idx : start_idx + block_size]
-        
+
         # Randomly select one return from the block
         scenario = block[np.random.randint(0, block_size)]
         scenarios.append(scenario)
-    
+
     return np.array(scenarios)
 
 
@@ -194,13 +198,13 @@ def cvar_scenario_optimization(
 ) -> np.ndarray:
     """
     Optimize portfolio to minimize CVaR using scenario-based formulation.
-    
+
     This implements the Rockafellar-Uryasev (2000) CVaR optimization:
-    
+
     minimize  VaR_α + (1/(1-α)) * E[max(0, -r·w - VaR_α)]
-    
+
     where scenarios represent the return distribution.
-    
+
     Args:
         scenarios: Scenario returns (n_scenarios, n_assets)
         alpha: Confidence level (0.95 = 95% CVaR)
@@ -209,10 +213,10 @@ def cvar_scenario_optimization(
         budget: Total budget (sum of weights)
         lam_l1_turnover: L1 turnover penalty
         w_ref: Reference weights for turnover
-        
+
     Returns:
         Optimal weights (n_assets,)
-        
+
     Example:
         >>> scenarios = np.random.normal(0.001, 0.02, (1000, 3))
         >>> weights = cvar_scenario_optimization(scenarios, alpha=0.95)
@@ -243,7 +247,7 @@ def cvar_portfolio_optimizer(
 ) -> np.ndarray:
     """
     High-level CVaR portfolio optimizer with scenario generation.
-    
+
     Args:
         mu: Expected returns (n_assets,)
         Sigma: Covariance matrix (n_assets, n_assets)
@@ -253,10 +257,10 @@ def cvar_portfolio_optimizer(
         w_max: Maximum weight
         use_bootstrap: Use bootstrap scenarios from historical data
         historical_returns: Historical returns for bootstrap (T, n_assets)
-        
+
     Returns:
         Optimal CVaR weights (n_assets,)
-        
+
     Example:
         >>> mu = np.array([0.10, 0.08, 0.05])
         >>> Sigma = np.array([[0.04, 0.01, 0.00],
@@ -264,8 +268,8 @@ def cvar_portfolio_optimizer(
         ...                    [0.00, 0.00, 0.01]])
         >>> weights = cvar_portfolio_optimizer(mu, Sigma, alpha=0.95)
     """
-    n_assets = len(mu)
-    
+    len(mu)
+
     # Generate scenarios
     if use_bootstrap and historical_returns is not None:
         # Bootstrap from historical data
@@ -280,7 +284,7 @@ def cvar_portfolio_optimizer(
             Sigma,
             size=n_scenarios,
         )
-    
+
     # Optimize CVaR
     weights = cvar_scenario_optimization(
         scenarios,
@@ -289,7 +293,7 @@ def cvar_portfolio_optimizer(
         w_max=w_max,
         budget=1.0,
     )
-    
+
     return weights
 
 
@@ -300,17 +304,17 @@ def compute_portfolio_cvar(
 ) -> tuple[float, float]:
     """
     Compute portfolio VaR and CVaR from scenarios.
-    
+
     Args:
         weights: Portfolio weights (n_assets,)
         scenarios: Return scenarios (n_scenarios, n_assets)
         alpha: Confidence level
-        
+
     Returns:
         (VaR, CVaR) tuple
         - VaR: Value at Risk at alpha level
         - CVaR: Conditional Value at Risk (expected loss beyond VaR)
-        
+
     Example:
         >>> weights = np.array([0.5, 0.3, 0.2])
         >>> scenarios = np.random.normal(0.001, 0.02, (1000, 3))
@@ -319,15 +323,15 @@ def compute_portfolio_cvar(
     """
     # Portfolio returns for each scenario
     portfolio_returns = scenarios @ weights
-    
+
     # Losses (negative returns)
     losses = -portfolio_returns
-    
+
     # VaR: alpha-quantile of losses
     var = np.quantile(losses, alpha)
-    
+
     # CVaR: expected loss given loss >= VaR
     tail_losses = losses[losses >= var]
     cvar = np.mean(tail_losses) if len(tail_losses) > 0 else var
-    
+
     return var, cvar
