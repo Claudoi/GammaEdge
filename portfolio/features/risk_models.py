@@ -114,7 +114,7 @@ def _wide_to_matrix(
         tickers = [c for c in df_ret_wide.columns if c != "date"]
         if not tickers:
             return np.empty((0, 0), dtype=np.float64), []
-        X = df_ret_wide[tickers].to_numpy(dtype=np.float64)
+        X = df_ret_wide[tickers].to_numpy(dtype=np.float64).copy()
     else:
         tickers = [c for c in df_ret_wide.columns if c != "date"]
         if not tickers:
