@@ -130,7 +130,7 @@ def cvar_minimization(
         )
         return np.full(N, budget / N, dtype=np.float64)
 
-    w_opt = np.asarray(res.x[:N], dtype=np.float64)  # 👈 ensure proper type
+    w_opt = np.asarray(res.x[:N], dtype=np.float64)
     s = float(np.sum(w_opt))
     if s != 0:
         w_opt = w_opt / s * budget

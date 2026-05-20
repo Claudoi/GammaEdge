@@ -356,21 +356,26 @@ class TestEdgeCases:
 
 
 def test_cvar_lp_failure_returns_equal_weight():
-    """CRITICAL-1: CVaR LP con assets perfectamente correlados debe retornar
-    equal-weight en lugar de lanzar RuntimeError."""
-    np.random.seed(42)
-    T = 252
-    base = np.random.normal(0.001, 0.02, T)
-    # Dos assets perfectamente correlados → LP puede fallar
-    returns_singular = np.column_stack([base, base, base * 1.0001])
+    """CRITICAL-1: CVaR LP failure must return equal-weight, not raise RuntimeError."""
+    from unittest.mock import MagicMock, patch
 
-    # No debe lanzar excepción
-    result = cvar_minimization(returns_singular, alpha=0.95, budget=1.0)
+    from scipy.optimize import OptimizeResult
 
-    assert result is not None, "cvar_minimization returned None"
-    assert result.shape == (3,), f"Expected shape (3,), got {result.shape}"
-    assert abs(result.sum() - 1.0) < 1e-6, f"Weights don't sum to 1: {result.sum()}"
-    assert not np.isnan(result).any(), "Result contains NaN"
+    N = 3
+    rng = np.random.default_rng(42)
+    R = rng.normal(0.001, 0.02, size=(252, N))
+
+    fake_result = MagicMock(spec=OptimizeResult)
+    fake_result.success = False
+    fake_result.message = "Infeasible"
+
+    with patch("portfolio.optim.cvar.linprog", return_value=fake_result):
+        result = cvar_minimization(R, alpha=0.95, budget=1.0)
+
+    expected = np.full(N, 1.0 / N)
+    np.testing.assert_allclose(result, expected, atol=1e-12)
+    assert result.shape == (N,)
+    assert result.dtype == np.float64
 
 
 def test_cvar_normal_case_unchanged():
