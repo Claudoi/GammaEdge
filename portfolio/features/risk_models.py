@@ -208,6 +208,11 @@ def expected_returns(
     """
     X, names = _wide_to_matrix(df_ret_wide, fill=fill)
     if X.size == 0:
+        if names:
+            raise ValueError(
+                f"Expected returns are invalid (NaN or Inf) for assets: {names}. "
+                "Check for all-null columns or insufficient data."
+            )
         return pd.Series([], index=names, dtype=float, name="expected_return")
 
     per = _infer_periodicity(df_ret_wide)
@@ -232,6 +237,15 @@ def expected_returns(
 
     else:
         raise ValueError(f"Unknown expected return method: {method}")
+
+    mu_arr = np.asarray(mu, dtype=np.float64)
+    bad_mask = np.isnan(mu_arr) | np.isinf(mu_arr)
+    if bad_mask.any():
+        bad_assets = [str(n) for n, b in zip(names, bad_mask, strict=False) if b]
+        raise ValueError(
+            f"Expected returns are invalid (NaN or Inf) for assets: {bad_assets}. "
+            "Check for all-null columns or insufficient data."
+        )
 
     return pd.Series(np.asarray(mu * ann, dtype=np.float64), index=names, name="expected_return")
 

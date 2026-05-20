@@ -1,5 +1,6 @@
 # tests/test_risk_models_edge.py
 import numpy as np
+import pytest
 
 
 def test_lw_covariance_is_psd():
@@ -57,3 +58,23 @@ def test_oas_covariance_is_psd():
     Sigma, names = covariance(df, method="oas", psd=True, as_frame=False)
     eigvals = np.linalg.eigvalsh(Sigma)
     assert eigvals.min() >= -1e-9, f"OAS covariance has negative eigenvalue: {eigvals.min()}"
+
+
+def test_expected_returns_raises_on_all_null_column():
+    """SILENT-3: expected_returns must raise ValueError if result contains NaN or Inf."""
+    from datetime import date, timedelta
+
+    import polars as pl
+
+    from portfolio.features.risk_models import expected_returns
+
+    dates = [date(2024, 1, 1) + timedelta(days=i) for i in range(100)]
+    df = pl.DataFrame(
+        {
+            "date": dates,
+            "AAPL": np.random.default_rng(0).normal(0.001, 0.02, 100).tolist(),
+            "BAD": [None] * 100,  # completely null column
+        }
+    )
+    with pytest.raises(ValueError, match="invalid"):
+        expected_returns(df, method="historical", annualize=True)
