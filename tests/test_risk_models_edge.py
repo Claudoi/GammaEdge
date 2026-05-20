@@ -2,11 +2,6 @@
 import numpy as np
 
 
-def _make_returns(n_assets: int, n_obs: int, seed: int = 42) -> np.ndarray:
-    rng = np.random.default_rng(seed)
-    return rng.normal(0.001, 0.02, (n_obs, n_assets))
-
-
 def test_lw_covariance_is_psd():
     """HIGH-1: Ledoit-Wolf must always produce a PSD matrix."""
     from datetime import date, timedelta
