@@ -7,7 +7,6 @@ Tests the HMM-based regime detector with synthetic and historical data.
 from datetime import date
 
 import numpy as np
-import pandas as pd
 import polars as pl
 import pytest
 
@@ -52,9 +51,9 @@ def synthetic_returns_mixed(synthetic_returns_bull, synthetic_returns_bear):
 
 @pytest.fixture
 def synthetic_returns_crisis():
-    """Synthetic crisis: extreme vol, large drawdown."""
+    """Synthetic crisis: extreme vol, large drawdown (>=100 obs for HMM)."""
     np.random.seed(456)
-    dates = pl.date_range(start=date(2024, 3, 1), end=date(2024, 3, 31), interval="1d", eager=True)
+    dates = pl.date_range(start=date(2024, 1, 1), end=date(2024, 5, 31), interval="1d", eager=True)
     
     # Simulate a crash: large negative shocks
     returns = []
@@ -301,31 +300,64 @@ class TestEdgeCases:
     """Test edge cases and error handling."""
     
     def test_very_short_series(self):
-        """Test behavior with very short time series."""
+        """Test that very short time series raises a clear ValueError (HIGH-2)."""
         short_df = pl.DataFrame({
             "date": pl.date_range(start=date(2024, 1, 1), end=date(2024, 1, 10), interval="1d", eager=True),
             "returns": np.random.normal(0, 0.01, 10),
         })
-        
-        # Should still work but might not be meaningful
+
         detector = RegimeDetector(n_regimes=2, random_state=42, n_iter=50)
-        detector.fit(short_df, returns_col="returns")
-        result = detector.predict(short_df, returns_col="returns")
-        
-        assert len(result) == 10
+        with pytest.raises(ValueError, match="observations"):
+            detector.fit(short_df, returns_col="returns")
     
     def test_constant_returns(self):
-        """Test behavior with constant returns (no variance)."""
-        dates = pl.date_range(start=date(2024, 1, 1), end=date(2024, 3, 30), interval="1d", eager=True)
+        """Constant returns (all zeros) trigger hmmlearn singular covariance.
+
+        This degenerate input has no variance so the covariance matrix is
+        singular and hmmlearn raises ValueError.  The test verifies that some
+        ValueError is propagated rather than the process hanging silently.
+        """
+        dates = pl.date_range(start=date(2024, 1, 1), end=date(2024, 6, 30), interval="1d", eager=True)
         const_df = pl.DataFrame({
             "date": dates,
-            "returns": np.zeros(len(dates)),  # All zeros
+            "returns": np.zeros(len(dates)),  # All zeros → singular covariance
         })
-        
+
         detector = RegimeDetector(n_regimes=2, random_state=42, n_iter=50)
-        
-        # Should fit without crashing (though regimes won't be meaningful)
-        detector.fit(const_df, returns_col="returns")
-        result = detector.predict(const_df, returns_col="returns")
-        
-        assert len(result) == len(dates)
+
+        # Degenerate data causes hmmlearn to raise ValueError internally
+        with pytest.raises(ValueError):
+            detector.fit(const_df, returns_col="returns")
+
+
+# ---------------------------------------------------------------------------
+# HIGH-2: minimum observations validation
+# ---------------------------------------------------------------------------
+
+def test_hmm_fit_raises_on_insufficient_data():
+    """HIGH-2: fit() must raise ValueError with < required observations."""
+    from datetime import timedelta
+
+    dates = [date(2024, 1, 1) + timedelta(days=i) for i in range(50)]
+    df = pl.DataFrame({
+        "date": dates,
+        "returns": np.random.default_rng(0).normal(0.001, 0.02, 50).tolist(),
+    })
+    detector = RegimeDetector(n_regimes=3)
+    with pytest.raises(ValueError, match="observations"):
+        detector.fit(df, returns_col="returns")
+
+
+def test_hmm_fit_ok_with_sufficient_data():
+    """HIGH-2: fit() must not raise with >= required observations."""
+    from datetime import timedelta
+
+    dates = [date(2020, 1, 1) + timedelta(days=i) for i in range(300)]
+    rng = np.random.default_rng(1)
+    df = pl.DataFrame({
+        "date": dates,
+        "returns": rng.normal(0.001, 0.02, 300).tolist(),
+    })
+    detector = RegimeDetector(n_regimes=3)
+    detector.fit(df, returns_col="returns")  # must not raise
+    assert detector.model is not None

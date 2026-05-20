@@ -21,7 +21,6 @@ import polars as pl
 from hmmlearn import hmm
 from sklearn.preprocessing import StandardScaler
 
-
 # Regime labels mapping
 REGIME_LABELS = {
     0: "Bull",      # Low vol, positive drift
@@ -128,7 +127,7 @@ class RegimeDetector:
         returns_col: str = "returns",
         vol_window: int = 20,
         dd_window: int = 20,
-    ) -> "RegimeDetector":
+    ) -> RegimeDetector:
         """
         Fit HMM to historical data.
         
@@ -141,9 +140,18 @@ class RegimeDetector:
         Returns:
             self (fitted)
         """
+        # Validate minimum observations before fitting HMM
+        min_obs = max(100, self.n_regimes * 30)
+        if df.height < min_obs:
+            raise ValueError(
+                f"RegimeDetector.fit() requires at least {min_obs} observations "
+                f"(n_regimes={self.n_regimes}); got {df.height}. "
+                "Load more historical data."
+            )
+
         # Prepare features
         X = self._prepare_features(df, returns_col, vol_window, dd_window)
-        
+
         # Standardize features
         X_scaled = self.scaler.fit_transform(X)
         
