@@ -110,6 +110,12 @@ def frontier_closed_form(
     Sigma = np.asarray(Sigma, dtype=np.float64)
     n = len(mu)
 
+    if n <= 1:
+        raise ValueError(
+            f"frontier_closed_form requires at least 2 assets; got {n}. "
+            "For single-asset analysis, use markowitz_closed_form directly."
+        )
+
     if Sigma.shape != (n, n):
         raise ValueError("Sigma shape must be (N,N) aligned with mu")
 
