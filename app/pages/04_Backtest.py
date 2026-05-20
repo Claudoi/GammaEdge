@@ -538,7 +538,11 @@ if not do_grid:
     st.success("Backtest executed.")
 
     # Handoff to 05_Attribution (persist into session_state)
-    def _export_to_05(bt_obj: dict[str, Any], df_wide_obj: Any) -> None:
+    def _export_to_05(bt_obj: dict[str, Any] | None, df_wide_obj: Any) -> None:
+        if not isinstance(bt_obj, dict) or "equity" not in bt_obj or "dates" not in bt_obj:
+            # Backtest produced no usable result (insufficient history, error, etc.).
+            # Skip export silently — UI already surfaces the underlying issue.
+            return
         if isinstance(df_wide_obj, pd.DataFrame):
             df_pl = pl.from_pandas(df_wide_obj)
         elif isinstance(df_wide_obj, pl.DataFrame):
@@ -552,7 +556,10 @@ if not do_grid:
         st.session_state["df_ret_wide"] = df_pl
         st.session_state["returns_wide"] = df_pl
         # Persist metrics for Attribution / Reporting pages
-        st.session_state["metrics_df"] = bt_metrics.compute_backtest_metrics(bt_obj)
+        try:
+            st.session_state["metrics_df"] = bt_metrics.compute_backtest_metrics(bt_obj)
+        except (ValueError, KeyError, TypeError) as exc:
+            st.warning(f"Could not compute backtest metrics for export: {exc}")
         st.session_state["bench_meta"] = {"scheme": bench_mode}
         with contextlib.suppress(Exception):
             st.toast("Artifacts saved for 05_Attribution.")
