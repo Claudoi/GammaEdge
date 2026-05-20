@@ -54,15 +54,20 @@ def hrp_weights(
         return float(w @ Ss @ w)
 
     def _split_allocation(Ss: np.ndarray, idx: np.ndarray) -> np.ndarray:
+        # ``idx`` indexes into ``Ss`` (the current sub-matrix, not the global S).
+        # After slicing with np.ix_, child sub-matrices have local indices
+        # 0..len(child)-1, so we re-map ``left``/``right`` for recursion.
         if len(idx) == 1:
             return np.array([1.0], dtype=np.float64)
         k = len(idx) // 2
         left = idx[:k]
         right = idx[k:]
-        w_left = _split_allocation(Ss[np.ix_(left, left)], left)
-        w_right = _split_allocation(Ss[np.ix_(right, right)], right)
-        v_left = _cluster_var(Ss[np.ix_(left, left)])
-        v_right = _cluster_var(Ss[np.ix_(right, right)])
+        Ss_left = Ss[np.ix_(left, left)]
+        Ss_right = Ss[np.ix_(right, right)]
+        w_left = _split_allocation(Ss_left, np.arange(len(left)))
+        w_right = _split_allocation(Ss_right, np.arange(len(right)))
+        v_left = _cluster_var(Ss_left)
+        v_right = _cluster_var(Ss_right)
         alpha = 1.0 - v_left / (v_left + v_right)
         w = np.zeros(len(idx), dtype=np.float64)
         w[:k] = alpha * w_left

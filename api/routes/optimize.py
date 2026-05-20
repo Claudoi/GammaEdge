@@ -45,15 +45,9 @@ def _solve(method: OptimizerMethod, mu: np.ndarray, Sigma: np.ndarray, rf: float
 
         return np.asarray(risk_parity(Sigma), dtype=np.float64)
     if method == "hrp":
-        # Pre-existing latent bug in portfolio.optim.hrp.hrp_weights for N>=3
-        # (recursion passes original indices rather than re-indexing for the
-        # submatrix, producing IndexError). Surface as 501 until the library
-        # function is fixed; tracked separately from the API task.
-        raise NotImplementedError(
-            "HRP optimizer is temporarily unavailable due to a known issue in "
-            "portfolio.optim.hrp.hrp_weights for N>=3 assets. Use mean_variance, "
-            "min_variance, or risk_parity in the meantime."
-        )
+        from portfolio.optim.hrp import hrp_weights
+
+        return np.asarray(hrp_weights(Sigma), dtype=np.float64)
     raise ValueError(f"Unknown method: {method}")
 
 
