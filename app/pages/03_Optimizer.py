@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import io
+import logging
 import os
 import sys
 
@@ -9,30 +10,45 @@ import numpy as np
 import polars as pl
 import streamlit as st
 
+# Module-level standard logger (the JsonRunLogger created later is a
+# separate run-tracking logger; this one is for diagnostics).
+_log = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------
 # Repo root for local imports
 # ---------------------------------------------------------------------
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
-# ── Optim solvers (low-level) ────────────────────────────────────────
-from portfolio.backtest.engine import backtest_rebalanced
-from portfolio.core.guards import box_feasible, validate_weights
-from portfolio.core.logger import JsonRunLogger
-from portfolio.core.metrics import cvar_estimate, gini, portfolio_stats
-from portfolio.core.opt_helpers import solve_cvar_with_fallback, stack_Ws
+# ── Design System & UI helpers ───────────────────────────────────────
+from app.design_system import (  # noqa: E402
+    COLORS,
+    data_hero_card,
+    get_global_styles,
+    metric_grid,
+    section_header,
+)
+from app.viz.plotly_theme import apply_gammaedge_theme  # noqa: E402
+from portfolio.backtest.engine import backtest_rebalanced  # noqa: E402
+from portfolio.core.guards import box_feasible, validate_weights  # noqa: E402
+from portfolio.core.logger import JsonRunLogger  # noqa: E402
+from portfolio.core.metrics import cvar_estimate, gini, portfolio_stats  # noqa: E402
+from portfolio.core.opt_helpers import solve_cvar_with_fallback, stack_Ws  # noqa: E402
 
 # ── Core utils (guards, metrics, logger, high-level helpers) ─────────
-from portfolio.core.utils import (
+from portfolio.core.utils import (  # noqa: E402
     clean_returns_matrix,
     cond_number,
     ensure_psd,
     hrp_safe,
     project_to_box_simplex,
 )
-from portfolio.optim.black_litterman import black_litterman_posterior, market_implied_prior
-from portfolio.optim.exposures import build_onehot_exposure
-from portfolio.optim.hrp import hrp_weights
-from portfolio.optim.mean_variance import (
+from portfolio.optim.black_litterman import (  # noqa: E402
+    black_litterman_posterior,
+    market_implied_prior,
+)
+from portfolio.optim.exposures import build_onehot_exposure  # noqa: E402
+from portfolio.optim.hrp import hrp_weights  # noqa: E402
+from portfolio.optim.mean_variance import (  # noqa: E402
     frontier_box_projected,
     frontier_closed_form,
     markowitz_closed_form,
@@ -40,11 +56,11 @@ from portfolio.optim.mean_variance import (
     pgd_box_simplex_l2,
     risk_contributions,
 )
-from portfolio.optim.risk_parity import risk_parity
-from portfolio.optim.te import te_active_pgd, te_frontier_sweep
+from portfolio.optim.risk_parity import risk_parity  # noqa: E402
+from portfolio.optim.te import te_active_pgd, te_frontier_sweep  # noqa: E402
 
 # ── Visualization ────────────────────────────────────────────────────
-from portfolio.viz.plot_utils import (
+from portfolio.viz.plot_utils import (  # noqa: E402
     efficient_frontier,
     equity_and_drawdown,
     risk_contributions_bar,
@@ -54,9 +70,6 @@ from portfolio.viz.plot_utils import (
     weights_bar,
     weights_path_gammas,
 )
-
-# Design System
-from app.design_system import COLORS, get_global_styles, data_hero_card, metric_grid, section_header
 
 
 def _opt_key(tag: str) -> str:
@@ -77,16 +90,19 @@ st.set_page_config(page_title="Optimizer", layout="wide")
 st.markdown(get_global_styles(), unsafe_allow_html=True)
 
 # Page title with Apple-style
-st.markdown(f"""
+st.markdown(
+    f"""
 <div style="margin-bottom: 32px;">
 <h1 style="font-size: 2.5rem; font-weight: 600; color: {COLORS['text_primary']}; margin-bottom: 8px;">
-🚀 Optimizer
+Optimizer
 </h1>
 <p style="font-size: 1rem; color: {COLORS['text_secondary']}; line-height: 1.5;">
 Portfolio construction with HRP, Risk Parity, Mean-Variance, Black-Litterman, and CVaR optimization
 </p>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # ─────────────────────────────────────────────────────────────────────
 # Defensive handoff from 02_RiskModel
@@ -181,7 +197,12 @@ with st.sidebar:
                         val = float(parts[1].strip())
                         asset = parts[0].strip()
                         bl_views.append(("absolute", asset, val))
-                except Exception:
+                except Exception as exc:
+                    _log.warning(
+                        "Optimizer page: failed to parse Black-Litterman view %r: %s",
+                        line,
+                        exc,
+                    )
                     st.warning(f"Could not parse view: {line}")
 
     st.markdown("---")
@@ -197,7 +218,12 @@ with st.sidebar:
             w_bench = np.array([float(x) for x in w_bench_str.split(",")], dtype=float)
             if w_bench.shape != (N,):
                 raise ValueError
-        except Exception:
+        except Exception as exc:
+            _log.warning(
+                "Optimizer page: invalid custom benchmark weights (expected %d floats): %s",
+                N,
+                exc,
+            )
             st.error("Invalid custom weights; falling back to equal-weight.")
             w_bench = np.full(N, 1.0 / max(N, 1))
     w_bench = project_to_box_simplex(w_bench, w_min, w_max)
@@ -439,13 +465,13 @@ if w_out is not None:
     c1, c2 = st.columns([2, 1])
     with c1:
         show_plot(
-            weights_bar(w_out, names, sort=True, topn=min(40, N)),
+            apply_gammaedge_theme(weights_bar(w_out, names, sort=True, topn=min(40, N))),
             key=_opt_key("weights-bar"),
         )
     with c2:
         rc = risk_contributions(w_out, Sigma)
         show_plot(
-            risk_contributions_bar(rc, names, sort=True, topn=min(30, N)),
+            apply_gammaedge_theme(risk_contributions_bar(rc, names, sort=True, topn=min(30, N))),
             key=_opt_key("rc-bar"),
         )
 
@@ -453,22 +479,31 @@ if w_out is not None:
     # NOTE: mu and Sigma are ALREADY ANNUALIZED from RiskModel (see 02_RiskModel.py line 395)
     # Therefore mu_p and sigma_p are already in annual units - do NOT re-annualize
     mu_p, sigma_p, sharpe = portfolio_stats(w_out, mu, Sigma, rf=rf)
-    
+
     # Hero metric: Sharpe Ratio
-    st.markdown(data_hero_card(
-        title="Portfolio Sharpe Ratio",
-        value=sharpe,
-        subtitle=f"Expected Return: {mu_p:.2%} | Volatility: {sigma_p:.2%}",
-        icon="📈",
-        format_value=True
-    ), unsafe_allow_html=True)
-    
+    st.markdown(
+        data_hero_card(
+            title="Portfolio Sharpe Ratio",
+            value=sharpe,
+            subtitle=f"Expected Return: {mu_p:.2%} | Volatility: {sigma_p:.2%}",
+            icon="",
+            format_value=True,
+        ),
+        unsafe_allow_html=True,
+    )
+
     # Supporting metrics grid
-    st.markdown(metric_grid([
-        {'label': 'Expected Return (ann.)', 'value': f"{mu_p:.2%}", 'icon': '💰'},
-        {'label': 'Volatility (ann.)', 'value': f"{sigma_p:.2%}", 'icon': '📊'},
-        {'label': 'Gini Coefficient', 'value': f"{gini(w_out):.3f}", 'icon': '⚖️'},
-    ], columns=3), unsafe_allow_html=True)
+    st.markdown(
+        metric_grid(
+            [
+                {"label": "Expected Return (ann.)", "value": f"{mu_p:.2%}", "icon": ""},
+                {"label": "Volatility (ann.)", "value": f"{sigma_p:.2%}", "icon": ""},
+                {"label": "Gini Coefficient", "value": f"{gini(w_out):.3f}", "icon": ""},
+            ],
+            columns=3,
+        ),
+        unsafe_allow_html=True,
+    )
 
     # Export weights — defensive projection before exporting
     w_export = project_to_box_simplex(w_out, w_min, w_max)
@@ -480,23 +515,47 @@ if w_out is not None:
 
     # Active diagnostics: γ-sweep and TE frontier
     if mode == "Active (TE penalized)" and diag:
-        st.markdown(section_header(
-            "Active Portfolio Diagnostics",
-            "Tracking error analysis and γ-penalty sensitivity",
-            "🎯"
-        ), unsafe_allow_html=True)
-        
-        st.markdown(metric_grid([
-            {'label': 'Tracking Error (ann.)', 'value': f"{diag.get('te', np.nan):.4f}", 'icon': '📏'},
-            {'label': "Active Return (μ'Δw)", 'value': f"{diag.get('active_ret', np.nan):.4f}", 'icon': '🎯'},
-            {'label': 'Exposure Penalty', 'value': f"{diag.get('expo_pen', np.nan):.4f}", 'icon': '⚖️'},
-        ], columns=3), unsafe_allow_html=True)
+        st.markdown(
+            section_header(
+                "Active Portfolio Diagnostics",
+                "Tracking error analysis and γ-penalty sensitivity",
+                "",
+            ),
+            unsafe_allow_html=True,
+        )
 
-        st.markdown(section_header(
-            "γ Sweep & TE Frontier",
-            "Efficient frontier for tracking error vs active return",
-            "📈"
-        ), unsafe_allow_html=True)
+        st.markdown(
+            metric_grid(
+                [
+                    {
+                        "label": "Tracking Error (ann.)",
+                        "value": f"{diag.get('te', np.nan):.4f}",
+                        "icon": "",
+                    },
+                    {
+                        "label": "Active Return (μ'Δw)",
+                        "value": f"{diag.get('active_ret', np.nan):.4f}",
+                        "icon": "",
+                    },
+                    {
+                        "label": "Exposure Penalty",
+                        "value": f"{diag.get('expo_pen', np.nan):.4f}",
+                        "icon": "",
+                    },
+                ],
+                columns=3,
+            ),
+            unsafe_allow_html=True,
+        )
+
+        st.markdown(
+            section_header(
+                "γ Sweep & TE Frontier",
+                "Efficient frontier for tracking error vs active return",
+                "",
+            ),
+            unsafe_allow_html=True,
+        )
         gammas = np.geomspace(0.01, 1000.0, 25)
         X_use, lb_use, ub_use = (X, lb, ub) if use_expos else (None, None, None)
         Ws, TE, AR, Loss = te_frontier_sweep(
@@ -520,15 +579,15 @@ if w_out is not None:
         logger.log("gamma_sweep_done", n_gammas=len(gammas))
 
         show_plot(
-            weights_path_gammas(Ws_arr, gammas, names, topn=min(25, N)),
+            apply_gammaedge_theme(weights_path_gammas(Ws_arr, gammas, names, topn=min(25, N))),
             key=_opt_key("weights-path-gamma"),
         )
         show_plot(
-            turnover_vs_gamma(Ws, w_bench, gammas),
+            apply_gammaedge_theme(turnover_vs_gamma(Ws, w_bench, gammas)),
             key=_opt_key("turnover-vs-gamma"),
         )
         show_plot(
-            te_frontier(mu, Sigma, w_bench, Ws_arr),
+            apply_gammaedge_theme(te_frontier(mu, Sigma, w_bench, Ws_arr)),
             key=_opt_key("te-frontier"),
             config={"displayModeBar": True, "scrollZoom": True},
         )
@@ -592,7 +651,7 @@ try:
         minvar_point=(s_mvp, r_mvp),
         title="Efficient Frontier",
     )
-    show_plot(fig, key=_opt_key("custom-fig"))
+    show_plot(apply_gammaedge_theme(fig), key=_opt_key("custom-fig"))
 
 except Exception as e:
     st.warning(f"Frontier plot skipped: {e}")
@@ -627,7 +686,12 @@ def allocator(win: pl.DataFrame) -> np.ndarray:
     if mode == "Risk Parity":
         try:
             w = risk_parity(Sigma_win, w_min=w_min, w_max=w_max)
-        except Exception:
+        except Exception as exc:
+            _log.debug(
+                "Optimizer backtest allocator: risk_parity failed on window; "
+                "falling back to equal-weight. err=%s",
+                exc,
+            )
             w = np.full(N, 1.0 / max(N, 1))
     elif mode == "HRP":
         w = hrp_safe(
@@ -702,7 +766,9 @@ bt = backtest_rebalanced(
 # ---- Equity & drawdown (safe) ----
 try:
     show_plot(
-        equity_and_drawdown(bt["dates"], bt["equity"], title="Equity & Drawdown"),
+        apply_gammaedge_theme(
+            equity_and_drawdown(bt["dates"], bt["equity"], title="Equity & Drawdown")
+        ),
         key=_opt_key("equity-drawdown"),
     )
 except Exception as e:
@@ -730,7 +796,13 @@ def _turnover_mean(turnover_obj) -> float:
         if arr.size > 0:
             return float(np.mean(arr))
         return float("nan")
-    except Exception:
+    except Exception as exc:
+        _log.debug(
+            "Optimizer backtest: could not compute mean turnover from object "
+            "of type %s; returning NaN. err=%s",
+            type(turnover_obj).__name__,
+            exc,
+        )
         return float("nan")
 
 
@@ -752,8 +824,12 @@ try:
     st.caption(
         f"Backtest: μ={mu_bt:.4f} · σ={sig_bt:.4f} · Sharpe={sharpe_bt:.3f} · CVaR(0.95)={cvar_bt:.4f}"
     )
-except Exception:
-    pass
+except Exception as exc:
+    _log.debug(
+        "Optimizer page: could not compute quick backtest summary metrics "
+        "(μ/σ/Sharpe/CVaR) from equity series. err=%s",
+        exc,
+    )
 
 # ---- (only in CVaR mode) in-sample CVaR of resulting portfolio ----
 if w_out is not None and mode == "CVaR":
@@ -768,5 +844,9 @@ if w_out is not None and mode == "CVaR":
             st.caption(
                 f"CVaR in-sample (α={st.session_state.get('cvar_alpha', 0.95):.3f}) = {cvar_ins:.4f}"
             )
-    except Exception:
-        pass
+    except Exception as exc:
+        _log.debug(
+            "Optimizer page: could not compute in-sample CVaR for resulting "
+            "CVaR-mode portfolio. err=%s",
+            exc,
+        )
