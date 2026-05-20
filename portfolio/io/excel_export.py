@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import io
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 import polars as pl
 import yfinance as yf
@@ -163,9 +163,11 @@ def export_quant_metrics_to_excel(
         )
 
         # Calmar
+        _mdd_val = mdd_result["max_drawdown"]
+        _mdd_float = float(_mdd_val) if isinstance(_mdd_val, (int, float)) else 0.0
         calmar = calculate_calmar(
             cagr=cagr_result["cagr"],
-            mdd=mdd_result["max_drawdown"],
+            mdd=_mdd_float,
         )
 
         # Moments
@@ -283,16 +285,16 @@ def export_quant_metrics_to_excel(
     _generate_data_quality_sheet(wb, df_data_quality)
 
     if corr_result and corr_result["correlation_matrix"] is not None:
-        _generate_correlation_sheet(
-            wb,
-            corr_result["correlation_matrix"],
-            corr_result["sample_sizes"],
-        )
+        _corr_matrix = corr_result["correlation_matrix"]
+        _sample_sizes = corr_result["sample_sizes"]
+        if isinstance(_corr_matrix, pl.DataFrame) and isinstance(_sample_sizes, pl.DataFrame):
+            _generate_correlation_sheet(wb, _corr_matrix, _sample_sizes)
     else:
         pass  # No correlation sheet for single ticker
 
     # 9. Save or return bytes
     if output_format == "path":
+        assert output_path is not None  # validated at function entry
         wb.save(output_path)
         return output_path
     else:
@@ -345,11 +347,12 @@ def _download_prices(tickers: list[str], start: str, end: str) -> pl.DataFrame:
 
         df = df[cols_to_extract]
         df.columns = [col_mapping[c] for c in cols_to_extract]
-        return pl.from_pandas(df)
+        result_single: pl.DataFrame = pl.from_pandas(df)
+        return result_single
     else:
         # Multiple tickers - MultiIndex columns
         if isinstance(data.columns, pd.MultiIndex):
-            dfs = []
+            dfs: list[pl.DataFrame] = []
             for ticker in tickers:
                 try:
                     if ticker in data.columns.levels[0]:
@@ -824,7 +827,7 @@ def _generate_correlation_sheet(
         ws.column_dimensions[col[0].column_letter].width = 12
 
 
-def _style_header(ws, row_num: int) -> None:
+def _style_header(ws: Any, row_num: int) -> None:
     """Apply header styling to a row."""
     for cell in ws[row_num]:
         cell.font = Font(bold=True)
