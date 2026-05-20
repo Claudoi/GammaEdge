@@ -71,7 +71,14 @@ class XGBoostConfig:
         return hashlib.sha256(json.dumps(asdict(self), sort_keys=True).encode()).hexdigest()[:12]
 
     def to_xgb_params(self) -> dict:
-        """Convert to XGBoost parameters dict."""
+        """Convert to XGBoost parameters dict.
+
+        Note:
+            ``early_stopping_rounds`` is included here (constructor-level)
+            because XGBoost >=2.0 removed support for passing it as a kwarg
+            to ``XGBRegressor.fit()``. It must now be configured on the
+            estimator itself.
+        """
         return {
             "n_estimators": self.n_estimators,
             "max_depth": self.max_depth,
@@ -85,6 +92,8 @@ class XGBoostConfig:
             "objective": "reg:squarederror",
             "tree_method": "hist",  # Fast histogram-based
             "random_state": 42,
+            "early_stopping_rounds": self.early_stopping_rounds,
+            "eval_metric": self.eval_metric,
         }
 
 
@@ -220,18 +229,25 @@ class GradientBoostingPredictor:
                 f"{f}_{asset}" for f in self.config.feature_cols if f"{f}_{asset}" in df.columns
             ]
 
+            y_col = f"ret_{asset}"
+
             if not X_cols:
-                # Fallback: find any feature columns for this asset
+                # Fallback: find any feature columns for this asset.
+                # Exclude the target return column (``ret_{asset}``) so the
+                # label never leaks into the feature matrix and to avoid
+                # polars duplicate-column errors downstream.
                 X_cols = [
                     c
                     for c in df.columns
-                    if asset in c and c.startswith(("ret_", "vol_", "mom_", "dd_"))
+                    if asset in c and c != y_col and c.startswith(("ret_", "vol_", "mom_", "dd_"))
                 ]
-
-            y_col = f"ret_{asset}"
 
             if y_col not in df.columns:
                 logger.warning(f"Return column {y_col} not found, skipping {asset}")
+                continue
+
+            if not X_cols:
+                logger.warning(f"No feature columns found for {asset}, skipping")
                 continue
 
             # Extract X, y
@@ -261,12 +277,14 @@ class GradientBoostingPredictor:
                     y_train, y_val = y[train_idx], y[val_idx]
 
                     # Train XGBoost
+                    # NOTE: early_stopping_rounds is set on the estimator
+                    # (see XGBoostConfig.to_xgb_params) because XGBoost >=2.0
+                    # removed the fit() kwarg.
                     model = xgb.XGBRegressor(**self.config.to_xgb_params())
                     model.fit(
                         X_train,
                         y_train,
                         eval_set=[(X_val, y_val)],
-                        early_stopping_rounds=self.config.early_stopping_rounds,
                         verbose=False,
                     )
 
@@ -285,11 +303,12 @@ class GradientBoostingPredictor:
             X_train, X_val = X[:-val_size], X[-val_size:]
             y_train, y_val = y[:-val_size], y[-val_size:]
 
+            # NOTE: early_stopping_rounds is configured on the estimator
+            # via to_xgb_params() (XGBoost >=2.0 removed the fit() kwarg).
             model.fit(
                 X_train,
                 y_train,
                 eval_set=[(X_val, y_val)],
-                early_stopping_rounds=self.config.early_stopping_rounds,
                 verbose=False,
             )
 
