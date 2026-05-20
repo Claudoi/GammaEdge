@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # --- stdlib ---
 import contextlib
+import logging
 import os
 import sys
 from typing import Any, Literal, cast
@@ -19,6 +20,8 @@ import streamlit as st
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 # --- backtest core ---
+# Design System
+from app.design_system import COLORS, get_global_styles
 from portfolio.backtest import attribution as bt_attr
 from portfolio.backtest import metrics as bt_metrics
 from portfolio.backtest.allocators import make_allocator
@@ -39,8 +42,7 @@ from portfolio.viz.plot_utils import (
     show_plot,
 )
 
-# Design System
-from app.design_system import COLORS, get_global_styles
+_log = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -58,6 +60,7 @@ def _to_pandas(df: Any):
     try:
         return df.to_pandas()
     except Exception:
+        _log.debug("Backtest page: _to_pandas fallback returning original object", exc_info=True)
         return df
 
 
@@ -136,7 +139,7 @@ def _metric_from_df(m: Any, name: str) -> float:
                     v = m.select(pl.col(c)).item()
                     return float(v)
     except Exception:
-        pass
+        _log.debug("Backtest page: polars metric extraction failed for %s", name, exc_info=True)
 
     try:
         if isinstance(m, pd.DataFrame) and len(m.index) > 0:
@@ -149,7 +152,7 @@ def _metric_from_df(m: Any, name: str) -> float:
                     v = m.at[m.index[0], c]
                     return float(cast(float, v))
     except Exception:
-        pass
+        _log.debug("Backtest page: pandas metric extraction failed for %s", name, exc_info=True)
 
     return float("nan")
 
@@ -218,7 +221,10 @@ def _ensure_turnover_with_drift(bt: dict, df_wide: pl.DataFrame) -> tuple[list, 
                 )
                 return dates, arr
         except Exception:
-            pass
+            _log.debug(
+                "Backtest page: turnover unpacking failed, falling back to reconstruction",
+                exc_info=True,
+            )
 
     # Fallback 2: reconstruct from pre/post-drift weights
     rb_dates = list(bt.get("rebalance_dates", []))
@@ -298,7 +304,8 @@ st.set_page_config(page_title="Backtest", layout="wide")
 st.markdown(get_global_styles(), unsafe_allow_html=True)
 
 # Page title with Apple-style
-st.markdown(f"""
+st.markdown(
+    f"""
 <div style="margin-bottom: 32px;">
     <h1 style="
         font-size: 2.5rem;
@@ -306,7 +313,7 @@ st.markdown(f"""
         color: {COLORS['text_primary']};
         margin-bottom: 8px;
     ">
-        📊 Backtest
+        Backtest
     </h1>
     <p style="
         font-size: 1rem;
@@ -316,7 +323,9 @@ st.markdown(f"""
         Rolling rebalance with transaction costs, bootstrap metrics, and attribution analysis
     </p>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # ─────────────────────────────────────────────────────────────────────
 # Input validation from previous pages (01/02/03)
@@ -341,7 +350,7 @@ if N == 0 or df_ret_wide.height < 10:
 # Sidebar – parameters
 # ─────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.header("⚙️ Parameters")
+    st.header("Parameters")
 
     rebalance_freq = st.selectbox("Rebalance frequency", ["1mo", "1w", "3mo", "6mo"], index=0)
     lookback = st.number_input(
@@ -400,7 +409,9 @@ with st.sidebar:
     _opt_bench = st.session_state.get("opt_bench_kind", "Equal-Weight")
     _bench_default_idx = 0 if _opt_bench == "Equal-Weight" else 1
     bench_mode = st.selectbox(
-        "Benchmark mode", ["equal", "static_first_day"], index=_bench_default_idx,
+        "Benchmark mode",
+        ["equal", "static_first_day"],
+        index=_bench_default_idx,
     )
 
     st.markdown("---")
@@ -520,9 +531,11 @@ if not do_grid:
             engine_type,
             impact_model,
             float(impact_c),
-            None,  # TODO: Pass df_volume from stored session state if available
+            # df_volume left None — volume-based impact disabled (linear model is used by default;
+            # sqrt impact still works with constant volume assumption via impact_c)
+            None,
         )
-    st.success("✅ Backtest executed.")
+    st.success("Backtest executed.")
 
     # Handoff to 05_Attribution (persist into session_state)
     def _export_to_05(bt_obj: dict[str, Any], df_wide_obj: Any) -> None:
@@ -542,7 +555,7 @@ if not do_grid:
         st.session_state["metrics_df"] = bt_metrics.compute_backtest_metrics(bt_obj)
         st.session_state["bench_meta"] = {"scheme": bench_mode}
         with contextlib.suppress(Exception):
-            st.toast("Artifacts saved for 05_Attribution.", icon="💾")
+            st.toast("Artifacts saved for 05_Attribution.")
 
     _export_to_05(bt, st.session_state.get("returns_wide", df_ret_wide))
 
@@ -614,7 +627,7 @@ if do_grid:
         )
     )
 
-    st.subheader("🔎 Grid results")
+    st.subheader("Grid results")
     st.dataframe(_to_pandas(df_grid.sort("Sharpe", descending=True)), width="stretch")
 
 
@@ -630,7 +643,7 @@ if not do_grid and bt is not None:
         st.warning("Backtest returned no data (possibly insufficient history).")
         st.stop()
 
-    st.subheader("📈 Metrics")
+    st.subheader("Metrics")
     dfm = bt_metrics.compute_backtest_metrics(bt)
     tab1, tab2 = st.tabs(["Overview", "Bootstrap CI"])
     with tab1:
@@ -647,7 +660,7 @@ if not do_grid and bt is not None:
 # Main plots
 # ─────────────────────────────────────────────────────────────────────
 if not do_grid and bt is not None:
-    st.subheader("📉 Equity & Drawdown")
+    st.subheader("Equity & Drawdown")
     show_plot(
         equity_and_drawdown(bt["dates"], bt["equity"], title="Equity & Drawdown"),
         key=_bt_key("equity-dd"),
@@ -710,7 +723,7 @@ if not do_grid and bt is not None:
                 key=_bt_key("dd"),
             )
 
-    st.subheader("⚖️ Weights & Turnover")
+    st.subheader("Weights & Turnover")
     show_plot(
         plot_weights_heatmap(
             bt["dates"], bt["tickers"], bt["weights"], title="Weights (rebalance steps)"
@@ -737,7 +750,7 @@ if not do_grid and bt is not None:
 aln = None
 
 if not do_grid and bt is not None:
-    st.subheader("📊 Attribution")
+    st.subheader("Attribution")
 
     # 1) Align returns to bt dates and expand rebalance weights to daily
     try:
