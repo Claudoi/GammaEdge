@@ -299,11 +299,13 @@ def covariance(
         if np.isnan(X).any():
             raise ValueError("NaNs not allowed in lw; use fill='drop' or 'mean'.")
         Sigma = np.asarray(LedoitWolf().fit(X).covariance_, dtype=np.float64)
+        Sigma = _ensure_psd(Sigma)  # prevent tiny negative eigenvalues from float arithmetic
 
     elif method == "oas":
         if np.isnan(X).any():
             raise ValueError("NaNs not allowed in oas; use fill='drop' or 'mean'.")
         Sigma = np.asarray(OAS().fit(X).covariance_, dtype=np.float64)
+        Sigma = _ensure_psd(Sigma)  # prevent tiny negative eigenvalues from float arithmetic
     elif method == "ewma":
         lam = float(ewma_lambda)
         mu = np.nanmean(X, axis=0, keepdims=True)
