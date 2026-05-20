@@ -1,6 +1,11 @@
+from unittest.mock import patch
+
+import numpy as np
 import pandas as pd
+import pytest
 
 from portfolio.features.returns import simple_returns, to_frequency
+from portfolio.io.data_loader import _fetch_yfinance_close
 
 
 def test_resample_simple_returns():
@@ -12,3 +17,54 @@ def test_resample_simple_returns():
     assert rm.shape[0] == 1
     approx = (1.01 ** (len(idx) - 1)) - 1
     assert abs(float(rm.iloc[0, 0]) - approx) < 1e-6
+
+
+def test_fetch_yfinance_missing_ticker_raises():
+    """SILENT-2: If yfinance returns fewer tickers than requested, raise ValueError."""
+    mock_close = pd.DataFrame(
+        {
+            "AAPL": np.random.default_rng(0).normal(150, 5, 20),
+            "MSFT": np.random.default_rng(1).normal(300, 10, 20),
+        },
+        index=pd.date_range("2024-01-01", periods=20),
+    )
+    mock_close.index.name = "Date"
+    mock_df = pd.concat({"Close": mock_close}, axis=1)
+
+    with (
+        patch("portfolio.io.data_loader.yf.download", return_value=mock_df),
+        pytest.raises(ValueError, match="INVALID_TICKER"),
+    ):
+        _fetch_yfinance_close(
+            tickers=("AAPL", "MSFT", "INVALID_TICKER"),
+            start="2024-01-01",
+            end="2024-01-31",
+            interval="1d",
+            adjust=True,
+        )
+
+
+def test_fetch_yfinance_all_tickers_present_ok():
+    """If yfinance returns all tickers, no exception should be raised."""
+    mock_close = pd.DataFrame(
+        {
+            "AAPL": np.random.default_rng(0).normal(150, 5, 20),
+            "MSFT": np.random.default_rng(1).normal(300, 10, 20),
+        },
+        index=pd.date_range("2024-01-01", periods=20),
+    )
+    mock_close.index.name = "Date"
+    mock_df = pd.concat({"Close": mock_close}, axis=1)
+
+    with patch("portfolio.io.data_loader.yf.download", return_value=mock_df):
+        result = _fetch_yfinance_close(
+            tickers=("AAPL", "MSFT"),
+            start="2024-01-01",
+            end="2024-01-31",
+            interval="1d",
+            adjust=True,
+        )
+    # Result should contain both tickers
+    result_cols = set(result.columns) - {"Date", "date"}
+    assert "AAPL" in result_cols
+    assert "MSFT" in result_cols

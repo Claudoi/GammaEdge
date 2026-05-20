@@ -140,6 +140,16 @@ def _fetch_yfinance_close(
             # último recurso: si ya viene en forma simple, asumimos que son cierres
             close_df = df if isinstance(df, pd.DataFrame) else df.to_frame()
 
+    # Validate all requested tickers were returned (SILENT-2)
+    received = set(close_df.columns)
+    requested = set(tickers)
+    missing = requested - received
+    if missing:
+        raise ValueError(
+            f"yfinance failed to download data for: {sorted(missing)}. "
+            f"Check ticker symbols. Received: {sorted(received)}"
+        )
+
     # Limpieza básica
     close_df = close_df.dropna(how="all")
     close_df.index.name = "Date"
