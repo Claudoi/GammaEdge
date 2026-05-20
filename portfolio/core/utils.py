@@ -11,8 +11,27 @@ import polars as pl
 # Matrices de covarianza: saneado + diagnóstico
 # ─────────────────────────────────────────────────────────
 def ensure_psd(S: np.ndarray, eps: float = 1e-10, clip: bool = True) -> np.ndarray:
-    """
-    Simetriza, rellena NaN/Inf y garantiza PSD. Si clip=True, hace clipping espectral (Higham-lite).
+    """Project a symmetric matrix to the positive semi-definite cone.
+
+    Canonical implementation used across the codebase. Symmetrize, replace
+    NaN/Inf by zero, bump the diagonal to ``eps``, optionally clip the
+    spectrum (Higham-lite) so all eigenvalues are at least ``eps``, and
+    re-symmetrize the result for numerical safety.
+
+    Parameters
+    ----------
+    S : np.ndarray
+        Symmetric (or nearly symmetric) square matrix.
+    eps : float, default ``1e-10``
+        Floor for both the diagonal bump and the eigenvalue clip.
+    clip : bool, default ``True``
+        If ``True`` perform spectral clipping; if ``False`` only sanitise
+        the diagonal/NaNs.
+
+    Returns
+    -------
+    np.ndarray
+        PSD, symmetric ``float64`` matrix.
     """
     S = np.asarray(S, dtype=float)
     # NaN/Inf → 0 y simetriza
@@ -31,6 +50,11 @@ def ensure_psd(S: np.ndarray, eps: float = 1e-10, clip: bool = True) -> np.ndarr
     # Re-simetriza por seguridad
     S_out: np.ndarray = np.asarray(0.5 * (S + S.T), dtype=float)
     return S_out
+
+
+# Legacy private alias kept so internal modules that imported the
+# underscore-prefixed name continue to work unchanged.
+_ensure_psd = ensure_psd
 
 
 def cond_number(S: np.ndarray) -> float:

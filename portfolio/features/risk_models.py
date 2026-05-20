@@ -10,6 +10,8 @@ import pandas as pd
 import polars as pl
 from sklearn.covariance import OAS, LedoitWolf
 
+from portfolio.core.utils import ensure_psd as _ensure_psd  # canonical PSD projection
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Tipos y utilidades generales
 # ──────────────────────────────────────────────────────────────────────────────
@@ -160,20 +162,9 @@ def _ema_last(x: np.ndarray, span: int) -> float:
     return s
 
 
-def _ensure_psd(Sigma: np.ndarray, eps: float = 1e-12) -> np.ndarray:
-    """
-    Proyección PSD por clipping de autovalores.
-    """
-    S = np.asarray(Sigma, dtype=np.float64)
-    if S.size == 0:
-        return S
-    A = np.asarray(0.5 * (S + S.T), dtype=np.float64)
-    eigvals, eigvecs = np.linalg.eigh(A)
-    eigvals = np.asarray(np.clip(eigvals, eps, None), dtype=np.float64)
-    eigvecs = np.asarray(eigvecs, dtype=np.float64)
-    A_psd = eigvecs @ np.diag(eigvals) @ eigvecs.T
-    A_psd = np.asarray(A_psd, dtype=np.float64)
-    return np.asarray(0.5 * (A_psd + A_psd.T), dtype=np.float64)
+# PSD projection lives in ``portfolio.core.utils``. The underscore-prefixed
+# name is kept as a private alias (re-exported at module top) so existing
+# call sites and tests in this module keep working unchanged.
 
 
 def apply_ridge(Sigma: np.ndarray, eps: float) -> np.ndarray:

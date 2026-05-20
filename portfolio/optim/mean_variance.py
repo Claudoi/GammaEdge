@@ -5,48 +5,14 @@ from collections.abc import Sequence
 
 import numpy as np
 
+# Canonical PSD projection lives in ``portfolio.core.utils``; re-exported
+# here so existing importers (``black_litterman``, ``risk_parity``,
+# ``hrp``, ``te``, tests…) keep working unchanged.
+from portfolio.core.utils import ensure_psd  # noqa: F401  (re-export)
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Utilidades numéricas (robustas)
 # ──────────────────────────────────────────────────────────────────────────────
-
-
-def ensure_psd(S: np.ndarray, eps: float = 1e-10) -> np.ndarray:
-    """
-    Saneo + proyección PSD robusta:
-    - simetriza
-    - reemplaza no finitos por 0
-    - asegura diagonal mínima
-    - si eigh falla, aplica jitter creciente en la diagonal (hasta 6 intentos)
-    - último recurso: SVD con clip
-    """
-    if S.size == 0:
-        return S
-
-    A = 0.5 * (S + S.T)
-    A = np.asarray(A, dtype=float)
-    A[~np.isfinite(A)] = 0.0
-
-    d = np.diag(A).copy()
-    d[~np.isfinite(d)] = 0.0
-    d = np.maximum(d, eps)
-    np.fill_diagonal(A, d)
-
-    jitter = 0.0
-    for _ in range(6):
-        try:
-            w, V = np.linalg.eigh(A)
-            w = np.clip(w, eps, None)
-            R = V @ np.diag(w) @ V.T
-            return np.asarray(0.5 * (R + R.T), dtype=np.float64)
-        except np.linalg.LinAlgError:
-            jitter = eps if jitter == 0.0 else jitter * 10.0
-            A = A + np.eye(A.shape[0]) * jitter
-
-    # Fallback muy raro
-    U, s, VT = np.linalg.svd(0.5 * (A + A.T), full_matrices=False)
-    s = np.clip(s, eps, None)
-    R = (U * s) @ VT
-    return np.asarray(0.5 * (R + R.T), dtype=np.float64)
 
 
 def cond_number(S: np.ndarray) -> float:
