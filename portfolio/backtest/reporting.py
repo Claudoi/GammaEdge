@@ -23,6 +23,7 @@ from .attribution import (
     align_returns_and_weights,
     contributions_by_asset,
     contributions_by_group,
+    expand_rebalance_weights,
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -916,9 +917,7 @@ def export_backtest_report(
         rb_dates_list = rb_dates_any
 
     # Expand rebalance weights to daily grid
-    from portfolio.backtest import attribution as bt_attr  # local import to avoid cycles
-
-    daily_W = bt_attr.expand_rebalance_weights(
+    daily_W = expand_rebalance_weights(
         dates=df_ret_bt.get_column("date").to_list(),
         rb_dates=list(rb_dates_list),
         W_reb=W_reb,
