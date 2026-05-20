@@ -1,6 +1,7 @@
 # app/pages/05_Attribution.py
 from __future__ import annotations
 
+import logging
 import os
 import sys
 from typing import Any
@@ -31,6 +32,8 @@ from portfolio.backtest.reporting import (
 )
 from portfolio.viz import plot_utils as viz
 
+logger = logging.getLogger(__name__)
+
 
 def _coerce_dates_list(dates_any: list[Any]) -> list[Any]:
     if dates_any is None or len(dates_any) == 0:
@@ -45,12 +48,13 @@ def _safe_metrics_to_dict(metrics_df_obj: Any) -> dict[str, float] | None:
         pdf = metrics_df_obj.to_pandas() if hasattr(metrics_df_obj, "to_pandas") else metrics_df_obj
         return {str(k): float(v) for k, v in zip(pdf.iloc[:, 0], pdf.iloc[:, 1], strict=False)}
     except Exception:
+        logger.debug("Could not coerce metrics_df to dict", exc_info=True)
         return None
 
 
 st.set_page_config(page_title="Attribution & Reporting", layout="wide")
 st.markdown(get_global_styles(), unsafe_allow_html=True)
-st.title("📊 Attribution & Reporting")
+st.title("Attribution & Reporting")
 st.caption(
     "Performance (Brinson) and risk (Euler) attribution on top of the backtest, "
     "with exportable HTML/PDF reports."
@@ -58,23 +62,23 @@ st.caption(
 
 # Inputs expected desde páginas previas
 bt = st.session_state.get("bt")
-df_ret_wide = st.session_state.get("df_ret_wide", st.session_state.get("returns_wide"))
+returns_wide = st.session_state.get("returns_wide")
 group_map = st.session_state.get("group_map")
 metrics_df = st.session_state.get("metrics_df")
 df_brinson = st.session_state.get("df_brinson")
 bench_meta = st.session_state.get("bench_meta")
 Wb_daily_session = st.session_state.get("Wb_daily")
 
-if bt is None or df_ret_wide is None:
+if bt is None or returns_wide is None:
     st.warning(
-        "⚠️ Run pages 02–05 first so we can build the report (risk model, backtest, attribution)."
+        "Run pages 02–05 first so we can build the report (risk model, backtest, attribution)."
     )
     st.stop()
 
 # Normaliza returns a Polars + Datetime
-if not isinstance(df_ret_wide, pl.DataFrame):
-    df_ret_wide = pl.from_pandas(df_ret_wide)
-df_ret_wide = _ensure_datetime(df_ret_wide, "date")
+if not isinstance(returns_wide, pl.DataFrame):
+    returns_wide = pl.from_pandas(returns_wide)
+returns_wide = _ensure_datetime(returns_wide, "date")
 
 # Artefactos del backtest
 dates_bt_any = list(bt.get("dates", []))
@@ -90,7 +94,7 @@ if not dates_bt_any or equity.size == 0 or W_reb.size == 0 or not tickers:
 dates_bt = _coerce_dates_list(dates_bt_any)
 
 # Alinea returns a la malla del backtest
-df_ret_bt = df_ret_wide.filter(pl.col("date").is_in(dates_bt)).unique(subset=["date"]).sort("date")
+df_ret_bt = returns_wide.filter(pl.col("date").is_in(dates_bt)).unique(subset=["date"]).sort("date")
 
 # Valida dimensiones y rebalance_dates
 if W_reb.ndim == 2:
@@ -138,10 +142,11 @@ if isinstance(df_brinson, pl.DataFrame) and "date" in df_brinson.columns:
         df_brinson_ctx = _ensure_datetime(df_brinson, "date")
         df_brinson_ctx = df_brinson_ctx.filter(pl.col("date").is_in(dates_bt)).sort("date")
     except Exception:
+        logger.debug("Could not normalize df_brinson; skipping", exc_info=True)
         df_brinson_ctx = None
 
 # Contexto superior
-st.markdown("### 🧭 Context Summary")
+st.markdown("### Context Summary")
 colA, colB, colC = st.columns(3)
 bench_scheme = (bench_meta or {}).get("scheme", "Equal-Weight")
 colA.metric("Benchmark Scheme", bench_scheme)
@@ -149,7 +154,7 @@ colB.metric("Groups mapped", f"{len(group_map) if isinstance(group_map, dict) el
 colC.metric("Period", f"{str(dates_bt[0])[:10]} → {str(dates_bt[-1])[:10]}")
 
 # Figuras core
-st.markdown("### 📈 Core Charts")
+st.markdown("### Core Charts")
 col1, col2 = st.columns(2)
 viz.show_plot(report.figures["equity"], st_obj=col1, key="equity")
 viz.show_plot(report.figures["drawdown"], st_obj=col2, key="drawdown")
@@ -166,7 +171,7 @@ factor_rc_rows: list[dict[str, Any]] | None = None
 # Brinson
 if df_brinson_ctx is not None:
     try:
-        st.markdown("### 🧱 Brinson Performance Attribution")
+        st.markdown("### Brinson Performance Attribution")
 
         fig_brinson_cum = viz.plot_brinson_cumulative(
             df_brinson_ctx,
@@ -194,7 +199,7 @@ if df_brinson_ctx is not None:
         st.info(f"Brinson figures skipped: {e}")
 
 # Euler RC último día (asset-level)
-st.markdown("### 🧮 Euler Risk Contributions (last day)")
+st.markdown("### Euler Risk Contributions (last day)")
 cov_last = None
 try:
     if df_ret_bt.width > 1 and daily_W.shape[0] > 0:
@@ -252,6 +257,7 @@ try:
                     }
                 )
         except Exception:
+            logger.debug("Could not build euler_last_day_rows table", exc_info=True)
             euler_last_day_rows = None
     else:
         st.info("Not enough data to compute Euler risk contributions.")
@@ -262,7 +268,7 @@ except Exception as e:
     euler_last_day_rows = None
 
 # Factor Decomposition (Euler sobre factores PCA)
-st.markdown("### 🧩 Factor Decomposition (Euler, PCA factors)")
+st.markdown("### Factor Decomposition (Euler, PCA factors)")
 
 with st.expander("Show factor risk decomposition"):
     if df_ret_bt.width <= 1 or daily_W.shape[0] == 0:
@@ -391,6 +397,7 @@ with st.expander("Show factor risk decomposition"):
                                 }
                             )
                     except Exception:
+                        logger.debug("Could not build factor_rc_rows table", exc_info=True)
                         factor_rc_rows = None
         except Exception as e:
             st.info(f"Factor decomposition not available: {e}")
@@ -399,7 +406,7 @@ with st.expander("Show factor risk decomposition"):
             factor_rc_rows = None
 
 # Tablas
-st.subheader("📊 Tables")
+st.subheader("Tables")
 for name, df in report.tables.items():
     st.write(f"**{name}**")
     st.dataframe(df, width="stretch")
@@ -427,7 +434,7 @@ ctx = build_context(
 )
 
 # Export
-st.subheader("📤 Export")
+st.subheader("Export")
 
 figures: list[ReportFigure] = [
     ReportFigure("Equity", report.figures["equity"]),
@@ -444,7 +451,7 @@ if df_brinson_ctx is not None:
         )
         figures.append(ReportFigure("Brinson (Cumulative)", br_cum_fig))
     except Exception:
-        pass
+        logger.debug("Could not build Brinson cumulative figure for export", exc_info=True)
 
 # Añadimos Euler y Factor Decomposition al reporte si están disponibles
 if fig_euler_last_day is not None:
