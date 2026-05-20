@@ -401,6 +401,13 @@ def compute_exposures_wide(
         AAPL       0.05         1.15     -0.20      0.10       0.65          0.25
     """
     returns_pd = returns_wide.to_pandas()
+
+    # Set the date column as the index so alignment with the factor
+    # DatetimeIndex works correctly inside compute_factor_loadings.
+    if "date" in returns_pd.columns:
+        returns_pd = returns_pd.set_index("date")
+    returns_pd.index = pd.to_datetime(returns_pd.index)
+
     ret_cols = [c for c in returns_pd.columns if c.startswith(returns_col_prefix)]
 
     results = []
