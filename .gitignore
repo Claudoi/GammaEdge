@@ -27,7 +27,8 @@ pip-wheel-metadata/
 venv/
 env/
 ENV/
-.python-version
+# Note: .python-version is intentionally NOT here — it pins the Python
+# runtime version for deployment (pyenv, Streamlit Cloud, etc.).
 
 # ─── Type checking / linting / testing caches ───────────────────────────────
 .mypy_cache/
