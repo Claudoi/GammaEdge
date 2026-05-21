@@ -201,10 +201,19 @@ class MetricRow:
     value: float
 
 
-def compute_backtest_metrics(bt: Any) -> pl.DataFrame:
+def compute_backtest_metrics(bt: Any, rf: float = 0.0) -> pl.DataFrame:
     """
     Compute standard backtest metrics from a dict or BacktestResult-like object.
     Returns a Polars DataFrame with columns ["metric","value"].
+
+    Parameters
+    ----------
+    bt : dict or BacktestResult-like
+        Backtest payload containing the equity curve and dates.
+    rf : float, default 0.0
+        Annualized risk-free rate (decimal, e.g. 0.04 for 4%). Subtracted from
+        per-period returns before computing Sharpe so the metric matches the
+        convention used by ``portfolio.backtest.kpis.compute_kpis``.
     """
     turnover: np.ndarray | None = None
     te_daily: np.ndarray | None = None
@@ -237,12 +246,30 @@ def compute_backtest_metrics(bt: Any) -> pl.DataFrame:
     ret = _equity_to_returns(equity)
     ann = _annualization_from_dates(dates_pd)
 
-    mu = float(np.nanmean(ret) * ann) if ret.size else float("nan")
+    # Convert annualized rf to a per-period rate so we can subtract it from
+    # the per-period returns before annualizing the excess mean/vol. This
+    # mirrors ``compute_kpis`` (kpis.py) which subtracts ``rf_daily`` from
+    # daily returns, keeping the two Sharpe estimates internally consistent.
+    rf_per_period = ((1.0 + rf) ** (1.0 / ann) - 1.0) if (rf and ann > 0) else 0.0
+    excess = (ret - rf_per_period) if ret.size else ret
+
+    # Reported Volatility_ann uses raw returns (vol of total returns, not of
+    # excess returns) so the metric remains a pure portfolio risk measure
+    # independent of rf. Sharpe uses excess returns in both numerator and
+    # denominator following the kpis.py convention.
     vol = float(np.nanstd(ret, ddof=1) * np.sqrt(ann)) if ret.size > 1 else float("nan")
-    sharpe = float(mu / vol) if (np.isfinite(mu) and np.isfinite(vol) and vol > 0) else float("nan")
+    mu_excess = float(np.nanmean(excess) * ann) if excess.size else float("nan")
+    vol_excess = (
+        float(np.nanstd(excess, ddof=1) * np.sqrt(ann)) if excess.size > 1 else float("nan")
+    )
+    sharpe = (
+        float(mu_excess / vol_excess)
+        if (np.isfinite(mu_excess) and np.isfinite(vol_excess) and vol_excess > 0)
+        else float("nan")
+    )
     maxdd = _max_drawdown(equity)
     cagr = _cagr(equity, ann)
-    sortino = _sortino(ret, ann)
+    sortino = _sortino(ret, ann, rf_per_period=rf_per_period)
 
     to_mean = (
         float(np.nanmean(turnover))

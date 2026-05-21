@@ -189,3 +189,72 @@ def test_calmar_uses_cagr_not_arithmetic_return():
         f"Calmar = {calmar:.4f}, expected CAGR/|MaxDD| = {expected_calmar:.4f}. "
         f"CAGR={cagr:.4f}, MaxDD={maxdd:.4f}"
     )
+
+
+# ---------------------------------------------------------------------------
+# Sharpe rf-consistency across metrics.py and kpis.py
+# ---------------------------------------------------------------------------
+#
+# ``portfolio.backtest.metrics.compute_backtest_metrics`` previously ignored
+# the risk-free rate entirely and computed Sharpe as ``mean(r)/std(r)``,
+# whereas ``portfolio.backtest.kpis.compute_kpis`` subtracts ``rf_daily``
+# from per-period returns first. The two helpers therefore disagreed for any
+# rf > 0 on the same portfolio. These regression tests guarantee both report
+# the same Sharpe for the same equity curve and rf level.
+
+
+def test_metrics_sharpe_subtracts_rf_like_kpis():
+    """metrics.py and kpis.py Sharpe must agree (both subtract rf)."""
+    import pandas as pd
+
+    from portfolio.backtest.metrics import compute_backtest_metrics
+
+    rng = np.random.default_rng(0)
+    n = 252 * 3  # 3 years of daily data
+    rets = rng.normal(0.0005, 0.012, n)
+    equity = np.cumprod(1.0 + rets)
+
+    rf_annual = 0.04  # 4% annual
+    rf_daily = (1.0 + rf_annual) ** (1.0 / 252) - 1.0
+
+    # kpis.py path (already subtracts rf_daily internally)
+    kpis_out = compute_kpis(equity, rf_daily=rf_daily, periods_per_year=252)
+    sharpe_kpis = float(kpis_out["Sharpe"])
+
+    # metrics.py path: build a daily ``bt`` dict that exercises the same logic
+    dates = pd.bdate_range("2020-01-01", periods=equity.size)
+    bt = {"dates": dates, "equity": equity}
+    df_m = compute_backtest_metrics(bt, rf=rf_annual)
+    sharpe_metrics = float(df_m.filter(df_m["metric"] == "Sharpe")["value"][0])
+
+    assert np.isfinite(sharpe_kpis) and np.isfinite(
+        sharpe_metrics
+    ), f"Sharpe must be finite. kpis={sharpe_kpis}, metrics={sharpe_metrics}"
+    assert abs(sharpe_kpis - sharpe_metrics) < 0.05, (
+        f"Sharpe inconsistency: kpis={sharpe_kpis:.4f}, metrics={sharpe_metrics:.4f}. "
+        "Both should subtract rf before computing the ratio."
+    )
+
+
+def test_metrics_sharpe_responds_to_rf():
+    """Passing rf > 0 must lower the reported Sharpe vs rf=0 (positive drift)."""
+    import pandas as pd
+
+    from portfolio.backtest.metrics import compute_backtest_metrics
+
+    rng = np.random.default_rng(1)
+    n = 252 * 3
+    rets = rng.normal(0.0008, 0.010, n)  # positive drift so excess > 0
+    equity = np.cumprod(1.0 + rets)
+    dates = pd.bdate_range("2020-01-01", periods=equity.size)
+    bt = {"dates": dates, "equity": equity}
+
+    df0 = compute_backtest_metrics(bt, rf=0.0)
+    df_rf = compute_backtest_metrics(bt, rf=0.05)
+    s0 = float(df0.filter(df0["metric"] == "Sharpe")["value"][0])
+    s_rf = float(df_rf.filter(df_rf["metric"] == "Sharpe")["value"][0])
+
+    assert s_rf < s0, (
+        f"With positive drift, rf=5% should lower Sharpe vs rf=0. "
+        f"Got rf=0 -> {s0:.4f}, rf=0.05 -> {s_rf:.4f}."
+    )
