@@ -27,13 +27,26 @@ def _safe(arr: Any) -> NDArray[np.float64]:
 
 
 def equity_to_drawdown(equity: Any) -> NDArray[np.float64]:
-    """Compute drawdown series from equity curve (as ratios, negative in drawdown)."""
-    eq = _safe(equity)
-    if eq.size == 0:
+    """Compute drawdown series from equity curve (as ratios, negative in drawdown).
+
+    Preserves the input length so the output series stays aligned with the
+    caller's time index (e.g., a Date index). Non-finite entries propagate
+    as NaN in the running-max chain instead of being filtered out, which
+    would otherwise shrink the array and misalign downstream calculations.
+    """
+    eq_raw = _as_float_array(equity)
+    if eq_raw.size == 0:
         return np.zeros(0, dtype=np.float64)
-    run_max = np.maximum.accumulate(eq).astype(np.float64, copy=False)
+    # Replace non-finite entries with -inf so they never become the running
+    # max, but keep the array length unchanged.
+    finite_mask = np.isfinite(eq_raw)
+    eq_for_max = np.where(finite_mask, eq_raw, -np.inf)
+    run_max = np.maximum.accumulate(eq_for_max).astype(np.float64, copy=False)
+    # Positions before any finite value remain -inf; mark them NaN so the
+    # division yields NaN rather than spurious values.
+    run_max[~np.isfinite(run_max)] = np.nan
     run_max[run_max <= 0] = np.nan
-    dd = (eq / run_max) - 1.0
+    dd = (eq_raw / run_max) - 1.0
     return np.asarray(dd, dtype=np.float64)
 
 
@@ -55,7 +68,15 @@ def compute_kpis(
     Compute common KPIs from an equity curve on a daily grid.
     Assumes equity is a NAV-like series (positive).
     """
-    eq = _safe(equity)
+    # Keep the raw array to preserve the true time-grid length for any
+    # annualization (years = N / periods_per_year). Filtering with _safe()
+    # would shrink the array and inflate CAGR / Sharpe / Sortino whenever
+    # the input contained NaN or Inf values (e.g., from data gaps).
+    eq_raw = _as_float_array(equity)
+    eq = _safe(eq_raw)
+    # Compute returns from the filtered series to avoid divide-by-NaN/Inf
+    # warnings; this only affects the per-step return distribution used for
+    # Sharpe/Sortino/HitRatio, not the time-horizon annualization above.
     rets = _safe(equity_to_returns(eq))
 
     out: dict[str, float] = {}
@@ -63,7 +84,10 @@ def compute_kpis(
     # Growth metrics
     if eq.size > 0:
         total_return = float(eq[-1] / eq[0] - 1.0) if eq[0] != 0 else np.nan
-        years = max(eq.size / periods_per_year, 1e-12)
+        # Use ORIGINAL series length for the time horizon, not the filtered
+        # length. The multiplicative chain (eq[-1] / eq[0]) still uses the
+        # filtered first/last finite values for numerical stability.
+        years = max(eq_raw.size / periods_per_year, 1e-12)
         cagr = float((eq[-1] / eq[0]) ** (1.0 / years) - 1.0) if eq[0] > 0 else np.nan
         out["Total Return"] = total_return
         out["CAGR"] = cagr
@@ -89,7 +113,7 @@ def compute_kpis(
             else np.nan
         )
 
-        dd = equity_to_drawdown(eq)
+        dd = equity_to_drawdown(eq_raw)
         maxdd = float(np.nanmin(dd)) if dd.size > 0 else np.nan
         calmar = (ann_mu / abs(maxdd)) if (np.isfinite(maxdd) and maxdd < 0) else np.nan
 
