@@ -342,3 +342,89 @@ class TestModelTypes:
         """Test FF5 model has 5 factors."""
         # Would need FF5 synthetic data
         pass
+
+
+class TestOLSStandardErrors:
+    """Test that OLS standard errors and t-stats are computed canonically.
+
+    These tests guard against the off-diagonal bug where (XᵀX)⁻¹ is ignored
+    and each factor is treated as if regressed in isolation.
+    """
+
+    def test_factor_loadings_tstats_match_statsmodels(self):
+        """Verify GammaEdge factor t-stats match a known-correct reference.
+
+        Synthetic data with strong factor correlations exposes the off-diagonal
+        bug: if (XᵀX)⁻¹ is ignored, t-stats differ from statsmodels by 10-50%.
+        """
+        rng = np.random.default_rng(42)
+        n = 252
+        dates = pd.date_range("2024-01-01", periods=n, freq="B")
+
+        # Generate correlated factors
+        mkt = rng.normal(0.0005, 0.012, n)
+        smb = 0.3 * mkt + rng.normal(0.0002, 0.008, n)
+        hml = -0.2 * mkt + 0.4 * smb + rng.normal(0.0001, 0.006, n)
+        rf = np.full(n, 0.00015)
+
+        # True model: ticker = 0.0001 + 1.2*MKT + 0.5*SMB - 0.3*HML + ε
+        eps = rng.normal(0, 0.005, n)
+        ticker_excess = 1.2 * mkt + 0.5 * smb - 0.3 * hml + eps
+        ticker_returns = ticker_excess + rf
+
+        returns = pd.Series(ticker_returns, index=dates)
+        factors = pd.DataFrame(
+            {"Mkt-RF": mkt, "SMB": smb, "HML": hml, "RF": rf},
+            index=dates,
+        )
+
+        result = compute_factor_loadings(returns, factors, model="FF3")
+
+        # Reference: statsmodels OLS
+        import statsmodels.api as sm
+
+        excess = ticker_returns - rf
+        X = sm.add_constant(np.column_stack([mkt, smb, hml]))
+        sm_result = sm.OLS(excess, X).fit()
+
+        # Alpha t-stat
+        expected_alpha_tstat = sm_result.tvalues[0]
+        actual_alpha_tstat = result["t_stats"]["alpha"]
+        assert abs(actual_alpha_tstat - expected_alpha_tstat) < 0.5, (
+            f"Alpha t-stat differs: expected {expected_alpha_tstat:.3f}, "
+            f"got {actual_alpha_tstat:.3f} (>0.5 difference suggests (XᵀX)⁻¹ bug)"
+        )
+
+        # Beta t-stats
+        for i, factor in enumerate(["Mkt-RF", "SMB", "HML"]):
+            expected = sm_result.tvalues[i + 1]
+            actual = result["t_stats"][factor]
+            assert abs(actual - expected) < 0.5, (
+                f"{factor} t-stat differs: expected {expected:.3f}, " f"got {actual:.3f}"
+            )
+
+    def test_factor_loadings_recovers_true_coefficients(self):
+        """OLS should recover the true loadings (high SNR setup)."""
+        rng = np.random.default_rng(0)
+        n = 1000
+        dates = pd.date_range("2020-01-01", periods=n, freq="B")
+        mkt = rng.normal(0.0005, 0.01, n)
+        smb = rng.normal(0.0002, 0.008, n)
+        hml = rng.normal(0.0001, 0.007, n)
+        rf = np.full(n, 0.00015)
+        eps = rng.normal(0, 0.001, n)  # low noise
+
+        # True: alpha=0, β_mkt=1.0, β_smb=0.5, β_hml=-0.2
+        excess = 1.0 * mkt + 0.5 * smb - 0.2 * hml + eps
+        ticker = excess + rf
+
+        factors = pd.DataFrame(
+            {"Mkt-RF": mkt, "SMB": smb, "HML": hml, "RF": rf},
+            index=dates,
+        )
+        result = compute_factor_loadings(pd.Series(ticker, index=dates), factors, model="FF3")
+
+        betas = result["betas"]
+        assert abs(betas["Mkt-RF"] - 1.0) < 0.05
+        assert abs(betas["SMB"] - 0.5) < 0.05
+        assert abs(betas["HML"] - (-0.2)) < 0.05

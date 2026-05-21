@@ -199,20 +199,33 @@ def compute_factor_loadings(
     residuals = y - y_pred
     residual_vol = np.std(residuals, ddof=len(factor_cols) + 1)
 
-    # T-statistics (for alpha and betas)
+    # Canonical OLS standard errors via (XᵀX)⁻¹
+    # Var(β̂) = σ̂² · (XᵀX)⁻¹, with X augmented by an intercept column.
+    # σ̂² = SSR / (n - k - 1) is the unbiased residual variance.
+    # The previous diagonal-only formula ignored factor cross-correlations,
+    # biasing all t-statistics under FF3/FF5 where factors are correlated.
     n = len(y)
-    k = len(factor_cols)
-    se_residual = np.sqrt(ss_res / (n - k - 1))
+    k = len(factor_cols)  # factor columns, excluding intercept
+    X_aug = np.column_stack([np.ones(n), X])  # add intercept column
 
-    # Standard error of alpha
-    X_var = np.var(X, axis=0, ddof=1)
-    se_alpha = se_residual * np.sqrt(1 / n + np.sum(X.mean(axis=0) ** 2 / (n * X_var)))
+    sigma_sq = ss_res / (n - k - 1)  # unbiased estimate of residual variance
 
-    # Standard errors of betas
-    se_betas = se_residual / np.sqrt(n * X_var)
+    try:
+        xtx_inv = np.linalg.inv(X_aug.T @ X_aug)
+    except np.linalg.LinAlgError:
+        xtx_inv = np.linalg.pinv(X_aug.T @ X_aug)
+
+    cov_matrix = sigma_sq * xtx_inv
+    se_full = np.sqrt(np.clip(np.diag(cov_matrix), a_min=0.0, a_max=None))
+
+    se_alpha = float(se_full[0])
+    se_betas = se_full[1:]  # length k, one per factor
 
     t_alpha = alpha_daily / se_alpha if se_alpha > 0 else 0.0
-    t_betas = betas_array / se_betas
+    # Guard against division-by-zero per factor (degenerate design column)
+    t_betas = np.array(
+        [(b / s) if s > 0 else 0.0 for b, s in zip(betas_array, se_betas, strict=False)]
+    )
 
     # Package results
     betas_dict = dict(zip(factor_cols, betas_array, strict=False))
