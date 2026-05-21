@@ -632,7 +632,9 @@ def calculate_correlation_matrix(
         }
 
     Notes:
-        - Inner join on dates per pair
+        - Global complete-case: rows with NaN in ANY ticker are excluded
+          before computing the full N x N correlation matrix in a single
+          batch np.corrcoef call (industry-standard quant convention).
         - Diagonal = 1.0
         - If only 1 ticker → None
         - Calculated on returns, not prices
@@ -655,34 +657,28 @@ def calculate_correlation_matrix(
         }
 
     tickers = [col.replace(return_col_prefix, "") for col in ret_cols]
-
-    # Calculate correlation matrix
     n_tickers = len(tickers)
-    corr_matrix = np.ones((n_tickers, n_tickers))
-    sample_sizes = np.zeros((n_tickers, n_tickers), dtype=int)
 
-    for i, ticker_i in enumerate(tickers):
-        for j, ticker_j in enumerate(tickers):
-            if i == j:
-                sample_sizes[i, j] = len(returns_wide)
-                continue
+    # Global complete-case drop: any row with NaN in ANY ticker is excluded.
+    # This yields a single common sample for the full correlation matrix,
+    # enabling one batch np.corrcoef call instead of N^2 pairwise calls.
+    returns_array = returns_wide.select(ret_cols).drop_nulls().to_numpy()
+    n_obs = returns_array.shape[0]
 
-            # Get returns for both tickers
-            col_i = f"{return_col_prefix}{ticker_i}"
-            col_j = f"{return_col_prefix}{ticker_j}"
+    if n_obs < 2:
+        # Not enough data: identity diagonal, NaN off-diagonal
+        corr_matrix = np.full((n_tickers, n_tickers), np.nan)
+        np.fill_diagonal(corr_matrix, 1.0)
+    else:
+        # Single batch correlation across all tickers — rowvar=False since
+        # observations are rows and variables are columns.
+        corr_matrix = np.corrcoef(returns_array, rowvar=False)
 
-            df_pair = returns_wide.select(["date", col_i, col_j]).drop_nulls()
-
-            r_i = df_pair[col_i].to_numpy()
-            r_j = df_pair[col_j].to_numpy()
-
-            n_obs = len(r_i)
-            sample_sizes[i, j] = n_obs
-
-            if n_obs < 2:
-                corr_matrix[i, j] = np.nan
-            else:
-                corr_matrix[i, j] = np.corrcoef(r_i, r_j)[0, 1]
+    # Sample size is identical for every pair under the global complete-case
+    # semantic; the diagonal preserves the pre-fix semantic of returning the
+    # full row count of the input.
+    sample_sizes = np.full((n_tickers, n_tickers), n_obs, dtype=int)
+    np.fill_diagonal(sample_sizes, len(returns_wide))
 
     # Create DataFrames
     corr_df = pl.DataFrame(corr_matrix, schema=tickers)
