@@ -6,9 +6,13 @@
 ![Coverage](https://img.shields.io/badge/Coverage-65%25%2B-success?logo=codecov&logoColor=white)
 ![License](https://img.shields.io/badge/License-MIT-green?logo=Open%20Source%20Initiative&logoColor=white)
 
+> Python platform for institutional portfolio optimization, risk analytics, and backtesting.
+
 Portfolio optimization and backtesting framework implementing modern quantitative methods. Includes covariance shrinkage, Random Matrix Theory filtering, multiple optimization engines, and vectorized backtesting with realistic transaction costs.
 
 The implementation prioritizes numerical stability and addresses common issues with sample covariance matrices in limited time series. We use a multi-step fallback approach for ill-conditioned matrices and apply spectral filtering to separate signal from noise.
+
+GammaEdge is developed as a final-degree project (TFG) for educational and research use at Universidad de Las Palmas de Gran Canaria.
 
 ---
 
@@ -39,7 +43,7 @@ Vectorized backtesting engine with:
 - Multiple rebalancing strategies (calendar-based, threshold-based)
 
 ### ML and Regime Detection
-- Hidden Markov Models for regime identification
+- Hidden Markov Models for regime identification (2 to 4 regimes)
 - XGBoost predictors with SHAP interpretability
 - Fama-French 3 and 5-factor model integration
 
@@ -51,17 +55,72 @@ Vectorized backtesting engine with:
 
 ---
 
+## Quick start
+
+### Prerequisites
+
+- Python 3.11 (the project pins `>=3.11,<3.12` for CI reproducibility)
+- Poetry 1.8+ (Poetry 2.x is also supported)
+
+### Install
+
+```bash
+git clone https://github.com/Claudoi/GammaEdge.git
+cd GammaEdge
+poetry install
+```
+
+### Run the Streamlit app
+
+```bash
+poetry run streamlit run app/Home.py
+```
+
+The app launches with eight pages:
+
+1. **Data** — ingest, clean and explore prices and returns
+2. **Risk Model** — covariance estimation and RMT filtering
+3. **Optimizer** — run the seven optimization engines
+4. **Backtest** — vectorized simulation with transaction costs
+5. **Attribution** — Brinson-Fachler decomposition
+6. **Reporting** — PDF / Excel report generation
+7. **Scenarios** — historical and synthetic stress tests
+8. **Regime Detection** — HMM regime identification
+
+### Run the REST API
+
+```bash
+poetry run uvicorn api.main:app --reload
+```
+
+Interactive documentation is available at `http://localhost:8000/docs` (Swagger UI)
+and `http://localhost:8000/redoc` (ReDoc).
+
+---
+
 ## Architecture
+
+GammaEdge follows a three-layer architecture that separates pure quantitative
+logic from presentation and integration concerns:
+
+| Layer        | Path         | Purpose                                                            |
+|--------------|--------------|--------------------------------------------------------------------|
+| Core library | `portfolio/` | Pure quantitative logic (numpy / polars / scipy). Strict `mypy`.   |
+| Web app      | `app/`       | Streamlit interface with eight pages.                              |
+| REST API     | `api/`       | FastAPI endpoints + Pydantic v2 schemas for programmatic access.   |
+
+Data flow: Polars long form -> hash-keyed cache -> numpy matrices -> optimizers
+-> backtest -> attribution -> Streamlit / API.
 
 ```mermaid
 graph TD
-    A[📥 Data Ingestion] --> B[🧹 Cleaning & Winsorization]
-    B --> C[📊 Risk Model]
-    C --> D[⚙️ Optimization Engine]
-    D --> E[🔄 Vectorized Backtest]
-    E --> F[📈 Attribution Analysis]
-    E --> G[📋 Report Generation]
-    
+    A[Data Ingestion] --> B[Cleaning and Winsorization]
+    B --> C[Risk Model]
+    C --> D[Optimization Engine]
+    D --> E[Vectorized Backtest]
+    E --> F[Attribution Analysis]
+    E --> G[Report Generation]
+
     style A fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff
     style B fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff
     style C fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff
@@ -71,21 +130,14 @@ graph TD
     style G fill:#2d3748,stroke:#4a5568,stroke-width:2px,color:#fff
 ```
 
-**Core libraries**: NumPy, SciPy, Polars, scikit-learn, statsmodels, hmmlearn, XGBoost  
+**Core libraries**: NumPy, SciPy, Polars, scikit-learn, statsmodels, hmmlearn, XGBoost
 **Interface**: Streamlit application with 8 pages, FastAPI backend
 
 ---
 
-## Installation
+## Usage
 
-```bash
-git clone https://github.com/Claudoi/GammaEdge.git
-cd GammaEdge
-poetry install
-poetry run streamlit run app/Home.py
-```
-
-## Example
+### Python example
 
 ```python
 from portfolio.optim.cvar import solve_cvar_lp
@@ -100,32 +152,18 @@ weights = solve_cvar_lp(
     returns_matrix=returns,
     alpha=0.95,
     w_min=0.0,
-    w_max=0.10
+    w_max=0.10,
 )
 ```
 
----
-
-## REST API
+### REST API
 
 GammaEdge exposes a REST interface built on FastAPI alongside the Streamlit UI.
 
-### Run the server
-
-```bash
-poetry run uvicorn api.main:app --reload
-```
-
-Interactive documentation is available at `http://localhost:8000/docs` (Swagger UI) and `http://localhost:8000/redoc` (ReDoc).
-
-### Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
-| GET | `/health` | Liveness probe. |
-| POST | `/api/v1/optimize` | Portfolio optimization (`mean_variance`, `min_variance`, `risk_parity`, `hrp`). |
-
-### Example
+| Method | Path                  | Description                                                                  |
+|--------|-----------------------|------------------------------------------------------------------------------|
+| GET    | `/health`             | Liveness probe.                                                              |
+| POST   | `/api/v1/optimize`    | Portfolio optimization (`mean_variance`, `min_variance`, `risk_parity`, `hrp`). |
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/optimize \
@@ -138,9 +176,50 @@ curl -X POST http://localhost:8000/api/v1/optimize \
       }'
 ```
 
-The response includes per-ticker weights, annualized metrics (expected return, volatility, Sharpe ratio) and a timestamp.
+The response includes per-ticker weights, annualized metrics (expected return,
+volatility, Sharpe ratio) and a timestamp.
 
-Input validation is enforced with Pydantic v2 models (`api/schemas/`), which reject non-finite values, inconsistent dimensions, and duplicate tickers before the optimizer is invoked.
+Input validation is enforced with Pydantic v2 models (`api/schemas/`), which
+reject non-finite values, inconsistent dimensions, and duplicate tickers before
+the optimizer is invoked.
+
+---
+
+## Development
+
+### Run tests
+
+```bash
+poetry run pytest
+```
+
+The suite enforces a minimum coverage threshold of 65% on `portfolio/` and uses
+Hypothesis for property-based testing of numerical kernels.
+
+### Lint and format
+
+```bash
+poetry run ruff check --fix portfolio/ api/ app/ tests/
+poetry run black portfolio/ api/ app/ tests/
+```
+
+### Type check
+
+```bash
+poetry run mypy portfolio/ api/
+```
+
+`app/` is intentionally excluded from strict typing to keep the Streamlit
+prototyping loop fast.
+
+### Pre-commit hooks
+
+The repository uses pre-commit hooks (ruff + black on commit, mypy on demand):
+
+```bash
+poetry run pre-commit install
+poetry run pre-commit run --all-files
+```
 
 ---
 
@@ -161,11 +240,26 @@ Input validation is enforced with Pydantic v2 models (`api/schemas/`), which rej
 Based on methods from:
 - Markowitz (1952): Portfolio Selection
 - Ledoit & Wolf (2004): Honey, I Shrunk the Sample Covariance Matrix
-- López de Prado (2016): Building Diversified Portfolios that Outperform Out of Sample
+- Lopez de Prado (2016): Building Diversified Portfolios that Outperform Out of Sample
 - Rockafellar & Uryasev (2000): Optimization of Conditional Value-at-Risk
 - Almgren & Chriss (2001): Optimal Execution of Portfolio Transactions
 
 ---
 
-**Author**: Claudio Martel  
-**License**: MIT
+## Citation
+
+If you use GammaEdge in academic work, please cite:
+
+```bibtex
+@misc{martel2026gammaedge,
+  author       = {Martel, Claudio},
+  title        = {GammaEdge: A Portfolio Optimization Platform},
+  year         = {2026},
+  howpublished = {Final Degree Project (TFG), Universidad de Las Palmas de Gran Canaria},
+}
+```
+
+---
+
+**Author**: Claudio Martel
+**License**: MIT (see `pyproject.toml`; project distributed under the MIT terms)
