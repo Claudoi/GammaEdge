@@ -93,6 +93,9 @@ desktop.ini
 *.vrb
 *.xdv
 LaTeX.pdf
+LaTeX.txt
+.claude/
+CLAUDE.md
 
 # ─── Secrets / credentials ──────────────────────────────────────────────────
 .env
