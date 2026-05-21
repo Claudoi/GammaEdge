@@ -124,7 +124,16 @@ def compute_kpis(
 
         dd = equity_to_drawdown(eq_raw)
         maxdd = float(np.nanmin(dd)) if dd.size > 0 else np.nan
-        calmar = (ann_mu / abs(maxdd)) if (np.isfinite(maxdd) and maxdd < 0) else np.nan
+        # Canonical Calmar uses the GEOMETRIC annualized return (CAGR), not the
+        # arithmetic annualized excess mean. CAGR was computed above from the
+        # equity ratio over the true time horizon and accounts for volatility
+        # drag, so it is the correct numerator (Young, 1991).
+        cagr_for_calmar = out.get("CAGR", np.nan)
+        calmar = (
+            (cagr_for_calmar / abs(maxdd))
+            if (np.isfinite(maxdd) and maxdd < 0 and np.isfinite(cagr_for_calmar))
+            else np.nan
+        )
 
         hit_ratio = float(np.mean(rets > 0.0))
 

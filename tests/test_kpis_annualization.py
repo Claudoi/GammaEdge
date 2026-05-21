@@ -161,3 +161,31 @@ def test_sortino_vs_sharpe_relationship():
         f"Sortino/Sharpe = {ratio:.3f}, expected ~1.414 (Gaussian theory). "
         "This indicates the downside deviation is not the canonical full-series RMS."
     )
+
+
+def test_calmar_uses_cagr_not_arithmetic_return():
+    """Calmar = CAGR / |MaxDD|, not (arithmetic ann mean) / |MaxDD|.
+
+    Construct a portfolio with strong positive skew so arithmetic and geometric
+    annualizations diverge. For Gaussian returns:
+      ann_mu = mean(r) * 252
+      CAGR  ~= ann_mu - 0.5*sigma^2  (volatility drag)
+    For sigma=0.20 annual, ann_mu = 0.10 -> CAGR ~= 0.08. ~25% difference in Calmar.
+    """
+    rng = np.random.default_rng(42)
+    # High vol -> significant volatility drag
+    daily_rets = rng.normal(0.10 / 252, 0.20 / np.sqrt(252), 252 * 5)  # 5 years
+    equity = np.cumprod(1.0 + daily_rets)
+
+    kpis = compute_kpis(equity, periods_per_year=252, rf_daily=0.0)
+
+    cagr = kpis["CAGR"]
+    maxdd = kpis["MaxDD"]
+    calmar = kpis["Calmar"]
+
+    # Canonical: Calmar = CAGR / |MaxDD|
+    expected_calmar = cagr / abs(maxdd)
+    assert abs(calmar - expected_calmar) < 1e-6, (
+        f"Calmar = {calmar:.4f}, expected CAGR/|MaxDD| = {expected_calmar:.4f}. "
+        f"CAGR={cagr:.4f}, MaxDD={maxdd:.4f}"
+    )
