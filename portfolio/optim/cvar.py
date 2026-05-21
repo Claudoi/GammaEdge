@@ -69,7 +69,7 @@ def cvar_minimization(
     # u_t ≥ -R_t w - ζ ⇒ -u_t - R_t w - ζ ≤ 0
     for t in range(T):
         row = np.zeros(n_var)
-        row[:n_w] = R[t, :]  # = R_t
+        row[:n_w] = -R[t, :]  # -R_t (Rockafellar-Uryasev 2000: u_t ≥ L_t - ζ, L_t = -R_t w)
         row[n_w] = -1.0  # -ζ
         row[n_w + n_z + t] = -1.0  # -u_t
         A.append(row)

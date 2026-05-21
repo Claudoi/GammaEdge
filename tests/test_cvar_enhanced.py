@@ -390,3 +390,63 @@ def test_cvar_normal_case_unchanged():
     assert result.shape == (3,)
     assert abs(result.sum() - 1.0) < 1e-6
     assert not np.isnan(result).any()
+
+
+def test_cvar_minimizes_loss_tail_not_gain_tail():
+    """Regression test for the sign bug: CVaR must minimize LEFT (loss) tail.
+
+    Construct a 2-asset case where:
+    - Asset A: low mean, low downside (the SAFE asset)
+    - Asset B: low mean, high downside (the RISKY asset, large negative returns)
+
+    A correct CVaR optimizer should pick mostly A.
+    The sign-flipped version would pick mostly B (because B has a fat RIGHT tail
+    relative to its left tail when measured incorrectly).
+    """
+    import numpy as np
+
+    from portfolio.optim.cvar import cvar_minimization
+
+    rng = np.random.default_rng(42)
+    T = 1000
+    # Asset A: tight distribution, small losses
+    r_a = rng.normal(0.001, 0.005, T)
+    # Asset B: same mean but with rare large losses (heavy LEFT tail)
+    r_b = rng.normal(0.0015, 0.005, T)  # slightly higher mean
+    crash_idx = rng.choice(T, size=20, replace=False)
+    r_b[crash_idx] = -0.10  # 10% losses in 2% of periods → very heavy left tail
+
+    returns = np.column_stack([r_a, r_b])
+    w = cvar_minimization(returns, alpha=0.95, budget=1.0)
+
+    # Asset A has lighter LEFT tail (smaller losses) → CVaR optimizer should prefer it.
+    # If the sign were wrong, it would prefer B (which has fewer GAINS than A).
+    # We assert A's weight > B's weight as the smoking-gun test.
+    assert w[0] > w[1], (
+        f"CVaR sign bug: optimizer picked risky asset B over safer A. "
+        f"w_A={w[0]:.3f}, w_B={w[1]:.3f}"
+    )
+
+    # Stronger: A should get MOST of the weight
+    assert w[0] > 0.7, f"Expected w_A > 0.7, got {w[0]:.3f} (sign bug suspected)"
+
+
+def test_cvar_known_loss_distribution():
+    """Sanity: CVaR of a deterministic 'losses on bottom 5%' distribution."""
+    import numpy as np
+
+    from portfolio.optim.cvar import compute_portfolio_cvar, cvar_minimization
+
+    # Single asset, 100 returns. Bottom 5 are -0.10, others are +0.01
+    # True CVaR_0.95 = 0.10 (the magnitude of the average loss in worst 5%)
+    returns = np.full((100, 1), 0.01)
+    returns[:5, 0] = -0.10
+    np.random.shuffle(returns)
+
+    w = cvar_minimization(returns, alpha=0.95, budget=1.0)
+    assert abs(w[0] - 1.0) < 1e-6  # only asset
+
+    _var, cvar = compute_portfolio_cvar(w, returns, alpha=0.95)
+    # CVaR should be approximately 0.10 (the loss magnitude in the tail)
+    # If sign is wrong, this would be very different.
+    assert 0.08 < cvar < 0.12, f"CVaR={cvar:.4f}, expected ~0.10 (sign bug?)"
