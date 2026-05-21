@@ -70,7 +70,9 @@ desktop.ini
 .ipynb_checkpoints/
 *-checkpoint.ipynb
 
-# ─── LaTeX compile artifacts (LaTeX.txxt is source; outputs ignored) ────────
+# ─── LaTeX compile artifacts (LaTeX.txt is source; outputs ignored) ─────────
+# Note: LaTeX.txt is the official TFG documentation source — tracked.
+# Only compiled output (LaTeX.pdf) and intermediate artifacts are ignored.
 *.aux
 *.bbl
 *.bcf
@@ -93,7 +95,8 @@ desktop.ini
 *.vrb
 *.xdv
 LaTeX.pdf
-LaTeX.txt
+
+# Local-only Claude Code config (not part of the published product)
 .claude/
 CLAUDE.md
 
