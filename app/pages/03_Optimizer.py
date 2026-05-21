@@ -351,27 +351,36 @@ if mode == "Mean-Variance (L2)" or mode == "Black-Litterman":
     # If BL, we use mu_optim, Sigma_optim
     gamma = st.slider("γ (risk aversion)", 0.1, 200.0, 10.0, 0.1)
     lam2 = st.slider("λ (L2 turnover to bench)", 0.0, 100.0, 0.0, 0.1)
-    w_out = pgd_box_simplex_l2(
-        mu_optim, Sigma_optim, gamma, w_min=w_min, w_max=w_max, lam_turnover=lam2, w_ref=w_bench
-    )
-    w_out = project_to_box_simplex(w_out, w_min, w_max)
+    with st.spinner("Solving mean-variance optimization (L2)..."):
+        w_out = pgd_box_simplex_l2(
+            mu_optim,
+            Sigma_optim,
+            gamma,
+            w_min=w_min,
+            w_max=w_max,
+            lam_turnover=lam2,
+            w_ref=w_bench,
+        )
+        w_out = project_to_box_simplex(w_out, w_min, w_max)
     validate_weights(w_out, w_min, w_max)
     logger.log("solution_ok", algo="MV_L2_or_BL", gamma=gamma, lam2=lam2)
 
 elif mode == "Mean-Variance (L1)":
     gamma = st.slider("γ (risk aversion)", 0.1, 200.0, 10.0, 0.1)
     lam1 = st.slider("λ (L1 turnover to bench)", 0.0, 10.0, 0.0, 0.01)
-    w_out = pgd_box_simplex_l1(
-        mu, Sigma, gamma, w_min=w_min, w_max=w_max, lam_l1=lam1, w_ref=w_bench
-    )
-    w_out = project_to_box_simplex(w_out, w_min, w_max)
+    with st.spinner("Solving mean-variance optimization (L1)..."):
+        w_out = pgd_box_simplex_l1(
+            mu, Sigma, gamma, w_min=w_min, w_max=w_max, lam_l1=lam1, w_ref=w_bench
+        )
+        w_out = project_to_box_simplex(w_out, w_min, w_max)
     validate_weights(w_out, w_min, w_max)
     logger.log("solution_ok", algo="MV_L1", gamma=gamma, lam1=lam1)
 
 elif mode == "Risk Parity":
     try:
-        w_out = risk_parity(Sigma, w_min=w_min, w_max=w_max)
-        w_out = project_to_box_simplex(w_out, w_min, w_max)
+        with st.spinner("Solving risk parity allocation..."):
+            w_out = risk_parity(Sigma, w_min=w_min, w_max=w_max)
+            w_out = project_to_box_simplex(w_out, w_min, w_max)
         validate_weights(w_out, w_min, w_max)
         logger.log("solution_ok", algo="RiskParity")
     except Exception as e:
@@ -380,10 +389,16 @@ elif mode == "Risk Parity":
         w_out = project_to_box_simplex(w_out, w_min, w_max)
 
 elif mode == "HRP":
-    w_out = hrp_safe(
-        hrp_func=hrp_weights, cov=Sigma, method="ward", optimal=True, w_min=w_min, w_max=w_max
-    )
-    w_out = project_to_box_simplex(w_out, w_min, w_max)
+    with st.spinner("Building hierarchical risk parity (HRP) tree..."):
+        w_out = hrp_safe(
+            hrp_func=hrp_weights,
+            cov=Sigma,
+            method="ward",
+            optimal=True,
+            w_min=w_min,
+            w_max=w_max,
+        )
+        w_out = project_to_box_simplex(w_out, w_min, w_max)
     validate_weights(w_out, w_min, w_max)
     logger.log("solution_ok", algo="HRP")
 
@@ -395,27 +410,29 @@ elif mode == "CVaR":
         "λ L1 turnover", 0.0, 5.0, st.session_state.get("cvar_lam1", 0.0), 0.01, key="cvar_lam1"
     )
     try:
-        w_out = solve_cvar_with_fallback(
-            R=R_np,
-            cols_used=cols_available,
-            mu=mu,
-            Sigma=Sigma,
-            names=names,
-            w_bench=w_bench,
-            w_min=w_min,
-            w_max=w_max,
-            alpha=alpha,
-            lam_l1=lam_l1,
-            mv_gamma=10.0,
-        )
+        with st.spinner("Solving CVaR optimization..."):
+            w_out = solve_cvar_with_fallback(
+                R=R_np,
+                cols_used=cols_available,
+                mu=mu,
+                Sigma=Sigma,
+                names=names,
+                w_bench=w_bench,
+                w_min=w_min,
+                w_max=w_max,
+                alpha=alpha,
+                lam_l1=lam_l1,
+                mv_gamma=10.0,
+            )
         validate_weights(w_out, w_min, w_max)
         logger.log("solution_ok", algo="CVaR", alpha=alpha, lam_l1=lam_l1)
     except Exception as e:
         logger.log("fallback", algo="CVaR", reason=str(e))
-        w_out = pgd_box_simplex_l2(
-            mu, Sigma, gamma=10.0, w_min=w_min, w_max=w_max, lam_turnover=0.0, w_ref=w_bench
-        )
-        w_out = project_to_box_simplex(w_out, w_min, w_max)
+        with st.spinner("Falling back to MV-L2..."):
+            w_out = pgd_box_simplex_l2(
+                mu, Sigma, gamma=10.0, w_min=w_min, w_max=w_max, lam_turnover=0.0, w_ref=w_bench
+            )
+            w_out = project_to_box_simplex(w_out, w_min, w_max)
 
 elif mode == "Active (TE penalized)":
     st.markdown("### Active TE optimizer (penalized)")
@@ -424,24 +441,25 @@ elif mode == "Active (TE penalized)":
     iters = st.slider("Iterations", 100, 3000, 800, 50)
     rho = rho_expo if use_expos else 0.0
     X_use, lb_use, ub_use = (X, lb, ub) if use_expos else (None, None, None)
-    w_out, diag = te_active_pgd(
-        mu,
-        Sigma,
-        w_bench,
-        gamma=gamma,
-        w_min=w_min,
-        w_max=w_max,
-        lam_l2=lam2,
-        w_ref=w_bench,
-        X=X_use,
-        lb=lb_use,
-        ub=ub_use,
-        rho_expo=rho,
-        iters=iters,
-    )
-    if w_out is not None:
-        w_out = project_to_box_simplex(w_out, w_min, w_max)
-        validate_weights(w_out, w_min, w_max)
+    with st.spinner("Solving active TE-penalized optimization..."):
+        w_out, diag = te_active_pgd(
+            mu,
+            Sigma,
+            w_bench,
+            gamma=gamma,
+            w_min=w_min,
+            w_max=w_max,
+            lam_l2=lam2,
+            w_ref=w_bench,
+            X=X_use,
+            lb=lb_use,
+            ub=ub_use,
+            rho_expo=rho,
+            iters=iters,
+        )
+        if w_out is not None:
+            w_out = project_to_box_simplex(w_out, w_min, w_max)
+            validate_weights(w_out, w_min, w_max)
     logger.log(
         "solution_ok",
         algo="ActiveTE",
@@ -558,24 +576,25 @@ if w_out is not None:
         )
         gammas = np.geomspace(0.01, 1000.0, 25)
         X_use, lb_use, ub_use = (X, lb, ub) if use_expos else (None, None, None)
-        Ws, TE, AR, Loss = te_frontier_sweep(
-            mu,
-            Sigma,
-            w_bench,
-            gammas,
-            w_min=w_min,
-            w_max=w_max,
-            lam_l2=0.0,
-            w_ref=w_bench,
-            X=X_use,
-            lb=lb_use,
-            ub=ub_use,
-            rho_expo=(rho_expo if use_expos else 0.0),
-            iters=400,
-        )
+        with st.spinner("Sweeping γ values to build TE frontier..."):
+            Ws, TE, AR, Loss = te_frontier_sweep(
+                mu,
+                Sigma,
+                w_bench,
+                gammas,
+                w_min=w_min,
+                w_max=w_max,
+                lam_l2=0.0,
+                w_ref=w_bench,
+                X=X_use,
+                lb=lb_use,
+                ub=ub_use,
+                rho_expo=(rho_expo if use_expos else 0.0),
+                iters=400,
+            )
 
-        Ws_proj = [project_to_box_simplex(wg, w_min, w_max) for wg in Ws]
-        Ws_arr = stack_Ws(Ws_proj, N)
+            Ws_proj = [project_to_box_simplex(wg, w_min, w_max) for wg in Ws]
+            Ws_arr = stack_Ws(Ws_proj, N)
         logger.log("gamma_sweep_done", n_gammas=len(gammas))
 
         show_plot(
@@ -607,9 +626,10 @@ try:
         r_lo, r_hi = -0.1, 0.1  # conservative fallback if μ is flat
 
     # 2) Closed-form frontier (short allowed)
-    risks_closed, rets_closed = frontier_closed_form(
-        mu_valid, Sigma, r_min=r_lo, r_max=r_hi, npts=100
-    )
+    with st.spinner("Computing closed-form efficient frontier..."):
+        risks_closed, rets_closed = frontier_closed_form(
+            mu_valid, Sigma, r_min=r_lo, r_max=r_hi, npts=100
+        )
 
     # 3) Box frontier (long-only with box)
     if not box_feasible(N, w_min, w_max):
@@ -619,9 +639,10 @@ try:
         )
         risks_box = rets_box = None
     else:
-        risks_box, rets_box = frontier_box_projected(
-            mu_valid, Sigma, w_min=w_min, w_max=w_max, r_min=r_lo, r_max=r_hi, npts=100
-        )
+        with st.spinner("Computing box-projected efficient frontier..."):
+            risks_box, rets_box = frontier_box_projected(
+                mu_valid, Sigma, w_min=w_min, w_max=w_max, r_min=r_lo, r_max=r_hi, npts=100
+            )
         if np.size(risks_box) <= 1:
             st.info("Degenerate box-frontier (single point). Relax the box or widen the μ range.")
             risks_box = rets_box = None

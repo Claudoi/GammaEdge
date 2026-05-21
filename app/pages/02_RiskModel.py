@@ -577,23 +577,24 @@ with h3:
 # Action – compute risk model and store in session_state
 # ──────────────────────────────────────────────────────────────────────────────
 if st.button("Estimate μ and Σ", type="primary"):
-    payload = _risk_pipeline(
-        df_ret_wide,
-        mu_method=mu_method,
-        mu_span=int(mu_span),
-        mu_shrink_target=mu_shrink_target,
-        mu_rf_annual=float(mu_rf_annual or 0.0),
-        cov_method=cov_method,
-        ewma_lambda=float(ewma_lambda),
-        n_factors=int(n_factors),
-        fill_policy=fill_policy,
-        per_year=int(per_year),
-        enforce_psd=bool(enforce_psd),
-        ridge_eps=float(ridge_eps),
-        stress_test=bool(stress_test),
-        heatmap_method=heatmap_method,
-        heatmap_optimal=bool(heatmap_optimal),
-    )
+    with st.spinner("Estimating expected returns and covariance matrix..."):
+        payload = _risk_pipeline(
+            df_ret_wide,
+            mu_method=mu_method,
+            mu_span=int(mu_span),
+            mu_shrink_target=mu_shrink_target,
+            mu_rf_annual=float(mu_rf_annual or 0.0),
+            cov_method=cov_method,
+            ewma_lambda=float(ewma_lambda),
+            n_factors=int(n_factors),
+            fill_policy=fill_policy,
+            per_year=int(per_year),
+            enforce_psd=bool(enforce_psd),
+            ridge_eps=float(ridge_eps),
+            stress_test=bool(stress_test),
+            heatmap_method=heatmap_method,
+            heatmap_optimal=bool(heatmap_optimal),
+        )
     st.session_state["risk_payload"] = payload
     st.session_state["risk_ready"] = True
 
@@ -682,7 +683,8 @@ if st.session_state.get("risk_ready"):
     apply_rmt = st.toggle("Show RMT-Cleaned Correlation Heatmap", value=False)
 
     if apply_rmt:
-        Sigma_clean = clean_covariance_rmt(Sigma, T=T_obs, N=N_assets)
+        with st.spinner("Cleaning covariance via Marcenko-Pastur filtering..."):
+            Sigma_clean = clean_covariance_rmt(Sigma, T=T_obs, N=N_assets)
         show_plot(
             corr_heatmap(
                 Sigma_clean,

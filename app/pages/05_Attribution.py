@@ -124,13 +124,14 @@ if Wb_daily_session is None:
     st.session_state["Wb_daily"] = daily_W
 
 # Construye BacktestReport (figuras + tablas)
-report: BacktestReport = build_backtest_report(
-    df_ret_wide=df_ret_bt,
-    daily_weights=daily_W,
-    equity=equity,
-    group_map=group_map,
-    title="GammaEdge Backtest",
-)
+with st.spinner("Decomposing attribution and building backtest report..."):
+    report: BacktestReport = build_backtest_report(
+        df_ret_wide=df_ret_bt,
+        daily_weights=daily_W,
+        equity=equity,
+        group_map=group_map,
+        title="GammaEdge Backtest",
+    )
 
 df_asset_total = report.tables.get("contrib_asset_total")
 df_group_total = report.tables.get("contrib_group_total")
@@ -292,7 +293,8 @@ with st.expander("Show factor risk decomposition"):
                 )
 
                 # Eigen-decomposition (symmetric PSD matrix)
-                eigvals, eigvecs = np.linalg.eigh(Sigma_assets.values)
+                with st.spinner("Computing PCA factor decomposition..."):
+                    eigvals, eigvecs = np.linalg.eigh(Sigma_assets.values)
                 idx = np.argsort(eigvals)[::-1]  # descending
                 eigvals = eigvals[idx]
                 eigvecs = eigvecs[:, idx]

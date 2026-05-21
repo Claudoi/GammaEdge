@@ -124,13 +124,14 @@ st.session_state["Wb_daily"] = st.session_state.get("Wb_daily", daily_W)
 # ---------------------------------------------------------------------
 # Build unified BacktestReport (tables + figs)
 # ---------------------------------------------------------------------
-report: BacktestReport = build_backtest_report(
-    df_ret_wide=df_ret_bt,
-    daily_weights=daily_W,
-    equity=equity,
-    group_map=group_map,
-    title="GammaEdge Backtest",
-)
+with st.spinner("Building backtest report figures and tables..."):
+    report: BacktestReport = build_backtest_report(
+        df_ret_wide=df_ret_bt,
+        daily_weights=daily_W,
+        equity=equity,
+        group_map=group_map,
+        title="GammaEdge Backtest",
+    )
 
 # ---------------------------------------------------------------------
 # Display meta info (benchmark & groups)
@@ -213,7 +214,8 @@ figures: list[ReportFigure] = [
 
 # HTML export
 try:
-    html_bytes = render_html(ctx, figures, page_title="GammaEdge Report", h1="Backtest Report")
+    with st.spinner("Generating HTML report..."):
+        html_bytes = render_html(ctx, figures, page_title="GammaEdge Report", h1="Backtest Report")
     st.download_button(
         "Download HTML report",
         data=html_bytes,
@@ -225,7 +227,8 @@ except Exception as e:
 
 # PDF export
 try:
-    pdf_bytes = render_pdf(ctx, figures, title="GammaEdge Report")
+    with st.spinner("Generating PDF report..."):
+        pdf_bytes = render_pdf(ctx, figures, title="GammaEdge Report")
     st.download_button(
         "Download PDF report",
         data=pdf_bytes,
@@ -242,17 +245,21 @@ save_to_disk = st.checkbox("Save also to ./reports", value=False)
 if save_to_disk:
     os.makedirs("reports", exist_ok=True)
     try:
-        html_bytes = render_html(ctx, figures, page_title="GammaEdge Report", h1="Backtest Report")
-        with open("reports/backtest_report.html", "wb") as f:
-            f.write(html_bytes)
+        with st.spinner("Saving HTML report to disk..."):
+            html_bytes = render_html(
+                ctx, figures, page_title="GammaEdge Report", h1="Backtest Report"
+            )
+            with open("reports/backtest_report.html", "wb") as f:
+                f.write(html_bytes)
         st.success("HTML saved to reports/backtest_report.html")
     except Exception as e:
         st.info(f"Saving HTML failed: {e}")
 
     try:
-        pdf_bytes = render_pdf(ctx, figures, title="GammaEdge Report")
-        with open("reports/backtest_report.pdf", "wb") as f:
-            f.write(pdf_bytes)
+        with st.spinner("Saving PDF report to disk..."):
+            pdf_bytes = render_pdf(ctx, figures, title="GammaEdge Report")
+            with open("reports/backtest_report.pdf", "wb") as f:
+                f.write(pdf_bytes)
         st.success("PDF saved to reports/backtest_report.pdf")
     except Exception as e:
         st.info(f"Saving PDF failed: {e}")
