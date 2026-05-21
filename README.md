@@ -70,9 +70,15 @@ cd GammaEdge
 poetry install
 ```
 
+A `Makefile` ships with the project as a thin convenience layer; every target
+delegates to the in-project `.venv/bin/*` binaries so you never accidentally
+run with the system Python. Run `make help` to list available targets.
+
 ### Run the Streamlit app
 
 ```bash
+make app
+# equivalent to:
 poetry run streamlit run app/Home.py
 ```
 
@@ -90,6 +96,8 @@ The app launches with eight pages:
 ### Run the REST API
 
 ```bash
+make api
+# equivalent to:
 poetry run uvicorn api.main:app --reload
 ```
 
@@ -190,7 +198,8 @@ the optimizer is invoked.
 ### Run tests
 
 ```bash
-poetry run pytest
+make test          # full suite with coverage
+make test-fast     # faster, no coverage gate
 ```
 
 The suite enforces a minimum coverage threshold of 65% on `portfolio/` and uses
@@ -199,14 +208,15 @@ Hypothesis for property-based testing of numerical kernels.
 ### Lint and format
 
 ```bash
-poetry run ruff check --fix portfolio/ api/ app/ tests/
-poetry run black portfolio/ api/ app/ tests/
+make lint          # ruff --fix
+make format        # black
+make check         # lint + format + typecheck + tests in one shot
 ```
 
 ### Type check
 
 ```bash
-poetry run mypy portfolio/ api/
+make typecheck     # mypy portfolio/
 ```
 
 `app/` is intentionally excluded from strict typing to keep the Streamlit
