@@ -31,6 +31,46 @@ from portfolio.viz.regime_plots import (
     plot_regime_transitions,  # Fixed: was plot_transition_matrix
 )
 
+
+# =============================================================================
+# Cached HMM fit
+# =============================================================================
+@st.cache_resource(show_spinner="Fitting HMM regime model...")
+def _fit_regime_detector(
+    asset_name: str,
+    dates_tuple: tuple,
+    returns_tuple: tuple,
+    n_regimes: int,
+    n_iter: int,
+    random_state: int,
+) -> tuple:
+    """Cache the HMM fit + prediction by hashable inputs.
+
+    The fitted RegimeDetector is stateful (holds an hmmlearn GaussianHMM + scaler),
+    so we cache the object itself with ``st.cache_resource``. Inputs are
+    converted to tuples so Streamlit can hash them deterministically.
+
+    Returns a tuple ``(detector, df_regimes)`` so downstream code can call
+    ``detector.get_regime_stats()`` / ``detector.get_transition_matrix()`` and
+    use the prediction DataFrame without re-fitting on every Streamlit rerun.
+    """
+    df_asset = pl.DataFrame(
+        {
+            "date": list(dates_tuple),
+            "returns": list(returns_tuple),
+        }
+    )
+
+    detector = RegimeDetector(
+        n_regimes=n_regimes,
+        n_iter=n_iter,
+        random_state=random_state,
+    )
+    detector.fit(df_asset, returns_col="returns")
+    df_regimes = detector.predict(df_asset, returns_col="returns")
+    return detector, df_regimes
+
+
 # =============================================================================
 # Page Config
 # =============================================================================
@@ -126,33 +166,32 @@ with st.sidebar:
 st.subheader("1. Detect Regimes")
 
 if st.button("Run Regime Detection", type="primary"):
-    with st.spinner("Detecting regimes with HMM..."):
-        # Prepare data
-        df_asset = df_ret_wide.select(["date", selected_asset]).rename({selected_asset: "returns"})
+    # Prepare data
+    df_asset = df_ret_wide.select(["date", selected_asset]).rename({selected_asset: "returns"})
 
-        # Remove nulls
-        df_asset = df_asset.drop_nulls()
+    # Remove nulls
+    df_asset = df_asset.drop_nulls()
 
-        if len(df_asset) < 100:
-            st.error(f"Insufficient data for {selected_asset}: only {len(df_asset)} rows.")
-            st.stop()
+    if len(df_asset) < 100:
+        st.error(f"Insufficient data for {selected_asset}: only {len(df_asset)} rows.")
+        st.stop()
 
-        # Fit and predict
-        detector = RegimeDetector(
-            n_regimes=n_regimes,
-            n_iter=n_iter,
-            random_state=random_state,
-        )
+    # Fit and predict (cached — re-runs only when inputs change)
+    detector, df_regimes = _fit_regime_detector(
+        asset_name=selected_asset,
+        dates_tuple=tuple(df_asset["date"].to_list()),
+        returns_tuple=tuple(df_asset["returns"].to_list()),
+        n_regimes=n_regimes,
+        n_iter=n_iter,
+        random_state=random_state,
+    )
 
-        detector.fit(df_asset, returns_col="returns")
-        df_regimes = detector.predict(df_asset, returns_col="returns")
+    # Store in session state
+    st.session_state["regime_detector"] = detector
+    st.session_state["regime_results"] = df_regimes
+    st.session_state["regime_asset"] = selected_asset
 
-        # Store in session state
-        st.session_state["regime_detector"] = detector
-        st.session_state["regime_results"] = df_regimes
-        st.session_state["regime_asset"] = selected_asset
-
-        st.success(f"Regimes detected for **{selected_asset}**.")
+    st.success(f"Regimes detected for **{selected_asset}**.")
 
 # =============================================================================
 # Display Results
@@ -211,7 +250,7 @@ if "regime_results" in st.session_state:
                     "value": f"{row['mean_return']:.2%}",
                     "icon": "",
                 }
-                for _, row in perf.iterrows()
+                for row in perf.to_dict(orient="records")
             ],
             columns=3,
         ),
