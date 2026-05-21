@@ -68,6 +68,7 @@ types-python-dateutil = "*"
 types-setuptools = "*"
 pre-commit = ">=3.7.0"
 nbstripout = ">=0.7.1"
+httpx = "^0.28.1"
 
 [tool.poetry.group.docs.dependencies]
 mkdocs = ">=1.6.0"
