@@ -18,6 +18,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 
 # Design System
 from app.design_system import get_global_styles
+from app.utils import to_pandas
 from app.viz.plotly_theme import apply_gammaedge_theme
 from portfolio.backtest import attribution as bt_attr  # expand/align helpers
 from portfolio.backtest.kpis import compute_kpis
@@ -41,22 +42,6 @@ st.title("Reporting")
 st.caption(
     "Generate HTML and PDF reports with equity, drawdown, weights, attribution and benchmark context."
 )
-
-
-# ---------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------
-def _to_pandas(df: object):
-    """Safely convert Polars or other table-like objects to pandas."""
-    try:
-        return df.to_pandas()
-    except Exception as exc:
-        logger.warning(
-            "Reporting: _to_pandas conversion failed: %s",
-            exc,
-            exc_info=True,
-        )
-        return df
 
 
 # ---------------------------------------------------------------------
@@ -160,7 +145,7 @@ st.plotly_chart(apply_gammaedge_theme(report.figures["top_contrib"]), use_contai
 st.subheader("Tables")
 for name, df in report.tables.items():
     st.write(f"**{name}**")
-    st.dataframe(_to_pandas(df), width="stretch")
+    st.dataframe(to_pandas(df), width="stretch")
 
 # ---------------------------------------------------------------------
 # Build context for export

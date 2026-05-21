@@ -17,6 +17,7 @@ sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")
 
 # Design System
 from app.design_system import get_global_styles
+from app.utils import safe_metrics_to_dict
 from portfolio.attribution.euler import euler_risk_contributions
 from portfolio.attribution.factor_decomposition import euler_factor_contributions
 from portfolio.backtest import attribution as bt_attr
@@ -41,15 +42,6 @@ def _coerce_dates_list(dates_any: list[Any]) -> list[Any]:
     df = pl.DataFrame({"date": dates_any})
     df = _ensure_datetime(df, "date")
     return df.get_column("date").to_list()
-
-
-def _safe_metrics_to_dict(metrics_df_obj: Any) -> dict[str, float] | None:
-    try:
-        pdf = metrics_df_obj.to_pandas() if hasattr(metrics_df_obj, "to_pandas") else metrics_df_obj
-        return {str(k): float(v) for k, v in zip(pdf.iloc[:, 0], pdf.iloc[:, 1], strict=False)}
-    except Exception:
-        logger.debug("Could not coerce metrics_df to dict", exc_info=True)
-        return None
 
 
 st.set_page_config(page_title="Attribution & Reporting", layout="wide")
@@ -415,7 +407,7 @@ for name, df in report.tables.items():
 period_start = str(dates_bt[0]) if dates_bt else "—"
 period_end = str(dates_bt[-1]) if dates_bt else "—"
 
-extra_metrics = _safe_metrics_to_dict(metrics_df) if metrics_df is not None else None
+extra_metrics = safe_metrics_to_dict(metrics_df) if metrics_df is not None else None
 if extra_metrics is None:
     extra_metrics = compute_kpis(equity, rf_daily=0.0, periods_per_year=252)
 
