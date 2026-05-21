@@ -41,8 +41,12 @@ def hrp_weights(
     w_min: float = 0.0,
     w_max: float = 1.0,
 ) -> np.ndarray:
-    """
-    Hierarchical Risk Parity (López de Prado) con proyección a caja+simplex.
+    """Hierarchical Risk Parity (López de Prado 2016).
+
+    Computes HRP weights with projection to box + simplex constraints.
+
+    Note: This implementation uses Ward linkage by default for robustness on
+    noisy correlation matrices. The original paper used single linkage.
     """
     S = ensure_psd(Sigma)
     order = _seriation_order(S, method=method, optimal=optimal)

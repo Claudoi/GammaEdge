@@ -127,9 +127,16 @@ def calculate_beta_alpha(
     min_obs: int = 60,  # Aligned with Sharpe Ratio for consistency
 ) -> dict[str, float | None]:
     """
-    Calculate Beta and Alpha via OLS regression.
+    Compute beta and alpha via OLS regression of asset on market.
 
     Model: r_i = alpha + beta * r_m + epsilon
+
+    Returns:
+        beta:  Cov(r_p, r_m) / Var(r_m)
+        alpha: E[r_p] - beta · E[r_m]   (OLS intercept, NOT Jensen's alpha)
+
+    For Jensen's alpha, pre-subtract rf from both r_p and r_m before calling:
+        jensen_alpha = alpha(r_p - rf, r_m - rf)
 
     Args:
         returns: Ticker returns (daily)
@@ -138,14 +145,14 @@ def calculate_beta_alpha(
         benchmark_dates: Dates for benchmark
         min_obs: Minimum observations required
 
-    Returns:
+    Returns dict:
         {
             "beta": float | None,
-            "alpha_daily": float | None,
-            "alpha_annual": float | None,  # alpha_daily * 252
+            "alpha_daily": float | None,       # OLS intercept (mean residual), daily
+            "alpha_annual": float | None,      # alpha_daily * 252 (approximation)
             "r_squared": float | None,
             "n_obs": int,
-            "data_loss_pct": float,  # % lost in inner join
+            "data_loss_pct": float,            # % lost in inner join
         }
 
     Notes:

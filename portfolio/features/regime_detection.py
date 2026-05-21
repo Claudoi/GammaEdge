@@ -52,6 +52,14 @@ class RegimeDetector:
     - Bear: High vol, negative returns
     - Crisis: Extreme vol, large drawdowns
 
+    Note:
+        The drawdown feature is computed using the simple-return convention
+        ``(1 + r).cumprod()`` to reconstruct an equity curve. If callers pass
+        log returns, the drawdown values will be slightly off (the difference
+        is small for typical daily returns but grows on tail observations).
+        Convert log returns to simple returns (``exp(r) - 1``) beforehand if
+        strict accuracy is required.
+
     Example:
         >>> detector = RegimeDetector(n_regimes=3)
         >>> detector.fit(returns_df)

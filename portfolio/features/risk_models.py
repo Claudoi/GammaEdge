@@ -312,6 +312,14 @@ def covariance(
         Sigma = np.asarray(OAS().fit(X).covariance_, dtype=np.float64)
         Sigma = _ensure_psd(Sigma)  # prevent tiny negative eigenvalues from float arithmetic
     elif method == "ewma":
+        # EWMA covariance (RiskMetrics-style, JP Morgan 1996)
+        #
+        #   Σ_t = (1-λ) · Σ_k λ^k · x_{t-k} x_{t-k}^T   with Σ_0 = 0
+        #
+        # Implementation note: returns are mean-centered (Σ uses X_c = X - mean(X))
+        # for numerical stability. Strict RiskMetrics-96 uses raw returns assuming
+        # zero mean for daily data. The difference is small (< 1%) for typical
+        # daily return series.
         lam = float(ewma_lambda)
         mu = np.nanmean(X, axis=0, keepdims=True)
         Xc = X - mu
