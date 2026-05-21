@@ -244,7 +244,8 @@ def backtest_vectorized(
     if not W_targets:
         return {}
 
-    W_targets = np.array(W_targets)  # (K, N)
+    # Note: W_targets remains a list of arrays for downstream indexing.
+    # The (K, N) matrix is materialized later only where needed.
 
     # 3. Drift de pesos Vectorizado
 
