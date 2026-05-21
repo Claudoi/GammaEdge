@@ -54,8 +54,12 @@ def black_litterman_posterior(
 
     Soporta dos modos de especificación de incertidumbre en las vistas (Omega):
     1. Directo: Pasando 'Omega' explícitamente.
-    2. Idzorek (Confianza): Pasando 'view_confidences' (0.0 a 1.0).
-       Se usa el método de He & Litterman modificado por Idzorek para inferir Omega.
+    2. Confianza (Walters 2014): Pasando 'view_confidences' (0.0 a 1.0).
+       Se usa la aproximación cerrada de Walters (2014) para inferir Omega
+       desde confianzas por vista. Esta NO es la formulación iterativa
+       original de Idzorek (2005), sino un atajo cerrado ampliamente adoptado
+       que produce resultados cualitativamente similares.
+       Referencia: Walters (2014) "The Black-Litterman Model in Detail".
 
     Args:
         Sigma: Covarianza Prior (N x N).
@@ -76,13 +80,11 @@ def black_litterman_posterior(
     N = Sigma.shape[0]
 
     # Caso base: Sin vistas -> Devuelve el Prior ajustado por tau
-    if P is None or Q is None or len(P) == 0:
-        return (
-            Pi,
-            Sigma,
-        )  # En puridad BL retorna Sigma + tau*Sigma, pero para mean-variance solemos usar Sigma actualizado o el original.
-        # Standard BL: mu = Pi, Cov = Sigma + tau*Sigma.
-        # Pero a menudo solo queremos los alphas. Devolvemos Pi tal cual.
+    # Canonical BL (He-Litterman 1999): mu = Pi, Cov = Sigma + tau*Sigma
+    # El término tau*Sigma proviene de la incertidumbre del prior sobre los
+    # retornos de equilibrio. Equivalente a (1 + tau) * Sigma.
+    if P is None or Q is None or len(Q) == 0:
+        return Pi, Sigma + tau * Sigma
 
     P = np.asarray(P, dtype=float)
     Q = np.asarray(Q, dtype=float)
@@ -96,11 +98,14 @@ def black_litterman_posterior(
     # Calcular Omega si no se da
     if Omega is None:
         if view_confidences is not None:
-            # Metodo Idzorek: Inferir Omega desde confianzas
-            # 1. Calcular Omega "proporcional" base (He-Litterman): P @ (tau*Sigma) @ P.T
-            # 2. Ajustar diagonal basada en confianza alpha. alpha -> 0 (ruido infinito), alpha -> 1 (ruido cero).
-            #    Formula Idzorek es compleja iterativa, usamos una aproximacion comun:
-            #    omega_k = p_k @ (tau*Sigma) @ p_k' * ( (1-conf)/conf )
+            # Metodo Walters (2014) — aproximacion cerrada a la confianza por vista.
+            # Construye Ω desde confianzas c ∈ [0,1] usando:
+            #     ω_k = (p_k^T τΣ p_k) · (1-c) / c
+            #
+            # Esto NO es el algoritmo iterativo original de Idzorek (2005) que
+            # ajusta tilt-matching exacto, sino un atajo cerrado ampliamente
+            # adoptado que da resultados cualitativamente similares.
+            # Referencia: Walters (2014) "The Black-Litterman Model in Detail".
 
             Omega_diag = []
             for k in range(K):
