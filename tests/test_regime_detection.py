@@ -384,3 +384,59 @@ def test_hmm_fit_ok_with_sufficient_data():
     detector = RegimeDetector(n_regimes=3)
     detector.fit(df, returns_col="returns")  # must not raise
     assert detector.model is not None
+
+
+def test_hmm_labels_all_states_when_n_regimes_is_4():
+    """All 4 regimes must get a string label (not 'Regime_3' fallback)."""
+    from datetime import timedelta
+
+    dates = [date(2020, 1, 1) + timedelta(days=i) for i in range(500)]
+    rng = np.random.default_rng(0)
+    df = pl.DataFrame(
+        {
+            "date": dates,
+            "returns": rng.normal(0.001, 0.02, 500).tolist(),
+        }
+    )
+    detector = RegimeDetector(n_regimes=4, random_state=42)
+    detector.fit(df, returns_col="returns")
+
+    # Predict to obtain the human-readable label column
+    result = detector.predict(df, returns_col="returns")
+    labels = set(result["regime_label"].to_list())
+
+    # All labels should be human-readable (no "Regime_N" fallback)
+    for label in labels:
+        assert not label.startswith("Regime_"), (
+            f"Regime got fallback numeric label: {label}. "
+            f"Expected one of Bull/Neutral/Bear/Crisis."
+        )
+    assert len(labels) == 4, f"Expected 4 unique labels, got {len(labels)}: {labels}"
+
+
+def test_hmm_warns_on_non_convergence():
+    """If EM stops at n_iter without converging, the user should know."""
+    import warnings
+    from datetime import timedelta
+
+    dates = [date(2020, 1, 1) + timedelta(days=i) for i in range(150)]
+    rng = np.random.default_rng(123)
+    df = pl.DataFrame(
+        {
+            "date": dates,
+            "returns": rng.normal(0.001, 0.02, 150).tolist(),
+        }
+    )
+    # Force non-convergence with very small n_iter
+    detector = RegimeDetector(n_regimes=3, n_iter=2, random_state=0)
+
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        detector.fit(df, returns_col="returns")
+        # Expect a UserWarning about non-convergence
+        warning_messages = [str(warn.message).lower() for warn in w]
+        has_convergence_warning = any("converge" in msg for msg in warning_messages)
+        assert has_convergence_warning, (
+            f"Expected a non-convergence warning with n_iter=2, "
+            f"got warnings: {warning_messages}"
+        )

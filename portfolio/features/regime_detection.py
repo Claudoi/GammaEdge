@@ -13,6 +13,7 @@ Author: GammaEdge TIER 1 Enhancement
 
 from __future__ import annotations
 
+import warnings
 from typing import Any, Literal
 
 import numpy as np
@@ -26,6 +27,14 @@ REGIME_LABELS = {
     0: "Bull",  # Low vol, positive drift
     1: "Bear",  # High vol, negative drift
     2: "Crisis",  # Extreme vol, sharp drawdowns
+}
+
+# Human-readable labels indexed by the number of regimes (n_regimes).
+# Order is descending by mean return: best regime first, worst last.
+REGIME_LABELS_BY_N = {
+    2: ["Bull", "Bear"],
+    3: ["Bull", "Bear", "Crisis"],
+    4: ["Bull", "Neutral", "Bear", "Crisis"],
 }
 
 
@@ -166,6 +175,24 @@ class RegimeDetector:
 
         self.model.fit(X_scaled)
 
+        # Warn if EM did not converge — parameters may be unreliable.
+        # NOTE: hmmlearn's monitor_.converged returns True whenever
+        # iter == n_iter, even when the log-probability is still changing.
+        # We therefore consider EM truly converged only when the last
+        # log-prob improvement is below the monitor's tolerance.
+        monitor = self.model.monitor_
+        truly_converged = (
+            len(monitor.history) >= 2 and (monitor.history[-1] - monitor.history[-2]) < monitor.tol
+        )
+        if not truly_converged:
+            warnings.warn(
+                f"HMM EM did not converge after {monitor.iter} iterations "
+                f"(n_iter={self.n_iter}). Results may be unreliable. "
+                f"Consider increasing n_iter or using longer data.",
+                UserWarning,
+                stacklevel=2,
+            )
+
         # Compute regime statistics for interpretation
         states = self.model.predict(X_scaled)
         df_pd = df.to_pandas()
@@ -245,12 +272,16 @@ class RegimeDetector:
         states = self.model.predict(X_scaled)
         probs = self.model.predict_proba(X_scaled)
 
-        # Map states to labels (sorted by mean return)
+        # Map states to labels (sorted by mean return, descending)
         assert self.regime_stats is not None  # fitted; for mypy
+        labels_for_n = REGIME_LABELS_BY_N.get(
+            self.n_regimes,
+            [f"Regime_{i}" for i in range(self.n_regimes)],
+        )
         state_mapping = dict(
             zip(
                 self.regime_stats["regime"].values,
-                ["Bull", "Bear", "Crisis"][: self.n_regimes],
+                labels_for_n,
                 strict=False,
             )
         )
