@@ -64,12 +64,12 @@ def _download_prices(tickers: list[str], start: str, end: str) -> pl.DataFrame:
         if "Adj Close" in df.columns:
             df = df[["Date", "Adj Close"]]
             df.columns = ["date", f"adj_close_{tickers[0]}"]
-            return pl.from_pandas(df)
+            return pl.from_pandas(df)  # type: ignore[no-any-return]
         elif "Close" in df.columns:
             # Fallback to Close if Adj Close not available
             df = df[["Date", "Close"]]
             df.columns = ["date", f"adj_close_{tickers[0]}"]
-            return pl.from_pandas(df)
+            return pl.from_pandas(df)  # type: ignore[no-any-return]
         else:
             return pl.DataFrame()
     else:
@@ -106,7 +106,7 @@ def _download_prices(tickers: list[str], start: str, end: str) -> pl.DataFrame:
                 # Join price column (adj_close_TICKER) for this ticker
                 result = result.join(df, on="date", how="left")
 
-            return result
+            return result  # type: ignore[no-any-return]
         else:
             # Fallback for unexpected format
             return pl.DataFrame()
@@ -190,7 +190,12 @@ def generate_metrics_summary(
         sharpe = calculate_sharpe_ratio(returns, rf_annual=rf_annual)
         mdd = calculate_max_drawdown(prices, dates)
         cagr_result = calculate_cagr(prices, dates)
-        calmar = calculate_calmar(cagr_result.get("cagr"), mdd["max_drawdown"])
+        _cagr_val = cagr_result.get("cagr")
+        _mdd_val = mdd["max_drawdown"]
+        calmar = calculate_calmar(
+            float(_cagr_val) if _cagr_val is not None else 0.0,
+            float(_mdd_val) if isinstance(_mdd_val, (int, float)) else 0.0,
+        )
         moments = calculate_moments(returns)
         data_quality = calculate_data_quality(dates, benchmark_dates, ticker)
 
@@ -207,9 +212,10 @@ def generate_metrics_summary(
 
         # NEW: Calculate 10/10 metrics
         ulcer = calculate_ulcer_index(prices, dates)
+        _beta_val = beta_alpha.get("beta")
         treynor = calculate_treynor_ratio(
             returns=returns,
-            beta=beta_alpha.get("beta"),
+            beta=float(_beta_val) if _beta_val is not None else 1.0,
             rf_annual=rf_annual,
         )
         capture = calculate_capture_ratios(

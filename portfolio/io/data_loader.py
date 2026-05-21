@@ -207,7 +207,7 @@ def _fetch_yfinance_ohlcv(
     result = pd.concat(rows, ignore_index=True)
     result["date"] = pd.to_datetime(result["date"], utc=False)
     result = result[["date", "ticker", "open", "high", "low", "close", "volume"]]
-    return result.dropna(subset=["close"])
+    return pd.DataFrame(result.dropna(subset=["close"]))
 
 
 def _validate_long_prices(df_long: pl.DataFrame) -> None:

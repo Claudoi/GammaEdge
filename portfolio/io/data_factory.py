@@ -11,8 +11,9 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
+from typing import Any
 
-from portfolio.io.ingestion.orchestrator import DataOrchestrator
+from portfolio.io.ingestion.orchestrator import DataOrchestrator, IngestionResult
 from portfolio.io.ingestion.quality_gates import QualityGates
 from portfolio.io.providers.base import BaseDataProvider
 from portfolio.io.providers.yahoo import YahooProvider
@@ -103,12 +104,6 @@ def create_orchestrator(
 
     logger.info("Auto-detect: forcing primary='yahoo' (sole provider).")
 
-    if primary is None:
-        primary = "yahoo"
-
-    if fallbacks is None:
-        fallbacks = []
-
     # Crear providers
     primary_provider = create_provider(primary)
     fallback_providers = [create_provider(name) for name in fallbacks]
@@ -134,8 +129,8 @@ def quick_ingest(
     tickers: list[str],
     start: str,
     end: str,
-    **kwargs,
-):
+    **kwargs: Any,
+) -> tuple[Any, IngestionResult]:
     """
     Función helper para ingesta rápida.
 

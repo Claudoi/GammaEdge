@@ -25,6 +25,7 @@ import logging
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import polars as pl
@@ -144,7 +145,7 @@ class SnapshotManager:
         adjustment_version: str = "",
         decision_time_policy: str = "next_open",
         label_horizon: int = 1,
-        **metadata,
+        **metadata: Any,
     ) -> DatasetSnapshot:
         """
         Crea un snapshot inmutable de un dataset.

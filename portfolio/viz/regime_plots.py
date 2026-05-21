@@ -85,7 +85,7 @@ def plot_regime_states(
                     start = row[date_col]
             else:
                 if start is not None:
-                    regime_periods.append((start, df_pd.loc[idx - 1, date_col]))
+                    regime_periods.append((start, df_pd.loc[int(idx) - 1, date_col]))  # type: ignore[call-overload]
                     start = None
 
         # Handle case where regime continues to end
@@ -334,7 +334,7 @@ def plot_regime_duration_histogram(
     df_pd = df.to_pandas()
 
     # Compute regime durations
-    regime_durations = {regime: [] for regime in df_pd[regime_col].unique()}
+    regime_durations: dict[str, list[int]] = {regime: [] for regime in df_pd[regime_col].unique()}
 
     current_regime = None
     current_duration = 0

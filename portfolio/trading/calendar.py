@@ -124,7 +124,7 @@ class EnhancedCalendar:
         """Verifica si es día de trading."""
         if self._xcal:
             try:
-                return self._xcal.is_session(d)
+                return bool(self._xcal.is_session(d))
             except Exception:
                 pass
 
@@ -142,7 +142,7 @@ class EnhancedCalendar:
                 close = self._xcal.session_close(d)
                 # Early close si cierra antes de las 16:00 ET
                 close_local = close.astimezone(self._tz)
-                return close_local.hour < 16
+                return bool(close_local.hour < 16)
             except Exception:
                 pass
 

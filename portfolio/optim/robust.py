@@ -114,4 +114,4 @@ def clean_covariance_rmt(Sigma: FloatArray, T: int, N: int) -> FloatArray:
 
     # Transform back to Covariance
     Sigma_clean = C_clean * (std @ std.T)
-    return Sigma_clean.astype(np.float64)
+    return np.asarray(Sigma_clean.astype(np.float64))

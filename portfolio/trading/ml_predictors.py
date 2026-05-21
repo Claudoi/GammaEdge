@@ -427,4 +427,4 @@ class GradientBoostingPredictor:
         explainer = shap.TreeExplainer(model)
         shap_values = explainer.shap_values(X)
 
-        return shap_values
+        return np.asarray(shap_values) if shap_values is not None else None

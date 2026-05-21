@@ -37,7 +37,7 @@ def market_implied_prior(
     # Pi (exceso de retorno)
     Pi_excess = delta * (Sigma @ w_market)
 
-    return Pi_excess + rf
+    return np.asarray(Pi_excess + rf)
 
 
 def black_litterman_posterior(

@@ -19,6 +19,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import polars as pl
@@ -120,7 +121,7 @@ class InstrumentMaster:
         asset_class: str = "equity",
         figi: str | None = None,
         ipo_date: date | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """
         Crea un nuevo instrumento y retorna su instrument_id.
@@ -455,6 +456,7 @@ class InstrumentMaster:
 
     def _load(self) -> None:
         """Carga el master desde disco."""
+        assert self.path is not None  # caller guarantees in __init__
         instruments_path = self.path / "instruments.parquet"
         history_path = self.path / "ticker_history.parquet"
 

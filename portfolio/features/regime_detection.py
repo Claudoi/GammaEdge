@@ -13,7 +13,7 @@ Author: GammaEdge TIER 1 Enhancement
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import pandas as pd
@@ -117,7 +117,7 @@ class RegimeDetector:
         dd = (cumret / running_max - 1).fillna(0).values
 
         # Stack features
-        X = np.column_stack([ret, vol, dd])
+        X = np.column_stack([np.asarray(ret), np.asarray(vol), np.asarray(dd)])
 
         return X
 
@@ -210,7 +210,7 @@ class RegimeDetector:
         if current_duration > 0:
             durations.append(current_duration)
 
-        return np.mean(durations) if durations else 0.0
+        return float(np.mean(durations)) if durations else 0.0
 
     def predict(
         self,
@@ -246,6 +246,7 @@ class RegimeDetector:
         probs = self.model.predict_proba(X_scaled)
 
         # Map states to labels (sorted by mean return)
+        assert self.regime_stats is not None  # fitted; for mypy
         state_mapping = dict(
             zip(
                 self.regime_stats["regime"].values,
@@ -290,7 +291,7 @@ class RegimeDetector:
         X = self._prepare_features(df, returns_col, vol_window, dd_window)
         X_scaled = self.scaler.transform(X)
 
-        return self.model.predict_proba(X_scaled)
+        return np.asarray(self.model.predict_proba(X_scaled))
 
     def get_regime_stats(self) -> pd.DataFrame:
         """
@@ -314,7 +315,7 @@ class RegimeDetector:
         if self.model is None:
             raise ValueError("Model not fitted. Call fit() first.")
 
-        return self.model.transmat_
+        return np.asarray(self.model.transmat_)
 
 
 def detect_regimes(
@@ -323,7 +324,7 @@ def detect_regimes(
     n_regimes: int = 3,
     vol_window: int = 20,
     dd_window: int = 20,
-    **hmm_kwargs,
+    **hmm_kwargs: Any,
 ) -> pl.DataFrame:
     """
     Convenience function for one-shot regime detection.

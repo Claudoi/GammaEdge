@@ -96,7 +96,7 @@ def fetch_fama_french(
             mom_df = mom_df / 100.0
             df = df.join(mom_df)
 
-        return df
+        return pd.DataFrame(df)
 
     except Exception as e:
         raise RuntimeError(
@@ -192,7 +192,7 @@ def compute_factor_loadings(
     # R-squared
     y_pred = reg.predict(X)
     ss_res = np.sum((y - y_pred) ** 2)
-    ss_tot = np.sum((y - y.mean()) ** 2)
+    ss_tot = np.sum((y - np.asarray(y).mean()) ** 2)
     r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0.0
 
     # Residuals (idiosyncratic risk)
