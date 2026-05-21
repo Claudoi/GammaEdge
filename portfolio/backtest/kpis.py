@@ -105,11 +105,20 @@ def compute_kpis(
         ann_vol = sigma * np.sqrt(periods_per_year) if np.isfinite(sigma) else np.nan
         sharpe = ann_mu / ann_vol if (ann_vol is not None and ann_vol > 0) else np.nan
 
-        neg = _safe(excess[excess < 0.0])
-        downside = float(np.nanstd(neg, ddof=1)) if neg.size > 1 else np.nan
+        # Canonical Sortino downside deviation (Sortino & Price 1994):
+        # DD = sqrt(mean(min(0, r - MAR)^2)) over the FULL excess-return
+        # series (upside zero-padded, denominator = N, not k-1 over the
+        # negative subset). This avoids the std-of-subset pathology where
+        # |Sortino| explodes when downside returns are (near-)identical.
+        downside_shortfall = np.minimum(0.0, excess)
+        downside = (
+            float(np.sqrt(np.nanmean(downside_shortfall**2)))
+            if downside_shortfall.size > 0
+            else np.nan
+        )
         sortino = (
             ann_mu / (downside * np.sqrt(periods_per_year))
-            if (np.isfinite(downside) and downside > 0)
+            if (np.isfinite(downside) and downside > 1e-12)
             else np.nan
         )
 

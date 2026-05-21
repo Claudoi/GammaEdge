@@ -861,17 +861,22 @@ def calculate_sortino_ratio(
     rf_daily = (1 + rf_annual) ** (1 / TRADING_DAYS_PER_YEAR) - 1
     excess_returns = r - rf_daily
 
-    # Downside deviation (only negative excess returns)
-    downside_returns = excess_returns[excess_returns < target_return]
+    # Canonical Sortino downside deviation (Sortino & Price 1994):
+    # DD = sqrt(mean(min(0, excess - target)^2)) over the FULL series.
+    # Upside observations are zero-padded (NOT excluded) and the
+    # denominator is N (not k-1 over the negative subset). This avoids
+    # the std-of-subset pathology where Sortino explodes / collapses
+    # when downside returns are (near-)identical or sparse.
+    shortfall = np.minimum(0.0, excess_returns - target_return)
 
-    if downside_returns.size < 2:
+    if shortfall.size < 2:
         return {
             "sortino_ratio": None,
             "downside_deviation": None,
             "warning": "No downside returns for Sortino calculation",
         }
 
-    downside_dev = np.std(downside_returns, ddof=1)
+    downside_dev = float(np.sqrt(np.mean(shortfall**2)))
 
     if downside_dev < 1e-10:
         return {
@@ -880,7 +885,7 @@ def calculate_sortino_ratio(
             "warning": "Zero downside deviation",
         }
 
-    # Calculate Sortino
+    # Calculate Sortino (per-period)
     mean_excess = np.mean(excess_returns)
     sortino = mean_excess / downside_dev
 

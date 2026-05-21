@@ -9,6 +9,7 @@ Sortino metrics. The fix uses the ORIGINAL array length for time-based
 annualization while still using the filtered array for the multiplicative
 chain (to keep CAGR finite).
 """
+
 from __future__ import annotations
 
 import numpy as np
@@ -91,4 +92,72 @@ def test_drawdown_length_preserved_with_nans():
     assert dd.size == eq_with_nan.size, (
         f"drawdown length {dd.size} != equity length {eq_with_nan.size}; "
         "NaN filtering must not shrink the output series."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sortino canonical downside deviation (Sortino & Price 1994)
+# ---------------------------------------------------------------------------
+#
+# The previous implementation used ``np.std(neg_subset, ddof=1)``, i.e. the
+# sample standard deviation taken over the *subset* of negative excess
+# returns. The canonical Sortino downside deviation is the root-mean-square
+# of ``min(0, r - MAR)`` over the FULL series (zero-padded for upside).
+# These regression tests guard against the buggy formulation returning.
+
+
+def test_sortino_uses_full_series_downside_deviation():
+    """Canonical Sortino (Sortino & Price 1994) uses full-series DD, not subset std.
+
+    Construct a series where:
+    - 90% of returns are 0
+    - 10% are -0.01 (small losses)
+
+    Buggy version (std of subset): all 10 negatives have same value -> std=0 -> Sortino=nan/inf
+    Canonical: DD = sqrt(mean([0, ..., 0, -0.01, ..., -0.01]^2)) = sqrt(0.10 * 0.0001) = 0.00316
+    """
+    returns = np.zeros(100)
+    returns[::10] = -0.01  # losses at indices 0, 10, 20, ...
+    equity = np.cumprod(1.0 + returns)
+
+    kpis = compute_kpis(equity, periods_per_year=252)
+    # Sortino should be finite and negative (returns are mostly 0 with consistent losses)
+    assert np.isfinite(kpis["Sortino"]), (
+        f"Sortino is not finite ({kpis['Sortino']!r}); the std-of-subset "
+        "formulation collapses when all downside returns are identical."
+    )
+    assert (
+        kpis["Sortino"] < 0
+    ), f"Expected Sortino < 0 (more losses than gains), got {kpis['Sortino']}"
+    # Canonical magnitude: with ~9 losses of -0.01 in 99 returns,
+    # mean_excess ~= -9e-4, DD_per ~= sqrt(9/99) * 0.01 ~= 3.0e-3, so
+    # Sortino_ann ~= (-9e-4 * 252) / (3.0e-3 * sqrt(252)) ~= -4.8.
+    # The buggy std-of-subset version explodes (std of ~identical losses is
+    # near machine epsilon, so |Sortino| > 1e10). A bound of |Sortino| < 100
+    # cleanly discriminates the two formulations.
+    assert abs(kpis["Sortino"]) < 100.0, (
+        f"|Sortino| = {abs(kpis['Sortino']):.3e} is implausibly large; the "
+        "std-of-subset denominator collapses to ~machine epsilon when all "
+        "downside returns are (near-)identical."
+    )
+
+
+def test_sortino_vs_sharpe_relationship():
+    """For symmetric (Gaussian) returns, Sortino / Sharpe -> sqrt(2) asymptotically.
+
+    Theoretical: if r ~ N(mu, sigma) and MAR = mu, then:
+    - sigma(r) = sigma
+    - downside_dev = sigma / sqrt(2)  (half-Gaussian RMS)
+    - Sortino / Sharpe = sigma / (sigma/sqrt(2)) = sqrt(2)
+    """
+    rng = np.random.default_rng(42)
+    rets = rng.normal(0.0001, 0.01, 10000)  # large N for asymptotic behaviour
+    equity = np.cumprod(1.0 + rets)
+
+    kpis = compute_kpis(equity, periods_per_year=252, rf_daily=0.0)
+    ratio = kpis["Sortino"] / kpis["Sharpe"]
+    # Expect ~sqrt(2) = 1.414, tolerate +/-0.15 for sample noise
+    assert 1.25 < ratio < 1.60, (
+        f"Sortino/Sharpe = {ratio:.3f}, expected ~1.414 (Gaussian theory). "
+        "This indicates the downside deviation is not the canonical full-series RMS."
     )
