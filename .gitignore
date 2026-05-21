@@ -110,13 +110,9 @@ secrets/
 *.p12
 *.pfx
 
-# Ed25519 / SSH private keys (public .pub files are intentionally tracked)
-keys/gammaedge_release_ed25519
-keys/*_ed25519
-keys/*_rsa
-keys/*_ecdsa
-!keys/*.pub
-!keys/allowed_signers
+# Keys folder — entirely local; never publish (even public keys) to keep
+# the signing infrastructure off the public repository.
+keys/
 
 # ─── Logs ────────────────────────────────────────────────────────────────────
 *.log

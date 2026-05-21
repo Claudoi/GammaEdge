@@ -15,6 +15,7 @@ min-max problem over an uncertainty set. The operators here are
 "pre-conditioning" tools that the caller composes with standard
 Markowitz/CVaR/HRP to get robust-like behavior.
 """
+
 from __future__ import annotations
 
 import numpy as np
