@@ -321,8 +321,22 @@ def brinson_fachler_vectorized(
     Wp_g = Wp @ H
     Wb_g = Wb @ H
 
-    Rp_g = np.divide((Wp * R) @ H, np.clip(Wp_g, EPS, None), where=Wp_g > EPS)
-    Rb_g = np.divide((Wb * R) @ H, np.clip(Wb_g, EPS, None), where=Wb_g > EPS)
+    # Important: `np.divide(..., where=...)` leaves *uninitialized* memory
+    # where `where=False`. On macOS this often happens to be 0; on Linux it
+    # is typically NaN, which then propagates through cumulative sums.
+    # Use an explicit zero-initialized `out=` to avoid platform-dependent NaN.
+    Rp_g = np.divide(
+        (Wp * R) @ H,
+        np.clip(Wp_g, EPS, None),
+        out=np.zeros_like(Wp_g, dtype=np.float64),
+        where=Wp_g > EPS,
+    )
+    Rb_g = np.divide(
+        (Wb * R) @ H,
+        np.clip(Wb_g, EPS, None),
+        out=np.zeros_like(Wb_g, dtype=np.float64),
+        where=Wb_g > EPS,
+    )
 
     Rb_t = np.sum(Wb * R, axis=1)  # (T,)
 
