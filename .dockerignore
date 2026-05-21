@@ -14,7 +14,7 @@ __pycache__/
 dist/
 build/
 
-# Data 
+# Data
 data/
 *.parquet
 *.h5
@@ -25,6 +25,3 @@ data/cache/
 .DS_Store
 .vscode/
 .idea/
-
-
-

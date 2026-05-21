@@ -219,7 +219,7 @@ def run_demo():
 
     # Verificar si tenemos sklearn
     try:
-        from sklearn.linear_model import Ridge
+        from sklearn.linear_model import Ridge  # noqa: F401
 
         has_sklearn = True
     except ImportError:

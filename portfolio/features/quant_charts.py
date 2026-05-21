@@ -462,8 +462,8 @@ def generate_returns_distribution(
     # Add annotations
     annotation_text = (
         f"<b>Statistics</b><br>"
-        f"Mean: {mean_ret*100:.2f}%<br>"
-        f"Std: {std_ret*100:.2f}%<br>"
+        f"Mean: {mean_ret * 100:.2f}%<br>"
+        f"Std: {std_ret * 100:.2f}%<br>"
         f"Skew: {skew:.2f}<br>"
         f"Kurt: {kurt:.2f}"
     )

@@ -72,7 +72,7 @@ def validate_annual_metrics(
 
     if mu_annual < min_return:
         raise MetricValidationError(
-            f"Suspicious annual return: {mu_annual:.2%}. " f"Expected > {min_return:.0%}."
+            f"Suspicious annual return: {mu_annual:.2%}. Expected > {min_return:.0%}."
         )
 
     # Check volatility bounds
@@ -85,8 +85,7 @@ def validate_annual_metrics(
 
     if sigma_annual < min_volatility:
         raise MetricValidationError(
-            f"Suspicious annual volatility: {sigma_annual:.2%}. "
-            f"Expected > {min_volatility:.0%}."
+            f"Suspicious annual volatility: {sigma_annual:.2%}. Expected > {min_volatility:.0%}."
         )
 
 

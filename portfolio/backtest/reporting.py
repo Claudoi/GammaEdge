@@ -684,9 +684,7 @@ def _render_figures_block_interactive(
                 config={"responsive": True, "displayModeBar": True},
             )
             parts.append(
-                f'<div class="imgwrap">'
-                f"{fig_html}"
-                f'<div class="caption">{rf.title}</div></div>'
+                f'<div class="imgwrap">{fig_html}<div class="caption">{rf.title}</div></div>'
             )
 
     return "\n".join(parts) if parts else "<p>No figures.</p>"

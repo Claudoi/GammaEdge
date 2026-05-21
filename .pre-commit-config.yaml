@@ -1,23 +1,39 @@
 # Enforces consistent formatting, linting, and notebook hygiene across GammaEdge
 # mypy is isolated to manual runs to keep commits fast; CI runs full static checks
 
+default_language_version:
+  python: python3.11
+
 default_stages: [pre-commit, pre-push]
 
 repos:
+  # ---- BASIC HYGIENE (whitespace, EOF, yaml/toml validity, secret detection) ----
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: check-merge-conflict
+      - id: detect-private-key  # critical safety net: blocks SSH/PEM keys from being committed
+
   # ---- BLACK (Formatter) ----
   - repo: https://github.com/psf/black
     rev: 25.9.0
     hooks:
       - id: black
         args: [--line-length=100]
+        language_version: python3.11
 
-  # ---- RUFF (Lint + Auto-fix + Format) ----
+  # ---- RUFF (Lint + Auto-fix; formatting handled by Black to avoid duplicate-format conflicts) ----
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.14.3
     hooks:
       - id: ruff
         args: [--fix, --exit-non-zero-on-fix]
-      - id: ruff-format
 
   # ---- MYPY (Static Type Checking) ----
   - repo: https://github.com/pre-commit/mirrors-mypy

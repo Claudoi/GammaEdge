@@ -66,9 +66,7 @@ def optimize(req: OptimizeRequest) -> OptimizeResponse:
     if R.shape[1] != len(req.tickers):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=(
-                f"returns has {R.shape[1]} columns but tickers has " f"{len(req.tickers)} entries"
-            ),
+            detail=(f"returns has {R.shape[1]} columns but tickers has {len(req.tickers)} entries"),
         )
 
     try:

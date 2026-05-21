@@ -1203,7 +1203,7 @@ if st.session_state.get("data_ready"):
                             border-radius: 12px;
                             padding: 4px;
                         }}
-                        
+
                         .stTabs [data-baseweb="tab"] {{
                             padding: 12px 24px;
                             border-radius: 8px;
@@ -1211,7 +1211,7 @@ if st.session_state.get("data_ready"):
                             transition: background-color 0.2s ease;
                             color: {COLORS['text_secondary']};
                         }}
-                        
+
                         .stTabs [aria-selected="true"] {{
                             background-color: {COLORS['accent_primary']} !important;
                             color: {COLORS['text_primary']} !important;
