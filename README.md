@@ -233,6 +233,57 @@ poetry run pre-commit run --all-files
 
 ---
 
+## Deployment
+
+GammaEdge ships with multiple deployment configurations. Python 3.11 is pinned
+across every entry point so the host environment matches local development
+(this prevents the `zip(strict=...)` and similar 3.10+ syntax errors that would
+occur on a 3.9 default runtime).
+
+### Streamlit Community Cloud
+
+1. Push the repository to GitHub.
+2. Go to [share.streamlit.io](https://share.streamlit.io) and create a new app.
+3. Point the **Main file path** to `app/Home.py`.
+4. Streamlit Cloud automatically reads:
+   - `runtime.txt` → `python-3.11`
+   - `requirements.txt` → all production dependencies (pinned from `poetry.lock`)
+
+No additional configuration is needed; the platform handles the build.
+
+### Docker
+
+```bash
+docker build -t gammaedge:latest -f docker/Dockerfile .
+docker run -p 8501:8501 gammaedge:latest
+```
+
+The Dockerfile pins `FROM python:3.11-slim` and installs from `requirements.txt`.
+A separate `docker/api.Dockerfile` exists for the FastAPI service.
+
+### Other Python hosts (Heroku, Railway, Render, Fly.io)
+
+The same configuration works:
+
+- `runtime.txt` declares the Python version (`python-3.11`)
+- `.python-version` provides a fallback for pyenv-aware tooling
+- `requirements.txt` lists all production dependencies, pinned to the versions
+  recorded in `poetry.lock`
+
+### Updating dependencies for production
+
+Whenever `pyproject.toml` changes, regenerate `requirements.txt`:
+
+```bash
+poetry export --without dev --format requirements.txt \
+  --output requirements.txt --without-hashes
+```
+
+Commit both `poetry.lock` and `requirements.txt` together so local Poetry users
+and remote pip-based hosts stay in sync.
+
+---
+
 ## Implementation Notes
 
 **Numerical Stability**: Six-step fallback chain for singular matrices (spectral clipping, iterative jitter, ridge regularization, diagonal loading, pseudoinverse, identity fallback)
