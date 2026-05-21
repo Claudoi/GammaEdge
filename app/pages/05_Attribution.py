@@ -247,15 +247,14 @@ try:
             df_export = df_export.reindex(
                 df_export["risk_contribution"].abs().sort_values(ascending=False).index
             ).head(15)
-            euler_last_day_rows = []
-            for _, row in df_export.iterrows():
-                euler_last_day_rows.append(
-                    {
-                        "asset": str(row["asset"]),
-                        "rc": float(row["risk_contribution"]),
-                        "rc_pct": (float(row["rc_pct"]) if pd.notna(row["rc_pct"]) else None),
-                    }
-                )
+            euler_last_day_rows = [
+                {
+                    "asset": str(row["asset"]),
+                    "rc": float(row["risk_contribution"]),
+                    "rc_pct": (float(row["rc_pct"]) if pd.notna(row["rc_pct"]) else None),
+                }
+                for row in df_export.to_dict(orient="records")
+            ]
         except Exception:
             logger.debug("Could not build euler_last_day_rows table", exc_info=True)
             euler_last_day_rows = None
@@ -385,17 +384,16 @@ with st.expander("Show factor risk decomposition"):
                             df_factor["rc"].abs().sort_values(ascending=False).index
                         ).head(10)
 
-                        factor_rc_rows = []
-                        for _, row in df_factor.iterrows():
-                            factor_rc_rows.append(
-                                {
-                                    "factor": str(row["factor"]),
-                                    "rc": float(row["rc"]),
-                                    "rc_pct": (
-                                        float(row["rc_pct"]) if pd.notna(row["rc_pct"]) else None
-                                    ),
-                                }
-                            )
+                        factor_rc_rows = [
+                            {
+                                "factor": str(row["factor"]),
+                                "rc": float(row["rc"]),
+                                "rc_pct": (
+                                    float(row["rc_pct"]) if pd.notna(row["rc_pct"]) else None
+                                ),
+                            }
+                            for row in df_factor.to_dict(orient="records")
+                        ]
                     except Exception:
                         logger.debug("Could not build factor_rc_rows table", exc_info=True)
                         factor_rc_rows = None

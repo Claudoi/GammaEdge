@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 # --- stdlib ---
+import logging
 import os
 import sys
 
@@ -29,6 +30,8 @@ from portfolio.backtest.reporting import (
     render_pdf,
 )
 
+logger = logging.getLogger(__name__)
+
 # ---------------------------------------------------------------------
 # Streamlit config
 # ---------------------------------------------------------------------
@@ -47,7 +50,12 @@ def _to_pandas(df: object):
     """Safely convert Polars or other table-like objects to pandas."""
     try:
         return df.to_pandas()
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Reporting: _to_pandas conversion failed: %s",
+            exc,
+            exc_info=True,
+        )
         return df
 
 
