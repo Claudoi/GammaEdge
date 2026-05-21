@@ -5,28 +5,10 @@ from collections.abc import Sequence
 
 import numpy as np
 
-# Canonical PSD projection lives in ``portfolio.core.utils``; re-exported
+# Canonical numerical utilities live in ``portfolio.core.utils``; re-exported
 # here so existing importers (``black_litterman``, ``risk_parity``,
 # ``hrp``, ``te``, tests…) keep working unchanged.
-from portfolio.core.utils import ensure_psd  # noqa: F401  (re-export)
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Utilidades numéricas (robustas)
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-def cond_number(S: np.ndarray) -> float:
-    """Número de condición κ(Σ)."""
-    if S.size == 0:
-        return float("nan")
-    Ssym = 0.5 * (S + S.T)
-    w = np.linalg.eigvalsh(Ssym)
-    if w.size == 0:
-        return float("nan")
-    lam_min = float(np.min(w))
-    lam_max = float(np.max(w))
-    return float(lam_max / max(lam_min, 1e-16))
-
+from portfolio.core.utils import cond_number, ensure_psd  # noqa: F401  (re-export)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Markowitz sin caja (short permitido)

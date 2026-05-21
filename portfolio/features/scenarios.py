@@ -5,11 +5,19 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import numpy as np
-import pandas as pd
 import polars as pl
 
 from portfolio.backtest import metrics as bt_metrics
 from portfolio.backtest.engine import backtest_rebalanced
+
+# Canonical scenario utilities live in ``portfolio.backtest.scenarios``;
+# re-exported here so any caller of ``portfolio.features.scenarios.<fn>``
+# continues to work and gets the richer implementations.
+from portfolio.backtest.scenarios import (  # noqa: F401  (re-export)
+    apply_shock_map_to_wide,
+    block_bootstrap_indices,
+    historical_slice_returns,
+)
 
 
 # -----------------------------
@@ -144,44 +152,6 @@ def build_index_shock(
     return shock
 
 
-def apply_shock_map_to_wide(
-    df_wide: pl.DataFrame,
-    shock_map: dict[str, float],
-) -> pl.DataFrame:
-    """
-    Add (NaN-safe) constant daily return shocks per column.
-    """
-    out = df_wide
-    for k, v in shock_map.items():
-        if k in out.columns:
-            out = out.with_columns((pl.col(k).fill_null(0.0).cast(pl.Float64) + float(v)).alias(k))
-    return out
-
-
-def historical_slice_returns(
-    df_wide: pl.DataFrame,
-    start: str,
-    end: str,
-    tickers: list[str] | None = None,
-) -> pl.DataFrame:
-    """
-    Return df subset between [start, end], keeping ['date', *tickers].
-    """
-    # Parse robustly with pandas → native Python datetimes
-    start_dt = pd.to_datetime(start, utc=False).to_pydatetime()
-    end_dt = pd.to_datetime(end, utc=False).to_pydatetime()
-
-    cols = [c for c in df_wide.columns if c != "date"] if tickers is None else list(tickers)
-    cols = [c for c in cols if c in df_wide.columns]
-
-    df = (
-        df_wide.filter((pl.col("date") >= pl.lit(start_dt)) & (pl.col("date") <= pl.lit(end_dt)))
-        .sort("date")
-        .select(["date", *cols])
-    )
-    return df
-
-
 # -----------------------------
 # API
 # -----------------------------
@@ -258,16 +228,3 @@ def estimate_rolling_beta(
         y = np.nan_to_num(y, nan=0.0)
         betas.append(float(np.dot(x, y) / xx))
     return np.array(betas, dtype=float), tickers
-
-
-def block_bootstrap_indices(T: int, block: int, seed: int) -> np.ndarray:
-    """Generate block bootstrap indices for synthetic paths."""
-    rng = np.random.default_rng(seed)
-    idx: list[int] = []
-    i = 0
-    while i < T:
-        start = int(rng.integers(0, max(T - block, 1)))
-        take = min(block, T - i)
-        idx.extend(range(start, start + take))
-        i += take
-    return np.array(idx, dtype=int)
