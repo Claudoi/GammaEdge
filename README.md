@@ -329,20 +329,6 @@ Based on methods from:
 - Rockafellar & Uryasev (2000): Optimization of Conditional Value-at-Risk
 - Almgren & Chriss (2001): Optimal Execution of Portfolio Transactions
 
----
-
-## Citation
-
-If you use GammaEdge in academic work, please cite:
-
-```bibtex
-@misc{martel2026gammaedge,
-  author       = {Martel, Claudio},
-  title        = {GammaEdge: A Portfolio Optimization Platform},
-  year         = {2026},
-  howpublished = {Final Degree Project (TFG), Universidad de Las Palmas de Gran Canaria},
-}
-```
 
 ---
 
