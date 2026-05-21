@@ -18,7 +18,11 @@ class TestDatasetInvariants(unittest.TestCase):
         cls.index_path = cls.root_dir / "datasets" / "INDEX.json"
 
         if not cls.index_path.exists():
-            raise FileNotFoundError("datasets/INDEX.json not found. Freeze a dataset first.")
+            raise unittest.SkipTest(
+                "datasets/INDEX.json not found. "
+                "Run `poetry run python scripts/freeze_dataset.py` to generate it, "
+                "then re-run these tests."
+            )
 
         with open(cls.index_path) as f:
             index = json.load(f)

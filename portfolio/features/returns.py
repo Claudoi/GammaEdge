@@ -426,9 +426,21 @@ def log_returns_pd(prices: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(out)
 
 
+# Map deprecated pandas frequency aliases to their pandas >= 2.2 equivalents.
+# pandas 2.2 deprecated "M"/"Q"/"Y"/"A" in favor of "ME"/"QE"/"YE"; removal
+# is scheduled for pandas 3.0. Keeping a translation layer at the API boundary
+# preserves backward compatibility for callers (and existing tests) without
+# leaking the deprecation into the rest of the codebase.
+_FREQ_ALIASES = {"M": "ME", "Q": "QE", "Y": "YE", "A": "YE"}
+
+
 def to_frequency_pd(returns: pd.DataFrame, freq: str) -> pd.DataFrame:
     if returns.empty:
         return returns
+
+    # Translate deprecated frequency aliases (pandas >= 2.2).
+    if isinstance(freq, str):
+        freq = _FREQ_ALIASES.get(freq.upper(), freq)
 
     df = returns.copy()
 

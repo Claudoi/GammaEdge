@@ -6,8 +6,8 @@ from typing import Literal
 
 import polars as pl
 
+from portfolio.attribution.brinson_utils import coerce_brinson_timeseries_to_long
 from portfolio.attribution.engine import compute_portfolio_contributions
-from portfolio.backtest.brinson_utils import coerce_brinson_timeseries_to_long
 
 BRINSON_METRICS = ["alloc", "select", "interact", "total"]
 

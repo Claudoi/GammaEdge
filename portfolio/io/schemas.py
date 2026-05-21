@@ -30,7 +30,7 @@ DataQualityFlag = Literal["clean", "suspect", "failed"]
 # OHLCV RAW Schema (sin ajustar — del provider tal cual)
 # =============================================================================
 
-SCHEMA_BARS_RAW: dict[str, pl.DataType] = {
+SCHEMA_BARS_RAW: dict[str, type[pl.DataType]] = {
     # Identifiers
     "date": pl.Date,
     "ticker": pl.Utf8,
@@ -63,7 +63,7 @@ SCHEMA_BARS_RAW_ORDERED = [
 # OHLCV Adjusted Schema (generado por NUESTRO pipeline, no provider)
 # =============================================================================
 
-SCHEMA_BARS_ADJUSTED: dict[str, pl.DataType] = {
+SCHEMA_BARS_ADJUSTED: dict[str, type[pl.DataType]] = {
     # Identifiers
     "date": pl.Date,
     "ticker": pl.Utf8,
@@ -104,7 +104,7 @@ SCHEMA_BARS_ADJUSTED_ORDERED = [
 # Corporate Actions Schema (explícitas, verificables)
 # =============================================================================
 
-SCHEMA_CORPORATE_ACTIONS: dict[str, pl.DataType] = {
+SCHEMA_CORPORATE_ACTIONS: dict[str, type[pl.DataType]] = {
     "ticker": pl.Utf8,
     "ex_date": pl.Date,  # Fecha ex-dividendo o efectiva del split
     "record_date": pl.Date,  # Record date (puede ser null)
@@ -150,7 +150,7 @@ SCHEMA_CORPORATE_ACTIONS_ORDERED = [
 # Instrument Master Schema (ID estable, ticker cambia)
 # =============================================================================
 
-SCHEMA_INSTRUMENT_MASTER: dict[str, pl.DataType] = {
+SCHEMA_INSTRUMENT_MASTER: dict[str, type[pl.DataType]] = {
     "instrument_id": pl.Utf8,  # UUID interno - NUNCA cambia
     "current_ticker": pl.Utf8,  # Ticker actual
     "name": pl.Utf8,
@@ -175,7 +175,7 @@ SCHEMA_INSTRUMENT_MASTER: dict[str, pl.DataType] = {
 # Ticker History Schema (mapeo ticker → instrument a través del tiempo)
 # =============================================================================
 
-SCHEMA_TICKER_HISTORY: dict[str, pl.DataType] = {
+SCHEMA_TICKER_HISTORY: dict[str, type[pl.DataType]] = {
     "instrument_id": pl.Utf8,  # FK a instrument_master
     "ticker": pl.Utf8,
     "valid_from": pl.Date,
@@ -188,7 +188,7 @@ SCHEMA_TICKER_HISTORY: dict[str, pl.DataType] = {
 # Universe History Schema (membership para evitar survivorship bias)
 # =============================================================================
 
-SCHEMA_UNIVERSE_HISTORY: dict[str, pl.DataType] = {
+SCHEMA_UNIVERSE_HISTORY: dict[str, type[pl.DataType]] = {
     "instrument_id": pl.Utf8,
     "ticker": pl.Utf8,  # Ticker en esa fecha
     "universe": pl.Utf8,  # sp500, nasdaq100, all_us, etc.
@@ -214,7 +214,7 @@ SCHEMA_UNIVERSE_HISTORY_ORDERED = [
 # Provider Reconciliation Schema
 # =============================================================================
 
-SCHEMA_RECONCILIATION: dict[str, pl.DataType] = {
+SCHEMA_RECONCILIATION: dict[str, type[pl.DataType]] = {
     "date": pl.Date,
     "ticker": pl.Utf8,
     # Primary provider values
@@ -238,7 +238,7 @@ SCHEMA_RECONCILIATION: dict[str, pl.DataType] = {
 # Ingestion Manifest Schema (para reproducibilidad)
 # =============================================================================
 
-SCHEMA_INGESTION_MANIFEST: dict[str, pl.DataType] = {
+SCHEMA_INGESTION_MANIFEST: dict[str, type[pl.DataType] | pl.DataType] = {
     "manifest_id": pl.Utf8,  # UUID
     "ingestion_run_id": pl.Utf8,  # UUID de esta ejecución
     # What
@@ -269,7 +269,7 @@ SCHEMA_INGESTION_MANIFEST: dict[str, pl.DataType] = {
 # Feature Store Schema (con availability timestamps)
 # =============================================================================
 
-SCHEMA_FEATURES_DAILY: dict[str, pl.DataType] = {
+SCHEMA_FEATURES_DAILY: dict[str, type[pl.DataType]] = {
     # Identifiers
     "date": pl.Date,  # Fecha de la observación
     "ticker": pl.Utf8,
@@ -312,7 +312,7 @@ SCHEMA_FEATURES_DAILY: dict[str, pl.DataType] = {
 # Quality Report Schema (mejorado)
 # =============================================================================
 
-SCHEMA_QUALITY_REPORT: dict[str, pl.DataType] = {
+SCHEMA_QUALITY_REPORT: dict[str, type[pl.DataType]] = {
     "report_id": pl.Utf8,
     "ingestion_run_id": pl.Utf8,
     "check_name": pl.Utf8,
@@ -380,7 +380,7 @@ def create_empty_reference_df() -> pl.DataFrame:
 
 def validate_schema(
     df: pl.DataFrame,
-    expected_schema: dict[str, pl.DataType],
+    expected_schema: dict[str, type[pl.DataType]],
     strict: bool = False,
 ) -> tuple[bool, list[str]]:
     """
@@ -425,7 +425,7 @@ def compute_data_hash(df: pl.DataFrame) -> str:
     return hashlib.sha256(content).hexdigest()[:16]
 
 
-def compute_schema_hash(schema: dict[str, pl.DataType]) -> str:
+def compute_schema_hash(schema: dict[str, type[pl.DataType]]) -> str:
     """Calcula hash del schema para versionado."""
     import hashlib
 

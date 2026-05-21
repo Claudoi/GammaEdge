@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import cast
 
 import numpy as np
 import pandas as pd
@@ -56,9 +55,8 @@ def euler_risk_contributions(
         # RangeIndex always yields a valid pd.Index
         idx = pd.RangeIndex(n)
 
-    series = pd.Series(contrib, index=idx, name="risk_contribution")
-    # Pandas constructor is typed as Any; cast explicitly for mypy.
-    return cast(pd.Series, series)
+    series: pd.Series = pd.Series(contrib, index=idx, name="risk_contribution")
+    return series
 
 
 def run_euler_engine(

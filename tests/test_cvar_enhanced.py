@@ -21,9 +21,9 @@ def synthetic_returns():
     """Synthetic historical returns."""
     np.random.seed(42)
     T, N = 252, 3  # 1 year, 3 assets
-    returns = np.random.normal(loc=np.array([0.001, 0.0008, 0.0003]), 
-                                 scale=np.array([0.02, 0.015, 0.005]),
-                                 size=(T, N))
+    returns = np.random.normal(
+        loc=np.array([0.001, 0.0008, 0.0003]), scale=np.array([0.02, 0.015, 0.005]), size=(T, N)
+    )
     return returns
 
 
@@ -36,7 +36,7 @@ def synthetic_scenarios():
 
 class TestBootstrapScenarios:
     """Test bootstrap scenario generation."""
-    
+
     def test_bootstrap_shape(self, synthetic_returns):
         """Test bootstrap scenarios have correct shape."""
         scenarios = generate_bootstrap_scenarios(
@@ -45,9 +45,9 @@ class TestBootstrapScenarios:
             block_size=10,
             random_state=42,
         )
-        
+
         assert scenarios.shape == (500, 3)
-    
+
     def test_bootstrap_reproducible(self, synthetic_returns):
         """Test bootstrap is reproducible with seed."""
         scenarios1 = generate_bootstrap_scenarios(
@@ -60,9 +60,9 @@ class TestBootstrapScenarios:
             n_scenarios=100,
             random_state=42,
         )
-        
+
         np.testing.assert_array_equal(scenarios1, scenarios2)
-    
+
     def test_bootstrap_different_seeds(self, synthetic_returns):
         """Test different seeds produce different scenarios."""
         scenarios1 = generate_bootstrap_scenarios(
@@ -75,9 +75,9 @@ class TestBootstrapScenarios:
             n_scenarios=100,
             random_state=123,
         )
-        
+
         assert not np.array_equal(scenarios1, scenarios2)
-    
+
     def test_bootstrap_block_size(self, synthetic_returns):
         """Test block bootstrap with different block sizes."""
         scenarios_small = generate_bootstrap_scenarios(
@@ -92,7 +92,7 @@ class TestBootstrapScenarios:
             block_size=20,
             random_state=42,
         )
-        
+
         # Both should work without errors
         assert scenarios_small.shape == (100, 3)
         assert scenarios_large.shape == (100, 3)
@@ -100,7 +100,7 @@ class TestBootstrapScenarios:
 
 class TestCVarScenarioOptimization:
     """Test scenario-based CVaR optimization."""
-    
+
     def test_cvar_scenario_basic(self, synthetic_scenarios):
         """Test basic CVaR scenario optimization."""
         weights = cvar_scenario_optimization(
@@ -109,13 +109,13 @@ class TestCVarScenarioOptimization:
             w_min=0.0,
             w_max=1.0,
         )
-        
+
         # Should return valid weights
         assert len(weights) == 3
         assert np.allclose(weights.sum(), 1.0, atol=1e-6)
         assert np.all(weights >= -1e-6)  # Allow small numerical errors
         assert np.all(weights <= 1.0 + 1e-6)
-    
+
     def test_cvar_vs_original(self, synthetic_scenarios):
         """Test scenario optimization equals original cvar_minimization."""
         weights1 = cvar_scenario_optimization(
@@ -126,10 +126,10 @@ class TestCVarScenarioOptimization:
             R=synthetic_scenarios,
             alpha=0.95,
         )
-        
+
         # Should be identical
         np.testing.assert_array_almost_equal(weights1, weights2, decimal=6)
-    
+
     def test_cvar_different_alpha(self, synthetic_scenarios):
         """Test CVaR with different confidence levels."""
         weights_95 = cvar_scenario_optimization(
@@ -140,11 +140,11 @@ class TestCVarScenarioOptimization:
             synthetic_scenarios,
             alpha=0.99,
         )
-        
+
         # Both should be valid
         assert np.all(weights_95 >= -1e-6)
         assert np.all(weights_99 >= -1e-6)
-        
+
         # May be different (99% is more conservative)
         # Just check they're both valid
         assert np.allclose(weights_95.sum(), 1.0)
@@ -153,16 +153,18 @@ class TestCVarScenarioOptimization:
 
 class TestCVarPortfolioOptimizer:
     """Test high-level portfolio optimizer."""
-    
+
     def test_portfolio_optimizer_basic(self):
         """Test portfolio optimizer with mu and Sigma."""
         mu = np.array([0.10, 0.08, 0.05])
-        Sigma = np.array([
-            [0.04, 0.01, 0.00],
-            [0.01, 0.03, 0.00],
-            [0.00, 0.00, 0.01],
-        ])
-        
+        Sigma = np.array(
+            [
+                [0.04, 0.01, 0.00],
+                [0.01, 0.03, 0.00],
+                [0.00, 0.00, 0.01],
+            ]
+        )
+
         weights = cvar_portfolio_optimizer(
             mu,
             Sigma,
@@ -170,16 +172,16 @@ class TestCVarPortfolioOptimizer:
             n_scenarios=500,
             use_bootstrap=False,
         )
-        
+
         assert len(weights) == 3
         assert np.allclose(weights.sum(), 1.0, atol=1e-4)
         assert np.all(weights >= -1e-6)
-    
+
     def test_portfolio_optimizer_with_bootstrap(self, synthetic_returns):
         """Test optimizer with bootstrap scenarios."""
         mu = synthetic_returns.mean(axis=0)
         Sigma = np.cov(synthetic_returns.T)
-        
+
         weights = cvar_portfolio_optimizer(
             mu,
             Sigma,
@@ -188,19 +190,21 @@ class TestCVarPortfolioOptimizer:
             use_bootstrap=True,
             historical_returns=synthetic_returns,
         )
-        
+
         assert len(weights) == 3
         assert np.allclose(weights.sum(), 1.0, atol=1e-4)
-    
+
     def test_portfolio_optimizer_bounds(self):
         """Test optimizer respects weight bounds."""
         mu = np.array([0.10, 0.08, 0.05])
-        Sigma = np.array([
-            [0.04, 0.01, 0.00],
-            [0.01, 0.03, 0.00],
-            [0.00, 0.00, 0.01],
-        ])
-        
+        Sigma = np.array(
+            [
+                [0.04, 0.01, 0.00],
+                [0.01, 0.03, 0.00],
+                [0.00, 0.00, 0.01],
+            ]
+        )
+
         weights = cvar_portfolio_optimizer(
             mu,
             Sigma,
@@ -210,7 +214,7 @@ class TestCVarPortfolioOptimizer:
             n_scenarios=500,
             use_bootstrap=False,
         )
-        
+
         # Check bounds
         assert np.all(weights >= 0.1 - 1e-6)
         assert np.all(weights <= 0.5 + 1e-6)
@@ -218,46 +222,46 @@ class TestCVarPortfolioOptimizer:
 
 class TestComputePortfolioCVaR:
     """Test CVaR computation from scenarios."""
-    
+
     def test_compute_cvar_basic(self, synthetic_scenarios):
         """Test VaR and CVaR computation."""
         weights = np.array([0.5, 0.3, 0.2])
-        
+
         var, cvar = compute_portfolio_cvar(
             weights,
             synthetic_scenarios,
             alpha=0.95,
         )
-        
+
         # VaR and CVaR should be positive (losses)
         assert var >= 0
         assert cvar >= var  # CVaR >= VaR always
-    
+
     def test_compute_cvar_equal_weights(self, synthetic_scenarios):
         """Test CVaR with equal weights."""
-        weights = np.array([1/3, 1/3, 1/3])
-        
+        weights = np.array([1 / 3, 1 / 3, 1 / 3])
+
         var, cvar = compute_portfolio_cvar(
             weights,
             synthetic_scenarios,
             alpha=0.95,
         )
-        
+
         # Should be reasonable values
         assert 0 <= var <= 0.1  # VaR shouldn't be crazy
         assert cvar >= var
-    
+
     def test_compute_cvar_concentrated(self, synthetic_scenarios):
         """Test CVaR with concentrated portfolio."""
         # All weight on first asset
         weights = np.array([1.0, 0.0, 0.0])
-        
+
         var, cvar = compute_portfolio_cvar(
             weights,
             synthetic_scenarios,
             alpha=0.95,
         )
-        
+
         # Should equal single-asset tail risk
         assert var >= 0
         assert cvar >= var
@@ -265,7 +269,7 @@ class TestComputePortfolioCVaR:
 
 class TestCVarIntegration:
     """Integration tests combining bootstrap + optimization + metrics."""
-    
+
     def test_full_pipeline(self, synthetic_returns):
         """Test complete CVaR pipeline."""
         # 1. Generate scenarios from historical data
@@ -274,7 +278,7 @@ class TestCVarIntegration:
             n_scenarios=1000,
             random_state=42,
         )
-        
+
         # 2. Optimize portfolio
         weights = cvar_scenario_optimization(
             scenarios,
@@ -282,20 +286,20 @@ class TestCVarIntegration:
             w_min=0.0,
             w_max=0.5,
         )
-        
+
         # 3. Compute CVaR of optimized portfolio
         var, cvar = compute_portfolio_cvar(
             weights,
             scenarios,
             alpha=0.95,
         )
-        
+
         # Verify end-to-end
         assert len(weights) == 3
         assert np.allclose(weights.sum(), 1.0)
         assert var >= 0
         assert cvar >= var
-    
+
     def test_cvar_vs_equal_weights(self, synthetic_returns):
         """Test CVaR-optimized beats equal weights on tail risk."""
         scenarios = generate_bootstrap_scenarios(
@@ -303,20 +307,20 @@ class TestCVarIntegration:
             n_scenarios=1000,
             random_state=42,
         )
-        
+
         # CVaR-optimized weights
         weights_cvar = cvar_scenario_optimization(
             scenarios,
             alpha=0.95,
         )
-        
+
         # Equal weights
-        weights_equal = np.array([1/3, 1/3, 1/3])
-        
+        weights_equal = np.array([1 / 3, 1 / 3, 1 / 3])
+
         # Compute CVaR for both
         _, cvar_opt = compute_portfolio_cvar(weights_cvar, scenarios, alpha=0.95)
         _, cvar_eq = compute_portfolio_cvar(weights_equal, scenarios, alpha=0.95)
-        
+
         # CVaR-optimized should have lower or equal CVaR
         # (may not always be lower due to random data, but should be close)
         assert cvar_opt <= cvar_eq * 1.1  # Allow 10% tolerance
@@ -324,28 +328,125 @@ class TestCVarIntegration:
 
 class TestEdgeCases:
     """Test edge cases and error handling."""
-    
+
     def test_small_scenarios(self):
         """Test with very few scenarios."""
         small_scenarios = np.random.normal(0.001, 0.02, size=(10, 3))
-        
+
         weights = cvar_scenario_optimization(
             small_scenarios,
             alpha=0.95,
         )
-        
+
         # Should still work
         assert len(weights) == 3
         assert np.allclose(weights.sum(), 1.0, atol=1e-4)
-    
+
     def test_high_alpha(self):
         """Test with very high confidence level."""
         scenarios = np.random.normal(0.001, 0.02, size=(1000, 3))
-        
+
         weights = cvar_scenario_optimization(
             scenarios,
             alpha=0.99,  # 99% CVaR
         )
-        
+
         assert len(weights) == 3
         assert np.allclose(weights.sum(), 1.0, atol=1e-4)
+
+
+def test_cvar_lp_failure_returns_equal_weight():
+    """CRITICAL-1: CVaR LP failure must return equal-weight, not raise RuntimeError."""
+    from unittest.mock import MagicMock, patch
+
+    from scipy.optimize import OptimizeResult
+
+    N = 3
+    rng = np.random.default_rng(42)
+    R = rng.normal(0.001, 0.02, size=(252, N))
+
+    fake_result = MagicMock(spec=OptimizeResult)
+    fake_result.success = False
+    fake_result.message = "Infeasible"
+
+    with patch("portfolio.optim.cvar.linprog", return_value=fake_result):
+        result = cvar_minimization(R, alpha=0.95, budget=1.0)
+
+    expected = np.full(N, 1.0 / N)
+    np.testing.assert_allclose(result, expected, atol=1e-12)
+    assert result.shape == (N,)
+    assert result.dtype == np.float64
+
+
+def test_cvar_normal_case_unchanged():
+    """CVaR en caso normal no debe cambiar comportamiento."""
+    np.random.seed(0)
+    returns = np.random.normal(
+        loc=[0.001, 0.0008, 0.0003],
+        scale=[0.02, 0.015, 0.005],
+        size=(252, 3),
+    )
+    result = cvar_minimization(returns, alpha=0.95, budget=1.0)
+    assert result.shape == (3,)
+    assert abs(result.sum() - 1.0) < 1e-6
+    assert not np.isnan(result).any()
+
+
+def test_cvar_minimizes_loss_tail_not_gain_tail():
+    """Regression test for the sign bug: CVaR must minimize LEFT (loss) tail.
+
+    Construct a 2-asset case where:
+    - Asset A: low mean, low downside (the SAFE asset)
+    - Asset B: low mean, high downside (the RISKY asset, large negative returns)
+
+    A correct CVaR optimizer should pick mostly A.
+    The sign-flipped version would pick mostly B (because B has a fat RIGHT tail
+    relative to its left tail when measured incorrectly).
+    """
+    import numpy as np
+
+    from portfolio.optim.cvar import cvar_minimization
+
+    rng = np.random.default_rng(42)
+    T = 1000
+    # Asset A: tight distribution, small losses
+    r_a = rng.normal(0.001, 0.005, T)
+    # Asset B: same mean but with rare large losses (heavy LEFT tail)
+    r_b = rng.normal(0.0015, 0.005, T)  # slightly higher mean
+    crash_idx = rng.choice(T, size=20, replace=False)
+    r_b[crash_idx] = -0.10  # 10% losses in 2% of periods → very heavy left tail
+
+    returns = np.column_stack([r_a, r_b])
+    w = cvar_minimization(returns, alpha=0.95, budget=1.0)
+
+    # Asset A has lighter LEFT tail (smaller losses) → CVaR optimizer should prefer it.
+    # If the sign were wrong, it would prefer B (which has fewer GAINS than A).
+    # We assert A's weight > B's weight as the smoking-gun test.
+    assert w[0] > w[1], (
+        f"CVaR sign bug: optimizer picked risky asset B over safer A. "
+        f"w_A={w[0]:.3f}, w_B={w[1]:.3f}"
+    )
+
+    # Stronger: A should get MOST of the weight
+    assert w[0] > 0.7, f"Expected w_A > 0.7, got {w[0]:.3f} (sign bug suspected)"
+
+
+def test_cvar_known_loss_distribution():
+    """Sanity: CVaR of a deterministic 'losses on bottom 5%' distribution."""
+    import numpy as np
+
+    from portfolio.optim.cvar import compute_portfolio_cvar, cvar_minimization
+
+    # Single asset, 100 returns. Bottom 5 are -0.10, others are +0.01
+    # True CVaR_0.95 = 0.10 (the magnitude of the average loss in worst 5%)
+    returns = np.full((100, 1), 0.01)
+    returns[:5, 0] = -0.10
+    np.random.shuffle(returns)
+
+    w = cvar_minimization(returns, alpha=0.95, budget=1.0)
+    assert abs(w[0] - 1.0) < 1e-6  # only asset
+
+    _var, cvar = compute_portfolio_cvar(w, returns, alpha=0.95)
+    # CVaR should be approximately 0.10 (the loss magnitude in the tail)
+    # If sign is wrong, this would be very different.
+    assert 0.08 < cvar < 0.12, f"CVaR={cvar:.4f}, expected ~0.10 (sign bug?)"

@@ -1,4 +1,21 @@
 # portfolio/optim/robust.py
+"""Regularization and denoising toolkit for covariance estimation.
+
+This module provides preconditioning operators that improve the numerical
+stability of mean-variance optimization on noisy real-world inputs:
+
+- `apply_ridge`: diagonal ridge regularization (Σ + εI)
+- `shrink_mu`: James-Stein-style shrinkage of expected returns to a target
+- `clean_covariance_rmt`: Marchenko-Pastur eigenvalue denoising
+  (Laloux et al. 1999, López de Prado 2020)
+
+This is NOT robust optimization in the Ben-Tal & Nemirovski (2002) or
+Goldfarb & Iyengar (2003) sense — those formulations solve an explicit
+min-max problem over an uncertainty set. The operators here are
+"pre-conditioning" tools that the caller composes with standard
+Markowitz/CVaR/HRP to get robust-like behavior.
+"""
+
 from __future__ import annotations
 
 import numpy as np
@@ -40,7 +57,14 @@ def shrink_mu(mu: FloatArray, target: FloatArray, lam: float) -> FloatArray:
 def marcenko_pastur_limits(T: int, N: int, var_eps: float = 1.0) -> tuple[float, float]:
     """
     Theoretical bounds [lambda_min, lambda_max] for the eigenvalues of a random
-    correlation matrix (Wishart) with ratio Q = T/N.
+    correlation matrix (Wishart) with ratio Q = T/N (samples per asset).
+
+    The Marchenko–Pastur threshold is:
+
+        λ_± = var_eps · (1 ± √(1/Q))² = var_eps · (1 ± √(N/T))²
+
+    Eigenvalues above λ_max are treated as "signal"; those below are noise.
+    Note the convention: Q = T/N (so Q ≥ 1 means more samples than assets).
     """
     q = float(T) / float(N)
     lambda_min = var_eps * (1 - np.sqrt(1.0 / q)) ** 2
@@ -53,7 +77,7 @@ def clean_covariance_rmt(Sigma: FloatArray, T: int, N: int) -> FloatArray:
     Denoises the covariance matrix using Constant Residual Eigenvalue Method.
     1. Transforms Sigma -> Correlation C.
     2. Computes eigenvalues.
-    3. Identifies noise eigenvalues (those below Marcenko-Pastur max chreshold).
+    3. Identifies noise eigenvalues (those below Marcenko-Pastur max threshold).
     4. Replaces noise eigenvalues with their average.
     5. Transforms back -> Cleaned Sigma.
 
@@ -114,4 +138,4 @@ def clean_covariance_rmt(Sigma: FloatArray, T: int, N: int) -> FloatArray:
 
     # Transform back to Covariance
     Sigma_clean = C_clean * (std @ std.T)
-    return Sigma_clean.astype(np.float64)
+    return np.asarray(Sigma_clean.astype(np.float64))

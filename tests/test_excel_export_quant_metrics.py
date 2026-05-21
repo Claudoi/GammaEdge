@@ -9,10 +9,8 @@ Tests verify:
 """
 
 import io
-from datetime import date
 
 import openpyxl
-import polars as pl
 import pytest
 
 from portfolio.io.excel_export import export_quant_metrics_to_excel
@@ -70,9 +68,12 @@ class TestDataSheet:
         wb = openpyxl.load_workbook(io.BytesIO(excel_bytes))
         ws = wb["DATA"]
 
-        # Check header row
+        # Check header row contains required columns (other engineered columns
+        # such as log_ret/rel_volume/intraday_vol may also be present).
         headers = [cell.value for cell in ws[1]]
-        assert headers == ["date", "ticker", "adj_close", "ret_1d"]
+        required = {"date", "ticker", "adj_close", "ret_1d"}
+        missing = required - set(headers)
+        assert not missing, f"Missing required columns: {missing}"
 
     def test_data_sheet_long_format(self):
         """Verify DATA is in long format (one row per date-ticker)."""
@@ -172,7 +173,9 @@ class TestMetadataSheet:
         ws = wb["METADATA"]
 
         # Extract all keys from column A
-        keys = [cell.value for cell in ws["A"] if cell.value and not str(cell.value).startswith("#")]
+        keys = [
+            cell.value for cell in ws["A"] if cell.value and not str(cell.value).startswith("#")
+        ]
 
         required_keys = [
             "provider",
@@ -260,18 +263,26 @@ class TestCorrelationSheet:
         wb = openpyxl.load_workbook(io.BytesIO(excel_bytes))
         ws = wb["CORRELATION"]
 
-        # Skip title row, read matrix
-        # Row 2 should be header with ticker names
-        headers = [cell.value for cell in ws[2] if cell.value]
+        # Layout: row 1 is the section title "Correlation Matrix".
+        # The matrix itself starts at row 2 in long form:
+        #     (ticker_name, c_1, c_2, ..., c_N)
+        # i.e. there is no separate header row with ticker names; the row
+        # labels in column A double as the matrix tickers.
+        tickers: list[str] = []
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            label = row[0]
+            if label in (None, "", "Sample Sizes"):
+                break
+            tickers.append(label)
 
-        # Read correlation values
-        corr_values = {}
-        for i, row in enumerate(ws.iter_rows(min_row=3, max_row=2 + len(headers), values_only=True), start=0):
+        # Read correlation values keyed by ticker.
+        corr_values: dict[str, tuple] = {}
+        for row in ws.iter_rows(min_row=2, max_row=1 + len(tickers), values_only=True):
             ticker = row[0]
-            corr_values[ticker] = row[1 : len(headers) + 1]
+            corr_values[ticker] = row[1 : len(tickers) + 1]
 
         # Check diagonal is 1.0
-        for i, ticker in enumerate(headers):
+        for i, ticker in enumerate(tickers):
             assert abs(corr_values[ticker][i] - 1.0) < 1e-6, f"Diagonal for {ticker} should be 1.0"
 
     def test_correlation_has_sample_sizes(self):

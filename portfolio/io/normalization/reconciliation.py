@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 import polars as pl
 
@@ -151,12 +151,13 @@ class CrossProviderReconciler:
         ticker_issues = self._analyze_by_ticker(df_divergences)
 
         # Summary
-        summary = {
+        divergence_rate = df_divergences.height / max(df_reconciled.height, 1)
+        summary: dict[str, Any] = {
             "primary": self.primary,
             "secondary": self.secondary,
             "total_rows": df_reconciled.height,
             "divergent_rows": df_divergences.height,
-            "divergence_rate": df_divergences.height / max(df_reconciled.height, 1),
+            "divergence_rate": divergence_rate,
             "missing_in_primary": df_merged.filter(pl.col("close_p").is_null()).height,
             "missing_in_secondary": df_merged.filter(pl.col("close_s").is_null()).height,
             "tickers_with_issues": len(ticker_issues),
@@ -166,9 +167,9 @@ class CrossProviderReconciler:
 
         logger.info(
             "Reconciliation complete: %d/%d divergent (%.2f%%)",
-            summary["divergent_rows"],
-            summary["total_rows"],
-            summary["divergence_rate"] * 100,
+            df_divergences.height,
+            df_reconciled.height,
+            divergence_rate * 100,
         )
 
         return ReconciliationResult(
@@ -317,7 +318,8 @@ class CrossProviderReconciler:
                 ]
             )
 
-        return df
+        # All TruthPolicy literal values handled above; this is a safety net.
+        raise ValueError(f"Unknown truth_policy: {policy!r}")  # pragma: no cover
 
     def _analyze_by_ticker(self, df_divergences: pl.DataFrame) -> dict[str, dict]:
         """Analiza divergencias por ticker."""
@@ -385,7 +387,7 @@ def reconcile_providers(
     df_secondary: pl.DataFrame,
     primary_name: str = "primary",
     secondary_name: str = "secondary",
-    **config_kwargs,
+    **config_kwargs: Any,
 ) -> ReconciliationResult:
     """
     Función helper para reconciliación rápida.

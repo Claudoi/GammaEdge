@@ -98,7 +98,7 @@ class TradingCalendar:
         """Verifica si una fecha es día de trading."""
         if self._calendar is not None:
             try:
-                return self._calendar.is_session(d)
+                return bool(self._calendar.is_session(d))
             except Exception:
                 pass
 
@@ -165,9 +165,9 @@ class TradingCalendar:
         if all(r == "weekend" for r in reasons):
             return "weekend"
 
-        holidays = [r for r in reasons if r.startswith("holiday")]
-        if holidays:
-            return holidays[0]  # Retornar el primer feriado
+        holiday_reasons = [r for r in reasons if r.startswith("holiday")]
+        if holiday_reasons:
+            return holiday_reasons[0]  # Retornar el primer feriado
 
         if "unexplained" in reasons:
             return "unexplained"

@@ -13,7 +13,7 @@ import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 from uuid import uuid4
 
 import polars as pl
@@ -317,7 +317,7 @@ class QualityGates:
 
         passed = outlier_count == 0
 
-        details = {"outlier_count": outlier_count}
+        details: dict[str, Any] = {"outlier_count": outlier_count}
         if outlier_count > 0 and outlier_count <= 10:
             # Mostrar los outliers si son pocos
             details["outliers"] = outliers.select(["date", "ticker", "close", "ret"]).to_dicts()
@@ -400,7 +400,7 @@ class QualityGates:
 
 def run_quality_gates(
     df: pl.DataFrame,
-    **config,
+    **config: Any,
 ) -> tuple[bool, QualityReport]:
     """
     Función de conveniencia para ejecutar quality gates.

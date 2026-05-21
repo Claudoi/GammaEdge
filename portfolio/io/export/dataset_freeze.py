@@ -28,7 +28,7 @@ import subprocess
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 import polars as pl
 
@@ -80,9 +80,9 @@ class QualityReportGenerator:
         self.df = df
         self.definition = definition
 
-    def generate(self) -> dict:
+    def generate(self) -> dict[str, Any]:
         """Genera el quality report completo."""
-        report = {
+        report: dict[str, Any] = {
             "generated_at": datetime.utcnow().isoformat() + "Z",
             "dataset_id": self.definition.dataset_id,
             "dataset_version": self.definition.dataset_version,
@@ -199,9 +199,9 @@ class QualityReportGenerator:
 
         return res
 
-    def _run_sanity_checks(self) -> dict:
+    def _run_sanity_checks(self) -> dict[str, Any]:
         """Ejecuta sanity checks en los datos."""
-        checks = {}
+        checks: dict[str, Any] = {}
 
         is_wide = "ticker" not in self.df.columns
 
@@ -210,14 +210,14 @@ class QualityReportGenerator:
             main_ticker = self.definition.tickers[0] if self.definition.tickers else "QQQ"
             close_col = f"close_{main_ticker}"
             if close_col in self.df.columns:
-                checks["close_min"] = float(self.df[close_col].min() or 0)
-                checks["close_max"] = float(self.df[close_col].max() or 0)
+                checks["close_min"] = float(self.df[close_col].min() or 0)  # type: ignore[arg-type]
+                checks["close_max"] = float(self.df[close_col].max() or 0)  # type: ignore[arg-type]
                 checks["close_negative"] = int(self.df.filter(pl.col(close_col) < 0).height)
         else:
             # Price checks
             if "close" in self.df.columns:
-                checks["close_min"] = float(self.df["close"].min() or 0)
-                checks["close_max"] = float(self.df["close"].max() or 0)
+                checks["close_min"] = float(self.df["close"].min() or 0)  # type: ignore[arg-type]
+                checks["close_max"] = float(self.df["close"].max() or 0)  # type: ignore[arg-type]
                 checks["close_negative"] = int(self.df.filter(pl.col("close") < 0).height)
 
         return checks
@@ -285,9 +285,9 @@ class DatasetCardGenerator:
     def __init__(
         self,
         definition: DatasetDefinition,
-        metadata: dict,
-        quality_report: dict,
-        manifest: dict = None,
+        metadata: dict[str, Any],
+        quality_report: dict[str, Any],
+        manifest: dict[str, Any] | None = None,
     ):
         self.definition = definition
         self.metadata = metadata
@@ -637,7 +637,7 @@ class DatasetFreezer:
 
         return folder
 
-    def _sign_manifest(self, manifest_path: Path):
+    def _sign_manifest(self, manifest_path: Path) -> None:
         """Firma el manifest usando ssh-keygen."""
         key_path = Path("keys/gammaedge_release_ed25519")
         if not key_path.exists():
@@ -710,7 +710,9 @@ class DatasetFreezer:
             pass
         return fingerprint
 
-    def _update_global_index(self, manifest: dict, folder: Path, content_hash_full: str):
+    def _update_global_index(
+        self, manifest: dict[str, Any], folder: Path, content_hash_full: str
+    ) -> None:
         """Actualiza datasets/INDEX.json."""
         index_path = self.base_path / "INDEX.json"
         index = []
@@ -798,6 +800,8 @@ class DatasetFreezer:
                 rows_by_ticker[ticker] = df.height
 
         # Common window
+        common_start: str | None
+        common_end: str | None
         if actual_start_by_ticker:
             common_start = max(actual_start_by_ticker.values())
             common_end = min(actual_end_by_ticker.values())
@@ -805,7 +809,7 @@ class DatasetFreezer:
             common_start = common_end = None
 
         # Schema hash
-        schema_info = {name: str(dtype) for name, dtype in zip(df.columns, df.dtypes)}
+        schema_info = {name: str(dtype) for name, dtype in zip(df.columns, df.dtypes, strict=False)}
         schema_hash = hashlib.sha256(json.dumps(schema_info, sort_keys=True).encode()).hexdigest()[
             :16
         ]
@@ -839,7 +843,13 @@ class DatasetFreezer:
             "gammaedge_version": "1.0.0",
         }
 
-    def _write_excel(self, df: pl.DataFrame, path: Path, metadata: dict, quality_report: dict):
+    def _write_excel(
+        self,
+        df: pl.DataFrame,
+        path: Path,
+        metadata: dict[str, Any],
+        quality_report: dict[str, Any],
+    ) -> None:
         """Escribe Excel con Sheets: DATA, METADATA, DICTIONARY, QUALITY."""
         try:
             import xlsxwriter
@@ -850,7 +860,6 @@ class DatasetFreezer:
             header_fmt = workbook.add_format(
                 {"bold": True, "bg_color": "#1a1a2e", "font_color": "white", "border": 1}
             )
-            date_fmt = workbook.add_format({"num_format": "yyyy-mm-dd"})
 
             # 1. DATA
             ws_data = workbook.add_worksheet("DATA")
@@ -915,7 +924,7 @@ class DatasetFreezer:
             row_idx = 1
 
             # Flatten quality report for excel
-            def write_quality_item(key, val, indent=0):
+            def write_quality_item(key: str, val: Any, indent: int = 0) -> None:
                 nonlocal row_idx
                 prefix = "  " * indent
                 if isinstance(val, dict):

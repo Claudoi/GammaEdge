@@ -12,7 +12,6 @@ from datetime import date, timedelta
 
 import numpy as np
 import polars as pl
-import pytest
 
 from portfolio.features.quant_metrics import (
     TRADING_DAYS_PER_YEAR,
@@ -33,10 +32,12 @@ class TestReturnsCalculation:
 
     def test_returns_calculation(self):
         """Verify r_t = (P_t - P_{t-1}) / P_{t-1}"""
-        prices = pl.DataFrame({
-            "date": ["2024-01-01", "2024-01-02", "2024-01-03"],
-            "adj_close_AAPL": [100.0, 102.0, 101.0],
-        })
+        prices = pl.DataFrame(
+            {
+                "date": ["2024-01-01", "2024-01-02", "2024-01-03"],
+                "adj_close_AAPL": [100.0, 102.0, 101.0],
+            }
+        )
 
         returns = calculate_returns(prices)
 
@@ -86,19 +87,23 @@ class TestBetaAlpha:
     def test_beta_inner_join_alignment(self):
         """Verify dates are aligned via inner join"""
         # Ticker has different dates than benchmark
-        ticker_dates = pl.Series([
-            date(2024, 1, 1),
-            date(2024, 1, 2),
-            date(2024, 1, 4),  # Missing day 3
-        ])
+        ticker_dates = pl.Series(
+            [
+                date(2024, 1, 1),
+                date(2024, 1, 2),
+                date(2024, 1, 4),  # Missing day 3
+            ]
+        )
         ticker_returns = pl.Series([0.01, 0.02, -0.01])
 
-        bench_dates = pl.Series([
-            date(2024, 1, 1),
-            date(2024, 1, 2),
-            date(2024, 1, 3),  # Extra day
-            date(2024, 1, 4),
-        ])
+        bench_dates = pl.Series(
+            [
+                date(2024, 1, 1),
+                date(2024, 1, 2),
+                date(2024, 1, 3),  # Extra day
+                date(2024, 1, 4),
+            ]
+        )
         bench_returns = pl.Series([0.005, 0.015, 0.01, -0.005])
 
         result = calculate_beta_alpha(
@@ -116,6 +121,7 @@ class TestBetaAlpha:
     def test_beta_zero_variance_returns_none(self):
         """If Var(r_m) < 1e-10 → None"""
         from datetime import date, timedelta
+
         start_date = date(2024, 1, 1)
         dates = pl.Series([start_date + timedelta(days=i) for i in range(32)])
 
@@ -199,6 +205,7 @@ class TestCAGR:
 
         prices = pl.Series(np.linspace(start_price, end_price, n_days + 1))
         from datetime import date, timedelta
+
         start_date = date(2022, 1, 1)
         dates = pl.Series([start_date + timedelta(days=i) for i in range(n_days + 1)])
 
@@ -254,11 +261,13 @@ class TestCorrelation:
 
     def test_correlation_diagonal_ones(self):
         """Diagonal = 1.0"""
-        returns = pl.DataFrame({
-            "date": [date(2024, 1, 1) + timedelta(days=i) for i in range(32)],
-            "ret_AAPL": np.random.normal(0.001, 0.02, 32),
-            "ret_MSFT": np.random.normal(0.001, 0.02, 32),
-        })
+        returns = pl.DataFrame(
+            {
+                "date": [date(2024, 1, 1) + timedelta(days=i) for i in range(32)],
+                "ret_AAPL": np.random.normal(0.001, 0.02, 32),
+                "ret_MSFT": np.random.normal(0.001, 0.02, 32),
+            }
+        )
 
         result = calculate_correlation_matrix(returns)
 
@@ -271,15 +280,17 @@ class TestCorrelation:
 
     def test_correlation_single_ticker_returns_none(self):
         """Single ticker → None"""
-        returns = pl.DataFrame({
-            "date": pl.date_range(
-                start=date(2024, 1, 1),
-                end=date(2024, 2, 1),
-                interval="1d",
-                eager=True,
-            ),
-            "ret_AAPL": np.random.normal(0.001, 0.02, 32),
-        })
+        returns = pl.DataFrame(
+            {
+                "date": pl.date_range(
+                    start=date(2024, 1, 1),
+                    end=date(2024, 2, 1),
+                    interval="1d",
+                    eager=True,
+                ),
+                "ret_AAPL": np.random.normal(0.001, 0.02, 32),
+            }
+        )
 
         result = calculate_correlation_matrix(returns)
 
@@ -293,21 +304,24 @@ class TestDataQuality:
         """Coverage = n_obs / expected_obs"""
         # Benchmark has 10 days
         from datetime import date, timedelta
+
         start_date = date(2024, 1, 1)
         bench_dates = pl.Series([start_date + timedelta(days=i) for i in range(10)])
 
         # Ticker missing 2 days
-        ticker_dates = pl.Series([
-            date(2024, 1, 1),
-            date(2024, 1, 2),
-            date(2024, 1, 3),
-            # Missing 4, 5
-            date(2024, 1, 6),
-            date(2024, 1, 7),
-            date(2024, 1, 8),
-            date(2024, 1, 9),
-            date(2024, 1, 10),
-        ])
+        ticker_dates = pl.Series(
+            [
+                date(2024, 1, 1),
+                date(2024, 1, 2),
+                date(2024, 1, 3),
+                # Missing 4, 5
+                date(2024, 1, 6),
+                date(2024, 1, 7),
+                date(2024, 1, 8),
+                date(2024, 1, 9),
+                date(2024, 1, 10),
+            ]
+        )
 
         result = calculate_data_quality(ticker_dates, bench_dates, "AAPL")
 

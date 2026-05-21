@@ -189,7 +189,9 @@ def factor_attribution_matrix(
     A: pd.DataFrame = out["asset_factor_rc"]
 
     stacked = A.stack()  # MultiIndex (asset, factor)
-    stacked.name = "rc"
+    # A.stack() returns a Series for a 2D DataFrame; cast for the type checker.
+    if isinstance(stacked, pd.Series):
+        stacked.name = "rc"
     df = stacked.reset_index()
     df.columns = ["asset", "factor", "rc"]
 

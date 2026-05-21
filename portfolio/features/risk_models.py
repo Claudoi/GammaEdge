@@ -10,6 +10,8 @@ import pandas as pd
 import polars as pl
 from sklearn.covariance import OAS, LedoitWolf
 
+from portfolio.core.utils import ensure_psd as _ensure_psd  # canonical PSD projection
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Tipos y utilidades generales
 # ──────────────────────────────────────────────────────────────────────────────
@@ -114,7 +116,7 @@ def _wide_to_matrix(
         tickers = [c for c in df_ret_wide.columns if c != "date"]
         if not tickers:
             return np.empty((0, 0), dtype=np.float64), []
-        X = df_ret_wide[tickers].to_numpy(dtype=np.float64)
+        X = df_ret_wide[tickers].to_numpy(dtype=np.float64).copy()
     else:
         tickers = [c for c in df_ret_wide.columns if c != "date"]
         if not tickers:
@@ -160,20 +162,9 @@ def _ema_last(x: np.ndarray, span: int) -> float:
     return s
 
 
-def _ensure_psd(Sigma: np.ndarray, eps: float = 1e-12) -> np.ndarray:
-    """
-    Proyección PSD por clipping de autovalores.
-    """
-    S = np.asarray(Sigma, dtype=np.float64)
-    if S.size == 0:
-        return S
-    A = np.asarray(0.5 * (S + S.T), dtype=np.float64)
-    eigvals, eigvecs = np.linalg.eigh(A)
-    eigvals = np.asarray(np.clip(eigvals, eps, None), dtype=np.float64)
-    eigvecs = np.asarray(eigvecs, dtype=np.float64)
-    A_psd = eigvecs @ np.diag(eigvals) @ eigvecs.T
-    A_psd = np.asarray(A_psd, dtype=np.float64)
-    return np.asarray(0.5 * (A_psd + A_psd.T), dtype=np.float64)
+# PSD projection lives in ``portfolio.core.utils``. The underscore-prefixed
+# name is kept as a private alias (re-exported at module top) so existing
+# call sites and tests in this module keep working unchanged.
 
 
 def apply_ridge(Sigma: np.ndarray, eps: float) -> np.ndarray:
@@ -208,6 +199,11 @@ def expected_returns(
     """
     X, names = _wide_to_matrix(df_ret_wide, fill=fill)
     if X.size == 0:
+        if names:
+            raise ValueError(
+                f"Expected returns are invalid (NaN or Inf) for assets: {names}. "
+                "Check for all-null columns or insufficient data."
+            )
         return pd.Series([], index=names, dtype=float, name="expected_return")
 
     per = _infer_periodicity(df_ret_wide)
@@ -232,6 +228,15 @@ def expected_returns(
 
     else:
         raise ValueError(f"Unknown expected return method: {method}")
+
+    mu_arr = np.asarray(mu, dtype=np.float64)
+    bad_mask = np.isnan(mu_arr) | np.isinf(mu_arr)
+    if bad_mask.any():
+        bad_assets = [str(n) for n, b in zip(names, bad_mask, strict=False) if b]
+        raise ValueError(
+            f"Expected returns are invalid (NaN or Inf) for assets: {bad_assets}. "
+            "Check for all-null columns or insufficient data."
+        )
 
     return pd.Series(np.asarray(mu * ann, dtype=np.float64), index=names, name="expected_return")
 
@@ -299,21 +304,41 @@ def covariance(
         if np.isnan(X).any():
             raise ValueError("NaNs not allowed in lw; use fill='drop' or 'mean'.")
         Sigma = np.asarray(LedoitWolf().fit(X).covariance_, dtype=np.float64)
+        Sigma = _ensure_psd(Sigma)  # prevent tiny negative eigenvalues from float arithmetic
 
     elif method == "oas":
         if np.isnan(X).any():
             raise ValueError("NaNs not allowed in oas; use fill='drop' or 'mean'.")
         Sigma = np.asarray(OAS().fit(X).covariance_, dtype=np.float64)
+        Sigma = _ensure_psd(Sigma)  # prevent tiny negative eigenvalues from float arithmetic
     elif method == "ewma":
+        # EWMA covariance (RiskMetrics-style, JP Morgan 1996)
+        #
+        #   Σ_t = (1-λ) · Σ_k λ^k · x_{t-k} x_{t-k}^T   with Σ_0 = 0
+        #
+        # Implementation note: returns are mean-centered (Σ uses X_c = X - mean(X))
+        # for numerical stability. Strict RiskMetrics-96 uses raw returns assuming
+        # zero mean for daily data. The difference is small (< 1%) for typical
+        # daily return series.
         lam = float(ewma_lambda)
         mu = np.nanmean(X, axis=0, keepdims=True)
         Xc = X - mu
-        Sigma = np.zeros((N, N), dtype=np.float64)
-        for t in range(T):
-            xt = Xc[t : t + 1, :]
-            if np.isnan(xt).any():
-                continue
-            Sigma = lam * Sigma + (1.0 - lam) * (xt.T @ xt)
+
+        # Vectorized EWMA: equivalent to the recurrence
+        #   Σ_T = (1-λ) * Σ_t λ^(T_eff-1-t) x_t x_t^T
+        # computed as X_w^T @ X with X_w = X * w[:, None] and
+        # w[t] = (1-λ) * λ^(T_eff-1-t). Rows containing NaN are dropped,
+        # matching the original loop's `continue` semantics.
+        valid_mask = ~np.isnan(Xc).any(axis=1)
+        Xc_valid = Xc[valid_mask]
+        T_eff = Xc_valid.shape[0]
+        if T_eff == 0:
+            Sigma = np.eye(N, dtype=np.float64) * 1e-6
+        else:
+            exponents = np.arange(T_eff - 1, -1, -1, dtype=np.float64)
+            weights = (1.0 - lam) * (lam**exponents)
+            Xc_weighted = Xc_valid * weights[:, None]
+            Sigma = Xc_weighted.T @ Xc_valid
     else:
         raise ValueError(f"Unknown covariance method: {method}")
 

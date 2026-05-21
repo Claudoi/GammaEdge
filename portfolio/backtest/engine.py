@@ -1,6 +1,7 @@
 # portfolio/backtest/engine.py
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from typing import Literal, cast
 
@@ -8,7 +9,9 @@ import numpy as np
 import pandas as pd
 import polars as pl
 
-from portfolio.core.compat import dataclass_compat as dataclass
+logger = logging.getLogger(__name__)
+
+from portfolio.core.compat import dataclass_compat as dataclass  # noqa: E402  # after logger setup
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Types / dataclasses
@@ -154,6 +157,33 @@ def backtest_vectorized(
 
     # Ordenar y asegurar fechas
     df = df_ret_wide.sort("date")
+
+    # Polars distinguishes null (missing) from NaN (float not-a-number).
+    # We must check both to catch numpy np.nan values stored as float columns.
+    tickers_all = [c for c in df.columns if c != "date"]
+    float_cols = {t for t in tickers_all if df[t].dtype in (pl.Float32, pl.Float64)}
+    total_nulls = sum(df.select(tickers_all).null_count().row(0))
+    total_nans = sum(df.select([pl.col(t).is_nan().sum().alias(t) for t in float_cols]).row(0))
+    if total_nulls > 0 or total_nans > 0:
+        not_null_mask = pl.all_horizontal(
+            *[
+                pl.col(t).is_not_null()
+                & (pl.col(t).is_nan().not_() if t in float_cols else pl.lit(True))
+                for t in tickers_all
+            ]
+        )
+        valid_rows = df.filter(not_null_mask)
+        if valid_rows.is_empty():
+            return {"error": "No common valid date across all tickers"}
+        first_valid = valid_rows["date"].min()
+        logger.warning(
+            "Data has NaN gaps across tickers. Truncating backtest to first "
+            "common valid date: %s (dropped %d rows)",
+            first_valid,
+            df.filter(pl.col("date") < first_valid).height,
+        )
+        df = valid_rows
+
     dates = df["date"]
 
     # 1. Identificar fechas de rebalanceo
@@ -214,7 +244,8 @@ def backtest_vectorized(
     if not W_targets:
         return {}
 
-    W_targets = np.array(W_targets)  # (K, N)
+    # Note: W_targets remains a list of arrays for downstream indexing.
+    # The (K, N) matrix is materialized later only where needed.
 
     # 3. Drift de pesos Vectorizado
 
@@ -354,6 +385,8 @@ def backtest_rebalanced(
     impact_model: str = "linear",  # "linear" (bps) or "sqrt" (volume)
     df_volume: pl.DataFrame | None = None,  # Required for sqrt
     impact_c: float = 1.0,  # Coeff for sqrt model (usually 0.5 - 1.0)
+    sigma_d: float = 0.02,  # Daily volatility assumption for sqrt impact (Almgren-Chriss)
+    spread_bps: float = 10.0,  # Linear half-spread cost in basis points (applied to |Δw|)
 ) -> dict[str, object]:
     """
     Backtest simple con rebalanceo periódico y coste lineal por turnover.
@@ -402,16 +435,19 @@ def backtest_rebalanced(
             if impact_model == "linear":
                 cost = to * (cost_bps / 10000.0)
             elif impact_model == "sqrt":
-                # Square Root Law: Cost ~ c * sigma * sqrt(Trade / Vol)
-                # TradeSize($) ~ |w_new - w_prev| * CurrentEquity
-                # Need: df_volume row for today (d).
+                # Almgren-Chriss style cost = linear (spread) + sqrt impact
+                # Linear: c_linear = (spread_bps / 1e4) * |Δw|
+                # Impact: c_impact = impact_c * sigma_d * Σ_j (trade_amt_j^1.5 / sqrt(vol_j)) / eq
+
+                # Linear/spread component (always applied for sqrt model)
+                linear_cost = to * (spread_bps / 10000.0)
+
+                impact_cost = 0.0
                 if df_volume is not None:
                     trade_pct = np.abs(w_new - w_prev)
                     trade_amt = trade_pct * eq
 
-                    # Extract vol
-                    # Vol lookup is slow, but we are in a loop anyway.
-                    # Optimization: Pre-lookup or join before loop. Given rebal freq is low, fetching is ok.
+                    # Vol lookup is slow, but rebal freq is low so fetching per-rebalance is acceptable.
                     try:
                         # Filter df_volume for date d
                         vol_row = (
@@ -424,8 +460,6 @@ def backtest_rebalanced(
                             np.nan_to_num(vol_row, nan=1e6), 1.0
                         )  # ensure non-zero
 
-                        sigma_d = 0.02  # simple daily vol assumption (or pass it in?)
-
                         # Market Impact ($)
                         # Cost($) = c * sigma * sum [ Trade_j^(1.5) / Vol_j^(0.5) ]
                         impact_usd = (
@@ -433,11 +467,12 @@ def backtest_rebalanced(
                         )
 
                         # Cost as fractional return drag: Cost($) / Equity($)
-                        cost = impact_usd / eq
-                    except Exception:
-                        cost = to * 0.0010  # fallback 10bps
-                else:
-                    cost = to * 0.0010
+                        impact_cost = impact_usd / eq
+                    except (KeyError, ValueError, np.linalg.LinAlgError):
+                        # Fallback: 10bps on turnover if vol lookup or numerics fail
+                        impact_cost = to * 0.0010
+
+                cost = linear_cost + impact_cost
 
             TO.append(to)
             W.append(w_new.copy())

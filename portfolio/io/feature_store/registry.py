@@ -362,9 +362,9 @@ class FeatureRegistry:
 
     def get_dependency_graph(self, feature_name: str) -> dict[str, list[str]]:
         """Construye grafo de dependencias de un feature."""
-        graph = {}
+        graph: dict[str, list[str]] = {}
 
-        def _add_deps(name: str):
+        def _add_deps(name: str) -> None:
             if name in graph:
                 return
 
@@ -412,6 +412,7 @@ class FeatureRegistry:
 
     def _load(self) -> None:
         """Carga el registry desde disco."""
+        assert self.path is not None  # caller guarantees in __init__
         registry_file = self.path / "registry.json"
         if not registry_file.exists():
             return

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 # --- stdlib ---
 import contextlib
+import logging
 import os
 import sys
 from typing import Any, Literal, cast
@@ -19,6 +20,9 @@ import streamlit as st
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 # --- backtest core ---
+# Design System
+from app.design_system import COLORS, get_global_styles
+from app.utils import ensure_turnover_with_drift, to_pandas
 from portfolio.backtest import attribution as bt_attr
 from portfolio.backtest import metrics as bt_metrics
 from portfolio.backtest.allocators import make_allocator
@@ -39,8 +43,7 @@ from portfolio.viz.plot_utils import (
     show_plot,
 )
 
-# Design System
-from app.design_system import COLORS, get_global_styles
+_log = logging.getLogger(__name__)
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -51,14 +54,6 @@ def _bt_key(tag: str) -> str:
     st.session_state.setdefault("_bt_key_seq", 0)
     st.session_state["_bt_key_seq"] += 1
     return f"bt-{tag}-{st.session_state['_bt_key_seq']}"
-
-
-def _to_pandas(df: Any):
-    """Safely convert Polars or other table objects to pandas."""
-    try:
-        return df.to_pandas()
-    except Exception:
-        return df
 
 
 def metrics_bootstrap(
@@ -136,7 +131,7 @@ def _metric_from_df(m: Any, name: str) -> float:
                     v = m.select(pl.col(c)).item()
                     return float(v)
     except Exception:
-        pass
+        _log.debug("Backtest page: polars metric extraction failed for %s", name, exc_info=True)
 
     try:
         if isinstance(m, pd.DataFrame) and len(m.index) > 0:
@@ -149,7 +144,7 @@ def _metric_from_df(m: Any, name: str) -> float:
                     v = m.at[m.index[0], c]
                     return float(cast(float, v))
     except Exception:
-        pass
+        _log.debug("Backtest page: pandas metric extraction failed for %s", name, exc_info=True)
 
     return float("nan")
 
@@ -177,90 +172,6 @@ def _metrics_safe(bt_obj: dict) -> dict[str, float]:
                 if not np.isfinite(maxdd):
                     maxdd = maxdd_fb
     return {"CAGR": float(cagr), "Sharpe": float(sharpe), "MaxDD": float(maxdd)}
-
-
-def _ensure_turnover_with_drift(bt: dict, df_wide: pl.DataFrame) -> tuple[list, np.ndarray]:
-    """
-    Ensure we have a turnover time series:
-    1) Try to use what the engine returns (DataFrame or array).
-    2) If missing, reconstruct turnover between rebalance dates using drifted weights.
-    """
-    to_obj = bt.get("turnover")
-    if to_obj is not None:
-        try:
-            # Case 1: Polars DataFrame with columns [date, turnover]
-            if isinstance(to_obj, pl.DataFrame) and "turnover" in to_obj.columns:
-                dates = (
-                    to_obj.get_column("date").to_list()
-                    if "date" in to_obj.columns
-                    else list(range(to_obj.height))
-                )
-                vals = to_obj.get_column("turnover").to_numpy()
-                return dates, np.asarray(vals, float)
-
-            # Case 2: pandas DataFrame with columns [date, turnover]
-            if isinstance(to_obj, pd.DataFrame) and "turnover" in to_obj.columns:
-                dates = (
-                    to_obj["date"].tolist()
-                    if "date" in to_obj.columns
-                    else list(range(len(to_obj)))
-                )
-                return dates, np.asarray(to_obj["turnover"].values, float)
-
-            # Case 3: plain array like
-            arr = np.asarray(to_obj, float).ravel()
-            if arr.size > 0:
-                rb_dates = bt.get("rebalance_dates")
-                dates = (
-                    list(rb_dates)[-arr.size :]
-                    if rb_dates is not None
-                    else list(bt["dates"][-arr.size :])
-                )
-                return dates, arr
-        except Exception:
-            pass
-
-    # Fallback 2: reconstruct from pre/post-drift weights
-    rb_dates = list(bt.get("rebalance_dates", []))
-    W_reb = np.asarray(bt.get("weights", []), float)
-    tick = list(bt.get("tickers", []))
-
-    if W_reb.size == 0 or len(rb_dates) != W_reb.shape[0] or df_wide is None:
-        return [], np.array([], float)
-
-    have = set(df_wide.columns)
-    miss = [t for t in tick if t not in have]
-    if miss:
-        df_wide = df_wide.with_columns(**{c: pl.lit(0.0, dtype=pl.Float64) for c in miss})
-    df_wide = df_wide.select(["date", *tick]).sort("date")
-    idx_map = {d: i for i, d in enumerate(df_wide.get_column("date").to_list())}
-
-    def _norm(w: np.ndarray) -> np.ndarray:
-        s = float(np.sum(w))
-        return (w / s) if s > 1e-12 else w
-
-    turns: list[float] = []
-    out_dates: list[Any] = []
-    w_prev = _norm(W_reb[0])
-
-    for k in range(len(rb_dates) - 1):
-        d0, d1 = rb_dates[k], rb_dates[k + 1]
-        i0, i1 = idx_map.get(d0), idx_map.get(d1)
-
-        if i0 is None or i1 is None or i1 <= i0:
-            w_pre = w_prev
-        else:
-            R_seg = df_wide.slice(i0, i1 - i0).select(tick).to_numpy()
-            G = np.prod(1.0 + np.nan_to_num(R_seg, nan=0.0), axis=0)
-            w_pre = _norm(w_prev * G)
-
-        w_new = _norm(W_reb[k + 1])
-        to_k = 0.5 * float(np.sum(np.abs(w_new - w_pre)))
-        turns.append(to_k)
-        out_dates.append(d1)
-        w_prev = w_new
-
-    return out_dates, np.asarray(turns, float)
 
 
 # --- Benchmark helpers ------------------------------------------------
@@ -298,7 +209,8 @@ st.set_page_config(page_title="Backtest", layout="wide")
 st.markdown(get_global_styles(), unsafe_allow_html=True)
 
 # Page title with Apple-style
-st.markdown(f"""
+st.markdown(
+    f"""
 <div style="margin-bottom: 32px;">
     <h1 style="
         font-size: 2.5rem;
@@ -306,7 +218,7 @@ st.markdown(f"""
         color: {COLORS['text_primary']};
         margin-bottom: 8px;
     ">
-        📊 Backtest
+        Backtest
     </h1>
     <p style="
         font-size: 1rem;
@@ -316,7 +228,9 @@ st.markdown(f"""
         Rolling rebalance with transaction costs, bootstrap metrics, and attribution analysis
     </p>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # ─────────────────────────────────────────────────────────────────────
 # Input validation from previous pages (01/02/03)
@@ -341,7 +255,7 @@ if N == 0 or df_ret_wide.height < 10:
 # Sidebar – parameters
 # ─────────────────────────────────────────────────────────────────────
 with st.sidebar:
-    st.header("⚙️ Parameters")
+    st.header("Parameters")
 
     rebalance_freq = st.selectbox("Rebalance frequency", ["1mo", "1w", "3mo", "6mo"], index=0)
     lookback = st.number_input(
@@ -400,7 +314,9 @@ with st.sidebar:
     _opt_bench = st.session_state.get("opt_bench_kind", "Equal-Weight")
     _bench_default_idx = 0 if _opt_bench == "Equal-Weight" else 1
     bench_mode = st.selectbox(
-        "Benchmark mode", ["equal", "static_first_day"], index=_bench_default_idx,
+        "Benchmark mode",
+        ["equal", "static_first_day"],
+        index=_bench_default_idx,
     )
 
     st.markdown("---")
@@ -520,12 +436,18 @@ if not do_grid:
             engine_type,
             impact_model,
             float(impact_c),
-            None,  # TODO: Pass df_volume from stored session state if available
+            # df_volume left None — volume-based impact disabled (linear model is used by default;
+            # sqrt impact still works with constant volume assumption via impact_c)
+            None,
         )
-    st.success("✅ Backtest executed.")
+    st.success("Backtest executed.")
 
     # Handoff to 05_Attribution (persist into session_state)
-    def _export_to_05(bt_obj: dict[str, Any], df_wide_obj: Any) -> None:
+    def _export_to_05(bt_obj: dict[str, Any] | None, df_wide_obj: Any) -> None:
+        if not isinstance(bt_obj, dict) or "equity" not in bt_obj or "dates" not in bt_obj:
+            # Backtest produced no usable result (insufficient history, error, etc.).
+            # Skip export silently — UI already surfaces the underlying issue.
+            return
         if isinstance(df_wide_obj, pd.DataFrame):
             df_pl = pl.from_pandas(df_wide_obj)
         elif isinstance(df_wide_obj, pl.DataFrame):
@@ -539,10 +461,13 @@ if not do_grid:
         st.session_state["df_ret_wide"] = df_pl
         st.session_state["returns_wide"] = df_pl
         # Persist metrics for Attribution / Reporting pages
-        st.session_state["metrics_df"] = bt_metrics.compute_backtest_metrics(bt_obj)
+        try:
+            st.session_state["metrics_df"] = bt_metrics.compute_backtest_metrics(bt_obj)
+        except (ValueError, KeyError, TypeError) as exc:
+            st.warning(f"Could not compute backtest metrics for export: {exc}")
         st.session_state["bench_meta"] = {"scheme": bench_mode}
         with contextlib.suppress(Exception):
-            st.toast("Artifacts saved for 05_Attribution.", icon="💾")
+            st.toast("Artifacts saved for 05_Attribution.")
 
     _export_to_05(bt, st.session_state.get("returns_wide", df_ret_wide))
 
@@ -614,8 +539,8 @@ if do_grid:
         )
     )
 
-    st.subheader("🔎 Grid results")
-    st.dataframe(_to_pandas(df_grid.sort("Sharpe", descending=True)), width="stretch")
+    st.subheader("Grid results")
+    st.dataframe(to_pandas(df_grid.sort("Sharpe", descending=True)), width="stretch")
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -630,24 +555,24 @@ if not do_grid and bt is not None:
         st.warning("Backtest returned no data (possibly insufficient history).")
         st.stop()
 
-    st.subheader("📈 Metrics")
+    st.subheader("Metrics")
     dfm = bt_metrics.compute_backtest_metrics(bt)
     tab1, tab2 = st.tabs(["Overview", "Bootstrap CI"])
     with tab1:
-        st.dataframe(_to_pandas(dfm), width="stretch")
+        st.dataframe(to_pandas(dfm), width="stretch")
     with tab2:
         run_bs = st.checkbox("Run Bootstrap (200 reps)", value=False)
         if run_bs:
             with st.spinner("Bootstrapping metrics…"):
                 dfb, q = metrics_bootstrap(bt, B=200, block=10, seed=42)
             st.write("Quantiles (5%, 50%, 95%)")
-            st.dataframe(_to_pandas(q), width="stretch")
+            st.dataframe(to_pandas(q), width="stretch")
 
 # ─────────────────────────────────────────────────────────────────────
 # Main plots
 # ─────────────────────────────────────────────────────────────────────
 if not do_grid and bt is not None:
-    st.subheader("📉 Equity & Drawdown")
+    st.subheader("Equity & Drawdown")
     show_plot(
         equity_and_drawdown(bt["dates"], bt["equity"], title="Equity & Drawdown"),
         key=_bt_key("equity-dd"),
@@ -710,7 +635,7 @@ if not do_grid and bt is not None:
                 key=_bt_key("dd"),
             )
 
-    st.subheader("⚖️ Weights & Turnover")
+    st.subheader("Weights & Turnover")
     show_plot(
         plot_weights_heatmap(
             bt["dates"], bt["tickers"], bt["weights"], title="Weights (rebalance steps)"
@@ -718,7 +643,7 @@ if not do_grid and bt is not None:
         key=_bt_key("weights-heatmap"),
     )
 
-    dates_to, vals_to = _ensure_turnover_with_drift(bt, df_ret_wide)
+    dates_to, vals_to = ensure_turnover_with_drift(bt, df_ret_wide)
     if vals_to.size > 0 and len(dates_to) == vals_to.size:
         fig = plot_turnover(dates_to, vals_to, title="Turnover at Rebalance")
         show_plot(fig, key=_bt_key("turnover"))
@@ -737,7 +662,7 @@ if not do_grid and bt is not None:
 aln = None
 
 if not do_grid and bt is not None:
-    st.subheader("📊 Attribution")
+    st.subheader("Attribution")
 
     # 1) Align returns to bt dates and expand rebalance weights to daily
     try:

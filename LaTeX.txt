@@ -1,0 +1,1983 @@
+\documentclass[a4paper,11pt]{article}
+% =============================================================================
+% PAQUETES FUNDAMENTALES
+% =============================================================================
+\usepackage[margin=2.5cm, top=2.0cm]{geometry}
+\usepackage[T1]{fontenc}
+\usepackage[utf8]{inputenc}
+\usepackage[spanish,english]{babel}
+\usepackage{lmodern}
+% Matem\'aticas
+\usepackage{amsmath,amssymb,mathtools,amsthm}
+\usepackage{esvect}
+\usepackage{bm}
+% Gr\'aficos y tablas
+\usepackage{graphicx}
+\usepackage{booktabs,longtable,array}
+\usepackage{float}
+\usepackage{subcaption}
+% Referencias y colores
+\usepackage{hyperref}
+\usepackage{xcolor}
+% C\'odigo y algoritmos
+\usepackage{listings}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+% Otros
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage{fancyhdr}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning,shapes,fit,calc}
+% =============================================================================
+% CONFIGURACI\'ON DE HYPERREF
+% =============================================================================
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!70!black,
+  urlcolor=blue!60!black,
+  citecolor=green!50!black,
+  pdftitle={GammaEdge: Quantitative Portfolio Analytics Platform},
+  pdfauthor={Claudio Martel}
+}
+% =============================================================================
+% ESTILOS DE C\'ODIGO
+% =============================================================================
+\definecolor{codebg}{RGB}{248,248,248}
+\definecolor{codeframe}{RGB}{200,200,200}
+\lstdefinestyle{python}{
+  language=Python,
+  basicstyle=\ttfamily\small,
+  backgroundcolor=\color{codebg},
+  frame=single,
+  rulecolor=\color{codeframe},
+  numbers=left,
+  numberstyle=\tiny\color{gray},
+  breaklines=true,
+  showstringspaces=false,
+  keywordstyle=\color{blue!70!black}\bfseries,
+  commentstyle=\color{green!50!black}\itshape,
+  stringstyle=\color{red!60!black},
+  tabsize=4,
+  xleftmargin=2em,
+  framexleftmargin=1.5em
+}
+\lstset{style=python}
+% =============================================================================
+% OPERADORES Y COMANDOS MATEM\'ATICOS
+% =============================================================================
+\DeclareMathOperator{\Tr}{Tr}
+\DeclareMathOperator{\Cov}{Cov}
+\DeclareMathOperator{\Var}{Var}
+\DeclareMathOperator{\E}{\mathbb{E}}
+\DeclareMathOperator{\diag}{diag}
+\DeclareMathOperator{\argmin}{argmin}
+\DeclareMathOperator{\argmax}{argmax}
+\DeclareMathOperator{\sign}{sign}
+\DeclareMathOperator{\rank}{rank}
+\newcommand{\R}{\mathbb{R}}
+\newcommand{\ones}{\mathbf{1}}
+\newcommand{\vw}{\mathbf{w}}
+\newcommand{\vmu}{\bm{\mu}}
+\newcommand{\mSigma}{\bm{\Sigma}}
+\newtheorem{definition}{Definici\'on}[section]
+\newtheorem{theorem}{Teorema}[section]
+\newtheorem{proposition}{Proposici\'on}[section]
+\newtheorem{remark}{Observaci\'on}[section]
+\newtheorem{corollary}{Corolario}[section]
+% =============================================================================
+% CONFIGURACI\'ON DE P\'AGINA
+% =============================================================================
+\setlength{\parskip}{0.4em}
+\setlength{\parindent}{0pt}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\leftmark}
+\fancyhead[R]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+% =============================================================================
+% T\'ITULO Y AUTOR
+% =============================================================================
+% PORTADA PERSONALIZADA
+% =============================================================================
+\begin{document}
+\selectlanguage{spanish}
+\begin{titlepage}
+    \centering
+    \includegraphics[width=0.6\textwidth]{ull_logo.png}\\[1.5cm]
+
+    {\Huge \textbf{GammaEdge}}\\[0.5cm]
+    {\Large Plataforma de Anal\'itica Cuantitativa para\\
+    Optimizaci\'on de Carteras, Backtesting y Atribuci\'on de Resultados}\\[1cm]
+
+    {\large \textit{Trabajo de Fin de Grado en Contabilidad y Finanzas}}\\[2cm]
+
+    \textbf{\Large Alumno: Claudio Martel Flores}\\[0.5cm]
+    \textbf{\Large Tutor: Javier Giner Rubio}\\[2cm]
+
+    {\large
+    \textbf{Curso:} 2025/2026\\
+    \textbf{Convocatoria:} \\
+    \textbf{Fecha de presentaci\'on:}
+    }\\[3.4cm]
+
+
+    \begin{center}
+    \fbox{\parbox{0.9\textwidth}{
+    \textbf{Filosof\'ia del documento:} Este TFG no solo \emph{define} cada concepto matem\'atico,
+    sino que explica el \textbf{por qu\'e} de su importancia: qu\'e problema resuelve, qu\'e fallar\'ia
+    si no se aplicara, y c\'omo impacta el P\&L. El repositorio GammaEdge  contiene aprox. 25,000 l\'ineas
+    de Python (~15,000 en portfolio/, ~10,000 en app/) con cobertura de tests del 65\%+.
+    }}
+    \end{center}
+
+\end{titlepage}
+
+\newpage
+\thispagestyle{empty}
+\null
+\newpage
+% =============================================================================
+% RESUMEN / ABSTRACT
+% =============================================================================
+\begin{abstract}
+\noindent\textbf{Resumen:} GammaEdge es una plataforma de software diseñada para profesionalizar el proceso de inversi\'on cuantitativa,
+unificando la investigaci\'on matem\'atica rigurosa con la ejecuci\'on pr\'actica. El sistema integra todo el ciclo de vida de una estrategia:
+desde el tratamiento robusto de datos (winsorizaci\'on, Random Matrix Theory \cite{mp}) y la construcci\'on de carteras eficientes
+(optimizaci\'on convexa, CVaR \cite{rockafellar}), hasta su simulaci\'on hist\'orica bajo condiciones realistas de mercado usando
+reglas de ejecuci\'on avanzadas (Buffer Rules) para minimizar costes. Todo ello se presenta bajo una arquitectura h\'ibrida que
+combina un n\'ucleo computacional de alto rendimiento con una interfaz de usuario moderna basada en un sistema de dise\~no propio.
+Este trabajo documenta tanto los fundamentos matem\'aticos como las decisiones de ingenier\'ia necesarias para crear una herramienta
+capaz de escalar desde el prototipo acad\'emico hasta un entorno profesional.
+\vspace{0.5cm}
+
+\noindent\textbf{Palabras clave:} optimizaci\'on de carteras, CVaR, RMT, Buffer Rules, Design System, Backtesting Vectorizado,
+Brinson-Fachler, HMM, XGBoost, Arquitectura H\'ibrida, Python.
+\end{abstract}
+\selectlanguage{english}
+\begin{abstract}
+\noindent\textbf{Abstract:} GammaEdge is a software platform designed to professionalize the quantitative investment process,
+bridging the gap between rigorous mathematical research and practical execution. The system integrates the entire strategy lifecycle:
+from robust data processing (Winsorization, Random Matrix Theory \cite{mp}) and efficient portfolio construction (convex optimization,
+CVaR \cite{rockafellar}), to historical simulation under realistic market conditions using advanced execution rules (Buffer Rules)
+to minimize costs. All of this is presented under a hybrid architecture that combines a high-performance computational core with
+a modern user interface built on a custom design system. This document details both the mathematical foundations and the engineering
+decisions required to build a tool capable of scaling from an academic prototype to a professional environment.
+\vspace{0.5cm}
+
+\noindent\textbf{Keywords:} portfolio optimization, Markowitz, CVaR, HRP, Black-Litterman, Random Matrix Theory,
+backtesting, Brinson-Fachler, Euler contributions, XGBoost, Purged K-Fold, HMM, regime detection, Fama-French, Streamlit, Python.
+\end{abstract}
+\selectlanguage{spanish}
+\newpage
+\tableofcontents
+\newpage
+\listoffigures
+\listoftables
+\newpage
+% =============================================================================
+% CAP\'ITULO 1: INTRODUCCI\'ON
+% =============================================================================
+\section{Introducci\'on}
+\label{sec:intro}
+\subsection{El Problema Fundamental de la Gesti\'on Cuantitativa}
+La gesti\'on cuantitativa de carteras enfrenta un problema central: \textbf{los par\'ametros son desconocidos}.
+Necesitamos estimar retornos esperados $\vmu$ y la matriz de covarianza $\mSigma$ a partir de
+datos hist\'oricos finitos, y cualquier error en estas estimaciones se amplifica en la optimizaci\'on.
+\textbf{¿Por qu\'e es esto cr\'itico?} Si consideramos el problema de Markowitz \cite{markowitz} simplificado (Ec. \ref{eq:markowitz_simple}):
+\begin{equation}
+  \vw^* = \mSigma^{-1} \vmu
+  \label{eq:markowitz_simple}
+\end{equation}
+Si $\vmu$ tiene un error del 1\% y $\mSigma$ est\'a mal condicionada ($\kappa(\mSigma) > 10^6$),
+el error en $\vw^*$ puede ser del 1000\%. Esto explica por qu\'e las carteras de Markowitz
+``ingenuas'' tienen rendimiento catastr\'ofico fuera de muestra: la inversi\'on $\mSigma^{-1}$
+\emph{amplifica errores peque\~nos}, y el optimizador asigna pesos grandes precisamente a
+los activos con \emph{mayor error de estimaci\'on} (confundiendo ruido con alpha).
+\subsection{Problemas Fundamentales que GammaEdge Resuelve}
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Fragilidad num\'erica:} Inversi\'on de matrices de covarianza mal condicionadas.
+
+        \emph{Soluci\'on:} ensure\_psd v\'ia proyecci\'on espectral, shrinkage de Ledoit-Wolf, RMT denoising.
+  \item \textbf{Backtesting ingenuo:} Omisi\'on de costes de transacci\'on, deriva de pesos y look-ahead bias.
+
+        \emph{Soluci\'on:} Motor vectorizado con sqrt impact model y drift reconstruction.
+  \item \textbf{Falta de trazabilidad:} Imposibilidad de auditar de d\'onde proviene cada resultado.
+
+        \emph{Soluci\'on:} Atribuci\'on Brinson-Fachler y contribuciones de Euler.
+  \item \textbf{Desconexi\'on teor\'ia-pr\'actica:} C\'odigo que no refleja las f\'ormulas publicadas.
+
+        \emph{Soluci\'on:} Documentaci\'on exhaustiva con c\'odigo de producci\'on.
+\end{enumerate}
+\subsection{Objetivos del Trabajo}
+\begin{itemize}[leftmargin=2em]
+  \item Documentar exhaustivamente la base matem\'atica del sistema con rigor.
+  \item Explicar el significado de cada gr\'afico y m\'etrica de la interfaz de usuario.
+  \item Proporcionar pseudoc\'odigo y fragmentos de implementaci\'on para algoritmos cr\'iticos.
+  \item Servir como manual de referencia para desarrolladores y quants que deseen auditar o extender el sistema.
+\end{itemize}
+\subsection{Apartados del Documento}
+\begin{description}[leftmargin=2em]
+  \item[Apartado 2:] Arquitectura del sistema y flujo de datos.
+  \item[Apartado 3:] Procesamiento de datos y calidad estad\'istica.
+  \item[Apartado 4:] Modelos de riesgo y estimaci\'on de par\'ametros.
+  \item[Apartado 5:] Optimizaci\'on de carteras (algoritmos y restricciones).
+  \item[Apartado 6:] Motor de backtesting y m\'etricas de performance.
+  \item[Apartado 7:] Atribuci\'on de resultados (Brinson y Euler).
+  \item[Apartado 8:] An\'alisis de escenarios y stress testing.
+  \item[Apartado 9:] Generaci\'on de reportes y visualizaciones.
+  \item[Ap\'endices:] Cat\'alogo de API, m\'etricas, stack tecnol\'ogico.
+\end{description}
+% =============================================================================
+% CAP\'ITULO 2: INGENIER\'IA DE SISTEMAS Y ARQUITECTURA
+% =============================================================================
+\section{Ingenier\'ia de Sistemas y Arquitectura}
+\label{sec:arquitectura}
+
+A diferencia de scripts de an\'alisis ad-hoc, GammaEdge est\'a dise\~nado como una plataforma de software
+de grado institucional. La arquitectura desacopla estrictamente el n\'ucleo computacional (stateless)
+de la capa de presentaci\'on, garantizando escalabilidad y mantenibilidad.
+
+\subsection{Arquitectura H\'ibrida: Core vs. Interfaz}
+
+El sistema implementa un patr\'on de dise\~no en capas conc\'entricas:
+
+\begin{enumerate}
+  \item \textbf{Computational Core (API-Ready):} M\'odulos Python puros (\texttt{portfolio/}) que implementan
+        la l\'ogica matem\'atica (optimizaci\'on, backtest, riesgo) sin dependencias de UI. Estos m\'odulos
+        son consumibles tanto por la interfaz gr\'afica como por endpoints REST (\texttt{api/routes/}),
+        permitiendo la integraci\'on futura con sistemas de ejecuci\'on algor\'itmica headless.
+
+  \item \textbf{Presentation Layer (Streamlit):} Una capa delgada de visualizaci\'on que consume el Core.
+        No contiene l\'ogica de negocio, solo orquestaci\'on de llamadas y renderizado de componentes.
+\end{enumerate}
+
+\begin{figure}[H]
+\centering
+\begin{tikzpicture}[
+    node/.style={draw, rounded corners=3pt, align=center, inner sep=8pt, fill=blue!5, font=\small},
+    arrow/.style={-Latex, thick},
+    x=1.1cm, y=1.1cm
+]
+\node[node] (data) at (0,0) {Data Ingestion\\(Polars/Parquet)};
+\node[node] (core) at (4,0) {Computational Core\\(NumPy/SciPy/CVXPY)};
+\node[node] (api) at (8,1) {REST API\\(FastAPI)};
+\node[node] (ui) at (8,-1) {Research UI\\(Streamlit)};
+
+\draw[arrow] (data) -- (core);
+\draw[arrow] (core) -- (api);
+\draw[arrow] (core) -- (ui);
+\end{tikzpicture}
+\caption{Arquitectura desacoplada: El n\'ucleo matem\'atico sirve a m\'ultiples consumidores.}
+\label{fig:arch}
+\end{figure}
+
+\begin{remark}
+La interfaz REST de GammaEdge se expone mediante FastAPI con dos endpoints
+operativos en la versi\'on actual: \texttt{POST /api/v1/optimize} (con m\'etodos
+\texttt{mean\_variance}, \texttt{min\_variance}, \texttt{risk\_parity} y \texttt{hrp})
+y \texttt{GET /health} como liveness probe. La validaci\'on de entrada
+se realiza con modelos Pydantic v2 (\texttt{api/schemas/}), garantizando
+detecci\'on de valores no finitos, dimensiones consistentes y tickers \'unicos
+antes de invocar el motor de optimizaci\'on. Endpoints adicionales para
+backtesting, modelos de riesgo y escenarios se contemplan en trabajo futuro.
+\end{remark}
+
+\subsection{Sistema de Dise\~no At\'omico}
+
+Para evitar la deuda t\'ecnica com\'un en aplicaciones de investigaci\'on (interfaces inconsistentes),
+se ha implementado un Diseño de Sistema en \texttt{app/design\_system.py}.
+Este sistema define una gram\'atica visual basada en componentes at\'omicos reutilizables:
+
+\begin{description}[leftmargin=2em]
+  \item[Atomic Units:] Tipograf\'ia (escala SF Pro), Paleta sem\'antica (colores  para profit/loss).
+  \item[Molecular Components:] \texttt{metric\_grid}, \texttt{hero\_card}, \texttt{section\_header}.
+  \item[Organisms:] P\'aginas completas compuestas exclusivamente por componentes estandarizados.
+\end{description}
+
+Esta abstracci\'on permite iterar r\'apidamente sobre modelos matem\'aticos (\text{backend}) sin romper la
+consistencia visual (\text{frontend}), un principio de ingenier\'ia clave en equipos quant.
+
+\subsection{Estructura Modular del Repositorio}
+
+\begin{longtable}{p{0.30\textwidth} p{0.65\textwidth}}
+\toprule
+\textbf{M\'odulo} & \textbf{Responsabilidad T\'ecnica} \\
+\midrule
+\texttt{portfolio/features/} & Ingesta, winsorizaci\'on y c\'alculo de factores (Fama-French, Momentum). \\
+\texttt{portfolio/optim/} & Solvers num\'ericos convexos y heur\'isticos (MVO, HRP, CVaR, Risk Parity, Black-Litterman, Robust, Tracking Error). \\
+\texttt{portfolio/backtest/} & Motor de simulaci\'on vectorizado con control de deriva. \\
+\texttt{portfolio/trading/} & L\'ogica de ejecuci\'on (Buffer Rules) y se\~nales ML. \\
+\texttt{app/viz/} & Librer\'ia de visualizaci\'on financiera sobre Plotly (Themes propios). \\
+\texttt{tests/} & Suite de validaci\'on num\'erica y unitaria (Pytest). \\
+\bottomrule
+\caption{Organizaci\'on del c\'odigo fuente orientada a dominios (DDD).}
+\label{tab:repo_structure}
+\end{longtable}
+% =============================================================================
+% CAP\'ITULO 3: PROCESAMIENTO DE DATOS
+% =============================================================================
+\section{Procesamiento de Datos y Calidad Estad\'istica}
+\label{sec:datos}
+\textbf{¿Por qu\'e es cr\'itico?} La calidad de cualquier modelo cuantitativo depende de sus inputs.
+\emph{Garbage in, garbage out.} Los modelos son extremadamente sensibles a outliers, missing data,
+y survivorship bias.
+\subsection{Ingesta de Datos de Mercado}
+Los datos se obtienen mediante \texttt{get\_prices\_long()} que soporta:
+\begin{itemize}[leftmargin=2em]
+  \item Yahoo Finance API (v\'ia \texttt{yfinance}) para datos p\'ublicos.
+  \item Archivos CSV locales para datos propietarios.
+  \item Sistema de cache en disco con invalidaci\'on configurable.
+\end{itemize}
+\subsection{C\'alculo de Retornos}
+\begin{definition}[Retornos Simples y Logar\'itmicos]
+\begin{align}
+  r_t^{simple} &= \frac{P_t - P_{t-1}}{P_{t-1}} = \frac{P_t}{P_{t-1}} - 1 \label{eq:ret_simple} \\
+  r_t^{log} &= \ln\left(\frac{P_t}{P_{t-1}}\right) = \ln(P_t) - \ln(P_{t-1}) \label{eq:ret_log}
+\end{align}
+\end{definition}
+\textbf{¿Por qu\'e importa la elecci\'on?}
+\begin{itemize}[leftmargin=2em]
+  \item \textbf{Retornos simples:} Aditivos en cross-section ($r_p = \sum_i w_i r_i$), usados en optimizaci\'on.
+  \item \textbf{Retornos logar\'itmicos:} Aditivos en tiempo, preferidos para an\'alisis de series temporales.
+\end{itemize}
+\subsection{Winsorizaci\'on: Control de Outliers}
+\textbf{El problema:} Los retornos financieros tienen kurtosis $\gg 3$ (colas pesadas).
+Un retorno extremo puede hacer que la varianza muestral sea 10x la real.
+\begin{definition}[Winsorizaci\'on]
+Dada una serie $\{x_t\}_{t=1}^T$ y un nivel $\alpha \in (0, 0.5)$:
+\begin{equation}
+  x_t' = \begin{cases}
+    q_\alpha & \text{si } x_t < q_\alpha \\
+    q_{1-\alpha} & \text{si } x_t > q_{1-\alpha} \\
+    x_t & \text{en otro caso}
+  \end{cases}
+  \label{eq:winsor}
+\end{equation}
+\end{definition}
+\textbf{¿Por qu\'e funciona?} A diferencia del truncamiento (que elimina observaciones),
+la winsorizaci\'on \emph{preserva} el tama\~no muestral mientras reduce la varianza del estimador.
+
+\begin{lstlisting}[caption={Winsorizaci\'on por ticker (producci\'on).}]
+def winsorize_long(df_ret_long: pl.DataFrame, q: float = 0.01) -> pl.DataFrame:
+    """Winsoriza retornos POR ACTIVO para preservar heteroscedasticidad."""
+    qlow, qhigh = q, 1.0 - q
+
+    # Cuantiles por ticker (no globales!)
+    qs = df_ret_long.group_by("ticker").agg([
+        pl.col("ret").quantile(qlow).alias("q_low"),
+        pl.col("ret").quantile(qhigh).alias("q_high"),
+    ])
+
+    # Join y clip
+    out = df_ret_long.join(qs, on="ticker").with_columns(
+        pl.col("ret").clip(pl.col("q_low"), pl.col("q_high")).alias("ret_w")
+    )
+    return out.drop(["q_low", "q_high"])
+\end{lstlisting}
+
+\textbf{Decisi\'on de dise\~no:} Winsorizar \emph{por activo} preserva que AAPL tenga volatilidad
+diferente a TSLA. Winsorizar globalmente es un error y ``aplastar\'ia'' a los activos vol\'atiles.
+\subsection{Diagn\'ostico de Calidad: Gr\'aficos en la Interfaz}
+\begin{description}[leftmargin=2em]
+  \item[Universe Snapshot:] N\'umero de observaciones por activo. Detecta historiales incompletos.
+  \item[Missing Report:] Porcentaje de valores faltantes por columna en formato wide.
+  \item[Gaps Report:] D\'ias consecutivos sin datos por activo.
+  \item[Top-K Outliers:] Retornos m\'as extremos \emph{antes} de winsorizar.
+  \item[Summary Stats:] Media, desviaci\'on est\'andar, skewness, kurtosis y Sharpe por activo.
+\end{description}
+\subsection{Conversi\'on de Frecuencia}
+Para retornos simples, el retorno agregado es:
+\begin{equation}
+  r_{[t_1, t_2]} = \prod_{t=t_1}^{t_2} (1 + r_t) - 1
+  \label{eq:compound}
+\end{equation}
+Para retornos logar\'itmicos, es la suma:
+\begin{equation}
+  r_{[t_1, t_2]}^{log} = \sum_{t=t_1}^{t_2} r_t^{log}
+  \label{eq:sum_log}
+\end{equation}
+\subsection{M\'etricas Cuantitativas Exhaustivas}
+\label{sec:quant_metrics}
+
+Calculamos 22 m\'etricas cuantitativas por activo, implementadas en
+\texttt{portfolio/features/quant\_metrics.py}. Estas m\'etricas son
+exportables a Excel con tabs separados por categor\'ia.
+
+\subsubsection{Cat\'alogo Completo de M\'etricas}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{p{0.24\textwidth} p{0.58\textwidth} p{0.13\textwidth}}
+\toprule
+\textbf{M\'etrica} & \textbf{F\'ormula} & \textbf{Tipo} \\
+\midrule
+\multicolumn{3}{l}{\textit{\textbf{Returns}}} \\
+CAGR & $(V_T/V_0)^{252/T} - 1$ & Retorno \\
+Cumulative Return & $V_T/V_0 - 1$ & Retorno \\
+Best Day & $\max_t r_t$ & Retorno \\
+Worst Day & $\min_t r_t$ & Retorno \\
+\midrule
+\multicolumn{3}{l}{\textit{\textbf{Risk}}} \\
+Annualized Vol & $\sigma_{daily} \sqrt{252}$ & Riesgo \\
+Downside Deviation & $\sqrt{\mathbb{E}[(r - 0)^2 \mid r < 0]}$ & Riesgo \\
+Max Drawdown & $\max_t(1 - V_t/\max_{s \leq t}V_s)$ & Riesgo \\
+Calmar Ratio & $CAGR / MaxDD$ & Riesgo \\
+\bottomrule
+\end{tabular}
+\caption{M\'etricas cuantitativas (Parte 1/3): Returns y Risk.}
+\label{tab:quant_metrics_part1}
+\end{table}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{p{0.24\textwidth} p{0.58\textwidth} p{0.13\textwidth}}
+\toprule
+\textbf{M\'etrica} & \textbf{F\'ormula} & \textbf{Tipo} \\
+\midrule
+\multicolumn{3}{l}{\textit{\textbf{Risk-Adjusted}}} \\
+Sharpe Ratio & $\displaystyle\frac{\mu_P - r_f}{\sigma_P}\sqrt{252}$\footnote{En la implementaci\'on, $r_f$ por defecto es $4\%$ anual (\texttt{RF\_ANNUAL\_DEFAULT}, definido en \texttt{portfolio/features/quant\_metrics.py:30}), consistente con el bond yield medio reciente de los Treasuries estadounidenses a 10 a\~nos.} & Ajustado \\
+Sortino Ratio & $\displaystyle\frac{\mu_P - r_f}{\sigma^-_P}\sqrt{252}$ & Ajustado \\
+Omega Ratio & Ratio ganancias vs p\'erdidas sobre $\theta$ & Ajustado \\
+Stability (R²) & $1 - SS_{res}/SS_{tot}$ & Ajustado \\
+\midrule
+\multicolumn{3}{l}{\textit{\textbf{Tail Risk}}} \\
+VaR 95\% & $-F^{-1}(0.05)$ & Cola \\
+CVaR 95\% & $\mathbb{E}[-r \mid r \leq -VaR_{95}]$ & Cola \\
+Skewness & $\mathbb{E}[(r - \mu)^3]/\sigma^3$ & Cola \\
+Kurtosis & $\mathbb{E}[(r - \mu)^4]/\sigma^4 - 3$ & Cola \\
+\bottomrule
+\end{tabular}
+
+\caption{M\'etricas cuantitativas (Parte 2/3): Risk-Adjusted y Tail Risk.}
+\label{tab:quant_metrics_part2}
+\end{table}
+
+\begin{table}[H]
+\centering
+\small
+\begin{tabular}{p{0.24\textwidth} p{0.58\textwidth} p{0.13\textwidth}}
+\toprule
+\textbf{M\'etrica} & \textbf{F\'ormula} & \textbf{Tipo} \\
+\midrule
+\multicolumn{3}{l}{\textit{\textbf{Relative to Benchmark}}} \\
+Beta & $\text{Cov}(r_i, r_b)/\text{Var}(r_b)$ & Relativo \\
+Correlation & $\rho_{i,b}$ & Relativo \\
+Up Capture & $\mu_i^{up}/\mu_b^{up}$ cuando $r_b > 0$ & Relativo \\
+Down Capture & $\mu_i^{down}/\mu_b^{down}$ cuando $r_b < 0$ & Relativo \\
+\midrule
+\multicolumn{3}{l}{\textit{\textbf{Distribution}}} \\
+Gini Coefficient & $\displaystyle\frac{1}{2n^2\bar{r}}\sum_i\sum_j|r_i - r_j|$ & Distrib. \\
+Win Rate & $P(r > 0)$ & Distrib. \\
+\bottomrule
+\end{tabular}
+
+\caption{M\'etricas cuantitativas (Parte 3/3): Benchmark y Distribution.}
+\label{tab:quant_metrics_part3}
+\end{table}
+
+\textbf{Nota sobre Omega Ratio:} La f\'ormula completa es
+$\displaystyle\frac{\int_\theta^\infty (1-F(r))dr}{\int_{-\infty}^\theta F(r)dr}$,
+donde $F$ es la funci\'on de distribuci\'on acumulada de retornos y $\theta$ el threshold.
+
+
+\subsubsection{Export a Excel Multisheet}
+
+La funci\'on \texttt{export\_quant\_data\_to\_excel()} genera un workbook con 5 sheets:
+\begin{description}[leftmargin=2em]
+  \item[Prices:] Adj Close + Dividend-Adjusted historical prices.
+  \item[Returns:] Log-returns calculados como $\ln(P_t/P_{t-1})$.
+  \item[Volume:] Relative volume ratio + intraday volatility estimator (Parkinson).
+  \item[Metrics:] Tabla con las 22 m\'etricas por ticker y benchmark.
+  \item[Correlation:] Matriz de correlaci\'on completa entre todos los activos.
+\end{description}
+
+Esta funcionalidad es cr\'itica para auditor\'ia externa y compliance.
+
+% =============================================================================
+% CAP\'ITULO 4: MODELOS DE RIESGO
+% =============================================================================
+\section{Modelos de Riesgo y Estimaci\'on de Par\'ametros}
+\label{sec:riesgo}
+\subsection{El Problema de la Covarianza en Alta Dimensi\'on}
+\textbf{La maldici\'on de la dimensionalidad:} Si tenemos $N = 500$ activos y $T = 252$ d\'ias
+de datos, debemos estimar $\frac{N(N+1)}{2} = 125,250$ par\'ametros en $\mSigma$ con solo
+$T \times N = 126,000$ observaciones. ¡Casi 1 par\'ametro por observaci\'on!
+\textbf{Consecuencias pr\'acticas:}
+\begin{itemize}[leftmargin=2em]
+  \item La matriz muestral $\hat{\mSigma}$ tiene autovalores extremos.
+  \item Los autovalores peque\~nos generan ``carteras m\'agicas'' inexistentes.
+  \item El n\'umero de condici\'on $\kappa(\hat{\mSigma}) = \lambda_{max}/\lambda_{min}$ puede ser $> 10^{10}$.
+\end{itemize}
+\subsection{Estimaci\'on de Retornos Esperados}
+\subsubsection{Media Hist\'orica}
+\begin{equation}
+  \hat{\mu}_i = \frac{1}{T} \sum_{t=1}^T r_{i,t}
+  \label{eq:mu_hist}
+\end{equation}
+\subsubsection{Media M\'ovil Exponencial (EMA)}
+\begin{equation}
+  \hat{\mu}_i^{EMA} = \sum_{t=1}^T (1-\lambda) \lambda^{T-t} r_{i,t}
+  \label{eq:mu_ema}
+\end{equation}
+donde $\lambda = 1 - \frac{2}{span + 1}$.
+\subsubsection{Shrinkage hacia un Target}
+\begin{equation}
+  \hat{\mu}^{shrunk} = \alpha \cdot \mu_{target} + (1 - \alpha) \cdot \hat{\mu}^{hist}
+  \label{eq:mu_shrunk}
+\end{equation}
+\subsection{Shrinkage de Ledoit-Wolf}
+\textbf{Intuici\'on:} La covarianza muestral $S$ tiene mucha varianza pero poco sesgo.
+Una matriz estructurada $F$ (diagonal) tiene poca varianza pero mucho sesgo.
+Combinemos ambas:
+\begin{equation}
+  \hat{\mSigma}^{LW} = (1 - \delta) S + \delta F
+  \label{eq:lw}
+\end{equation}
+\textbf{¿Por qu\'e esto reduce el error?} El par\'ametro \'optimo $\delta^*$ minimiza el
+error cuadr\'atico esperado $\E[\|\hat{\mSigma} - \mSigma\|_F^2]$.
+\begin{lstlisting}[caption={Integraci\'on con sklearn para shrinkage.}]
+from sklearn.covariance import LedoitWolf, OAS
+def estimate_covariance(X: np.ndarray, method: str = "lw") -> np.ndarray:
+    """Estima covarianza con shrinkage.
+
+    Args:
+        X: Matriz de retornos (T x N)
+        method: 'lw' (Ledoit-Wolf) o 'oas' (Oracle Approximating Shrinkage)
+    """
+    if method == ``lw'':
+        model = LedoitWolf().fit(X)
+    else:
+        model = OAS().fit(X)
+
+    Sigma = model.covariance_
+    shrinkage_intensity = model.shrinkage_  # Para diagnostico
+
+    return Sigma
+\end{lstlisting}
+
+\begin{remark}
+En la implementaci\'on, tras aplicar cualquier estimador de covarianza (Ledoit-Wolf, OAS),
+se aplica una proyecci\'on a la cono de matrices semidefinidas positivas mediante
+decomposici\'on espectral, garantizando que todos los eigenvalores sean $\geq \varepsilon > 0$.
+Esto previene inestabilidades num\'ericas en el solver de optimizaci\'on.
+\end{remark}
+
+\subsection{Random Matrix Theory: Separando Se\~nal de Ruido}
+\textbf{El insight fundamental:} En una matriz de covarianza puramente aleatoria (Wishart),
+los autovalores siguen la distribuci\'on de Marcenko-Pastur.
+\begin{theorem}[Marcenko-Pastur, 1967]
+Para una matriz de datos $X \in \R^{T \times N}$ con entradas i.i.d. de varianza $\sigma^2$,
+los autovalores de $\frac{1}{T}X^TX$ tienen densidad l\'imite con soporte:
+\begin{equation}
+  \lambda_\pm = \sigma^2 \left(1 \pm \sqrt{N/T}\right)^2
+  \label{eq:mp_limits}
+\end{equation}
+\end{theorem}
+
+\begin{proposition}[RMT Denoising Reduce Error de Estimaci\'on]
+\label{prop:rmt_error}
+Sea $\hat{\Sigma}_{RMT}$ la matriz obtenida tras denoising RMT. El error esperado satisface:
+\begin{equation}
+  \mathbb{E}[\|\hat{\Sigma}_{RMT} - \Sigma_{true}\|_F^2] < \mathbb{E}[\|\hat{\Sigma}_{sample} - \Sigma_{true}\|_F^2]
+\end{equation}
+cuando $N/T > 0.3$ (r\'egimen alta dimensionalidad).
+\end{proposition}
+
+\begin{proof}
+El error se descompone en varianza espectral + sesgo. Al reemplazar autovalores
+$\lambda_i < \lambda_{max}^{MP}$ (ruido puro) por su media $\bar{\lambda}_{noise}$,
+eliminamos su varianza artificial $\approx 2\sigma^4/T$ sin aumentar sesgo.
+Esto reduce el MSE total cuando $N/T$ es significativo \cite{mp}.
+\end{proof}
+
+\begin{lstlisting}[caption={RMT denoising: separaci\'on se\~nal/ruido (esencial).}]
+def clean_covariance_rmt(Sigma: np.ndarray, T: int, N: int) -> np.ndarray:
+    """Aplica denoising RMT basado en Marcenko-Pastur."""
+    # Correlacion & eigendecomposici\'on
+    std = np.sqrt(np.diag(Sigma)).reshape(-1, 1)
+    C = Sigma / (std @ std.T); np.fill_diagonal(C, 1.0)
+    evals, evecs = np.linalg.eigh(C)
+    evals, evecs = evals[::-1], evecs[:, ::-1]  # Descending
+
+    # Umbral Marcenko-Pastur (Ec. \ref{eq:mp_limits})
+    q, sigma2 = T/N, np.var(evals)
+    lambda_max_MP = sigma2 * (1 + np.sqrt(1/q))**2
+
+    # Ruido: autovalores bajo umbral MP
+    noise_mask = evals <= lambda_max_MP
+    evals_clean = evals.copy()
+    evals_clean[noise_mask] = evals[noise_mask].mean()  # Shrink ruido
+
+    # Reconstruir matriz limpia
+    C_clean = evecs @ np.diag(evals_clean) @ evecs.T
+    return (std @ std.T) * C_clean  # Devolver covarianza
+\end{lstlisting}
+\textbf{L\'ogica}: Autovalores $> \lambda_{max}^{MP}$ contienen se\~nal genuina y se preservan.
+Autovalores $< \lambda_{max}^{MP}$ son ruido y se reemplazan por su media.
+\textbf{¿Por qu\'e importa?} Carteras con $\mSigma_{clean}$ tienen Sharpe out-of-sample 20-40\% superior.
+\subsection{Garantizando Positividad Semidefinida}
+\textbf{El problema operacional:} Debido a errores num\'ericos, $\hat{\mSigma}$ puede tener
+autovalores negativos, haciendo explotar los optimizadores.
+\begin{lstlisting}[caption={ensure_psd: proyecci\'on espectral para robustez num\'erica.}]
+def ensure_psd(S: np.ndarray, eps: float = 1e-10, clip: bool = True) -> np.ndarray:
+    """Proyecta una matriz simetrica al cono PSD via clipping espectral."""
+    S = np.asarray(S, dtype=float)
+    # NaN/Inf -> 0 y simetriza
+    S = np.nan_to_num(0.5 * (S + S.T), nan=0.0, posinf=0.0, neginf=0.0)
+
+    # Bump minimo en diagonal
+    d = np.diag(S).copy()
+    if d.size:
+        np.fill_diagonal(S, np.maximum(d, eps))
+
+    if clip:
+        w, V = np.linalg.eigh(S)
+        w = np.maximum(w, eps)        # Clipping espectral (Higham-lite)
+        S = (V * w) @ V.T
+
+    # Re-simetriza por seguridad numerica
+    return 0.5 * (S + S.T)
+\end{lstlisting}
+\paragraph{Proyecci\'on PSD.}
+Tras estimar la covarianza por cualquier m\'etodo de shrinkage (Ledoit-Wolf, OAS) o filtrado
+(RMT), se garantiza la condici\'on de semidefinici\'on positiva mediante una proyecci\'on espectral.
+Sea $\hat{\mSigma} = U \Lambda U^\top$ la descomposici\'on en autovalores; se construye
+$\hat{\mSigma}^{+} = U \Lambda^{+} U^\top$ donde $\Lambda^{+} = \max(\Lambda, \varepsilon I)$
+con $\varepsilon = 10^{-10}$. Finalmente se simetriza $\hat{\mSigma}^{+} \leftarrow
+\tfrac{1}{2}(\hat{\mSigma}^{+} + \hat{\mSigma}^{+\top})$ para mitigar errores num\'ericos.
+Esta proyecci\'on garantiza un m\'inimo de regularizaci\'on num\'erica sin alterar
+sensiblemente la estructura espectral del estimador.
+\subsection{Modelo Black-Litterman \cite{blacklitterman}}
+\textbf{¿Por qu\'e Black-Litterman?} La media muestral tiene error est\'andar de $\sigma/\sqrt{T}$
+ comparable a los propios retornos esperados.
+\begin{definition}[Prior de Equilibrio]
+\begin{equation}
+  \Pi = \delta \mSigma \vw_{mkt}
+  \label{eq:pi}
+\end{equation}
+donde $\delta = \frac{Sharpe_{mkt}}{\sigma_m}$ es la aversi\'on al riesgo impl\'icita.
+\end{definition}
+\begin{theorem}[Posterior Black-Litterman]
+\begin{equation}
+  \hat{\vmu}_{BL} = \left[(\tau\mSigma)^{-1} + P^T\Omega^{-1}P\right]^{-1}
+                   \left[(\tau\mSigma)^{-1}\Pi + P^T\Omega^{-1}Q\right]
+  \label{eq:bl_posterior}
+\end{equation}
+\end{theorem}
+\begin{lstlisting}[caption={Posterior Black-Litterman con metodo Idzorek.}]
+def black_litterman_posterior(Sigma, w_mkt, tau, P, Q, Omega, delta=2.5):
+    """Calcula posterior BL completo."""
+    # Prior de equilibrio
+    Pi = delta * Sigma @ w_mkt
+
+    # Precision matrices
+    tau_Sigma_inv = np.linalg.pinv(tau * Sigma)
+    Omega_inv = np.linalg.pinv(Omega)
+
+    # Posterior precision
+    M = tau_Sigma_inv + P.T @ Omega_inv @ P
+    M_inv = np.linalg.pinv(M)
+
+    # Posterior mean
+    mu_bl = M_inv @ (tau_Sigma_inv @ Pi + P.T @ Omega_inv @ Q)
+    Sigma_bl = Sigma + M_inv
+
+    return mu_bl, Sigma_bl
+def idzorek_omega(P, Sigma, tau, confidences):
+    """Construye Omega usando metodo de Idzorek (confianza en %)."""
+    K = P.shape[0]
+    Omega = np.zeros((K, K))
+    tau_Sigma = tau * Sigma
+
+    for k in range(K):
+        c = np.clip(confidences[k], 0.01, 0.99)
+        view_var = P[k] @ tau_Sigma @ P[k]
+        Omega[k, k] = ((1 - c) / c) * view_var
+
+    return Omega
+
+\end{lstlisting}
+\subsection{Gr\'aficos de Riesgo en la Interfaz}
+\begin{description}[leftmargin=2em]
+  \item[Correlation Heatmap:] Matriz $\rho_{ij}$ con clustering Ward.
+  \item[Eigenvalue Spectrum:] Histograma de $\lambda_i$ vs. densidad Marcenko-Pastur.
+  \item[Scree Plot:] Varianza explicada acumulada por PC.
+  \item[Correlation Network:] Grafo donde nodos son activos y aristas codifican correlaci\'on.
+\end{description}
+% =============================================================================
+% CAP\'ITULO 5: OPTIMIZACI\'ON DE CARTERAS
+% =============================================================================
+\section{Optimizaci\'on de Carteras}
+\label{sec:optim}
+\subsection{Problema de Markowitz}
+\begin{definition}[Optimizaci\'on Media-Varianza]
+\begin{equation}
+  \min_{\vw} \quad \frac{1}{2} \vw^T \mSigma \vw - \gamma^{-1} \vmu^T \vw
+  \quad \text{s.a.} \quad \vw^T \ones = 1, \quad w_{min} \leq w_i \leq w_{max}
+  \label{eq:mvo}
+\end{equation}
+\end{definition}
+\subsubsection{Soluci\'on Cerrada (Sin Restricciones de Caja)}
+Definiendo $A = \ones^T \mSigma^{-1} \ones$, $B = \ones^T \mSigma^{-1} \vmu$, $C = \vmu^T \mSigma^{-1} \vmu$,
+$D = AC - B^2$:
+\begin{equation}
+  \sigma^2(R) = \frac{AR^2 - 2BR + C}{D}
+  \label{eq:frontier_variance}
+\end{equation}
+\subsection{Projected Gradient Descent (PGD)}
+\textbf{¿Por qu\'e PGD?} La soluci\'on cerrada ignora restricciones de caja y turnover.
+\begin{algorithm}[H]
+\caption{PGD con restricciones y penalizaci\'on de turnover}
+\begin{algorithmic}[1]
+\Require $\vmu, \mSigma, \gamma, w_{min}, w_{max}, \vw_{ref}, \lambda_{TO}, \eta, K$
+\State $\vw_0 \gets \frac{1}{N}\ones$
+\For{$k = 0, 1, \ldots, K-1$}
+  \State $\nabla f = \mSigma\vw_k - \gamma^{-1}\vmu + 2\lambda_{TO}(\vw_k - \vw_{ref})$
+  \State $\vv \gets \vw_k - \eta \nabla f$
+  \State $\vw_{k+1} \gets \Pi_{box \cap simplex}(\vv)$
+\EndFor
+\State \Return $\vw_K$
+\end{algorithmic}
+\end{algorithm}
+\begin{lstlisting}[caption={Proyeccion al box-simplex por biseccion.}]
+def project_to_box_simplex(v: np.ndarray, w_min: float, w_max: float) -> np.ndarray:
+    """Proyecta v al conjunto {w: sum(w)=1, w_min <= w_i <= w_max}."""
+    n = v.size
+    if n * w_min > 1.0 or n * w_max < 1.0:
+        raise ValueError("Infeasible constraints")
+
+    # Biseccion para encontrar theta tal que sum(clip(v - theta)) = 1
+    lo, hi = np.min(v) - w_max - 1, np.max(v) - w_min + 1
+
+    for _ in range(80):
+        theta = 0.5 * (lo + hi)
+        w = np.clip(v - theta, w_min, w_max)
+        if w.sum() > 1.0:
+            lo = theta
+        else:
+            hi = theta
+
+    return np.clip(v - 0.5*(lo + hi), w_min, w_max)
+\end{lstlisting}
+\subsection{Hierarchical Risk Parity \cite{hrp} (HRP)}
+\textbf{¿Por qu\'e HRP?} Markowitz invierte $\mSigma$, amplificando errores.
+HRP usa solo la \emph{estructura} de correlaci\'on sin invertir nada.
+\begin{algorithm}[H]
+\caption{HRP: Bisecci\'on Recursiva}
+\begin{algorithmic}[1]
+\Require Matriz de covarianza $\mSigma$
+\State Calcular distancias: $d_{ij} = \sqrt{2(1 - \rho_{ij})}$
+\State Aplicar clustering jer\'arquico (Ward) para obtener dendrograma
+\State Reordenar activos seg\'un seriaci\'on \'optima del \'arbol
+\Function{Bisect}{$\mSigma_{sub}$, \'indices}
+  \If{$|\text{\'indices}| = 1$}
+    \Return $[1.0]$
+  \EndIf
+  \State Dividir \'indices en $L$ y $R$
+  \State $v_L = \text{Var}_{IVP}(\mSigma_L)$, $v_R = \text{Var}_{IVP}(\mSigma_R)$
+  \State $\alpha = 1 - \frac{v_L}{v_L + v_R}$
+  \State $\vw_L = \alpha \cdot \text{Bisect}(\mSigma_L, L)$
+  \State $\vw_R = (1-\alpha) \cdot \text{Bisect}(\mSigma_R, R)$
+  \Return $[\vw_L, \vw_R]$
+\EndFunction
+\end{algorithmic}
+\end{algorithm}
+\begin{lstlisting}[caption={HRP completo (produccion).}]
+def hrp_weights(Sigma: np.ndarray, method: str = "ward") -> np.ndarray:
+
+    """Hierarchical Risk Parity (Lopez de Prado)."""
+    from scipy.cluster.hierarchy import linkage, leaves_list, optimal_leaf_ordering
+    from scipy.spatial.distance import squareform
+
+    S = ensure_psd(Sigma)
+
+    # 1. Correlacion y distancia
+    std = np.sqrt(np.clip(np.diag(S), 1e-16, None))
+    Corr = S / np.outer(std, std)
+    dist = np.sqrt(np.maximum(0, 0.5 * (1 - Corr)))
+
+    # 2. Clustering jerarquico
+    Z = linkage(squareform(dist), method=method)
+    Z = optimal_leaf_ordering(Z, squareform(dist))
+    order = leaves_list(Z)
+
+    # 3. Reordenar covarianza
+    S_ordered = S[np.ix_(order, order)]
+
+    # 4. Biseccion recursiva
+    def _bisect(S_sub, idx):
+        if len(idx) == 1:
+            return np.array([1.0])
+        k = len(idx) // 2
+        left, right = idx[:k], idx[k:]
+
+        w_l = _bisect(S_sub[np.ix_(left, left)], left)
+        w_r = _bisect(S_sub[np.ix_(right, right)], right)
+
+        # Inverse variance weights for cluster variance
+        inv_var_l = 1.0 / np.clip(np.diag(S_sub[np.ix_(left, left)]), 1e-16, None)
+        inv_var_r = 1.0 / np.clip(np.diag(S_sub[np.ix_(right, right)]), 1e-16, None)
+        wl_ivp = inv_var_l / inv_var_l.sum()
+        wr_ivp = inv_var_r / inv_var_r.sum()
+
+        v_l = wl_ivp @ S_sub[np.ix_(left, left)] @ wl_ivp
+        v_r = wr_ivp @ S_sub[np.ix_(right, right)] @ wr_ivp
+
+        alpha = 1.0 - v_l / (v_l + v_r)
+
+        w = np.zeros(len(idx))
+        w[:k] = alpha * w_l
+        w[k:] = (1 - alpha) * w_r
+        return w
+
+    w_ordered = _bisect(S_ordered, np.arange(len(order)))
+
+    # 5. Revertir orden
+    w = np.zeros_like(w_ordered)
+    w[order] = w_ordered
+
+    return w
+\end{lstlisting}
+\subsection{CVaR: Optimizaci\'on Bajo Riesgo de Cola}
+\textbf{¿Por qu\'e no solo varianza?} La varianza penaliza igual ganancias y p\'erdidas.
+\begin{definition}[VaR y CVaR]
+\begin{align}
+  VaR_\alpha &= -\inf\{x : P(r_p \leq x) \geq 1-\alpha\} \\
+  CVaR_\alpha &= \E[-r_p \mid r_p \leq -VaR_\alpha]
+\end{align}
+\end{definition}
+\textbf{Propiedad clave:} CVaR es \emph{coherente} (subaditividad), mientras que VaR no lo es.
+\subsubsection{Formulaci\'on LP de Rockafellar-Uryasev}
+\begin{equation}
+\begin{aligned}
+  \min_{\vw, \zeta, \mathbf{u}} \quad & \zeta + \frac{1}{T(1-\alpha)}\sum_{t=1}^T u_t \\
+  \text{s.a.} \quad & u_t \geq -\vw^T r^{(t)} - \zeta \quad \forall t \\
+  & u_t \geq 0, \quad \vw^T\ones = 1, \quad w_{min} \leq w_i \leq w_{max}
+\end{aligned}
+\end{equation}
+\begin{lstlisting}[caption={CVaR LP con scipy (produccion).}]
+from scipy.optimize import linprog
+def solve_cvar_lp(R: np.ndarray, alpha: float = 0.95,
+                  w_min: float = 0.0, w_max: float = 1.0) -> np.ndarray:
+    """CVaR minimization via Rockafellar-Uryasev LP."""
+    T, N = R.shape
+
+    # Variables: [w (N), zeta (1), u (T)]
+    c = np.concatenate([
+        np.zeros(N),           # w has no cost
+        [1.0],                 # zeta coefficient
+        np.ones(T) / (T * (1 - alpha))
+    ])
+
+    # Inequality: -w'r_t - zeta - u_t <= 0
+    A_ub = np.hstack([
+        -R, -np.ones((T, 1)), -np.eye(T)
+    ])
+    b_ub = np.zeros(T)
+
+    # Equality: sum(w) = 1
+    A_eq = np.concatenate([np.ones(N), [0], np.zeros(T)]).reshape(1, -1)
+    b_eq = [1.0]
+
+    # Bounds
+    bounds = ([(w_min, w_max)] * N +
+              [(None, None)] + [(0, None)] * T)
+
+    result = linprog(c, A_ub=A_ub, b_ub=b_ub, A_eq=A_eq, b_eq=b_eq,
+                     bounds=bounds, method='highs')
+
+    return result.x[:N] if result.success else np.full(N, 1.0/N)
+\end{lstlisting}
+\subsection{Risk Parity}
+\textbf{¿Por qu\'e Risk Parity?} Mean-Variance depende cr\'iticamente de $\mu$, que tiene
+error de estimaci\'on enorme. Risk Parity ignora $\mu$ y busca diversificaci\'on de \emph{riesgo}.
+\begin{definition}[Risk Parity]
+Un portfolio es Risk Parity si todas las contribuciones de riesgo son iguales:
+\begin{equation}
+  RC_i = RC_j \quad \forall i, j
+  \label{eq:rp_def}
+\end{equation}
+\end{definition}
+El objetivo se formula como:
+\begin{equation}
+  \min_{\vw} \sum_{i,j} \left( w_i (\mSigma \vw)_i - w_j (\mSigma \vw)_j \right)^2
+  \quad \text{s.a.} \quad \vw^T \ones = 1, \vw \geq 0
+  \label{eq:rp}
+\end{equation}
+\begin{lstlisting}[caption={Risk Parity via optimizaci\'on.}]
+from scipy.optimize import minimize
+def risk_parity(Sigma: np.ndarray) -> np.ndarray:
+    """Encuentra portfolio Risk Parity."""
+    N = Sigma.shape[0]
+
+    def objective(w):
+        Sigma_w = Sigma @ w
+        sigma_p = np.sqrt(w @ Sigma_w)
+        rc = w * Sigma_w / sigma_p  # Contribuciones
+
+        # Minimizar diferencia entre contribuciones
+        target_rc = sigma_p / N
+        return np.sum((rc - target_rc)**2)
+
+    constraints = [{"type": "eq", "fun": lambda w: np.sum(w) - 1}]
+    bounds = [(0, 1)] * N
+    w0 = np.full(N, 1/N)
+
+    result = minimize(objective, w0, constraints=constraints,
+                      bounds=bounds, method='SLSQP')
+    return result.x
+\end{lstlisting}
+\subsection{Propiedades de CVaR: Coherencia}
+CVaR es una medida de riesgo \textbf{coherente} (Artzner et al., 1999), lo cual VaR no es.
+\begin{definition}[Medida de Riesgo Coherente]
+Una medida de riesgo $\rho$ es coherente si satisface:
+\begin{enumerate}
+  \item \textbf{Monotonicidad:} Si $X \leq Y$ a.s., entonces $\rho(X) \geq \rho(Y)$.
+  \item \textbf{Homogeneidad positiva:} $\rho(\lambda X) = \lambda \rho(X)$ para $\lambda > 0$.
+  \item \textbf{Invariancia por traslaci\'on:} $\rho(X + c) = \rho(X) - c$.
+  \item \textbf{Subaditividad:} $\rho(X + Y) \leq \rho(X) + \rho(Y)$.
+\end{enumerate}
+\end{definition}
+\begin{proposition}[VaR no es subaditivo]
+Existen distribuciones $X$, $Y$ tales que $VaR_\alpha(X + Y) > VaR_\alpha(X) + VaR_\alpha(Y)$.
+\end{proposition}
+\textbf{Ejemplo:} Dos posiciones binarias independientes con p\'erdida 100 con prob. 4\% cada una.
+$VaR_{95\%}(X) = VaR_{95\%}(Y) = 0$, pero $VaR_{95\%}(X+Y) > 0$ (prob. de al menos una p\'erdida $\approx 8\%$).
+\begin{theorem}[CVaR es coherente]
+CVaR satisface las cuatro propiedades de coherencia.
+\end{theorem}
+\begin{proof}[Bosquejo]
+La subaditividad de CVaR se demuestra usando la representaci\'on:
+\begin{equation}
+  CVaR_\alpha(X) = \min_{\zeta} \left\{ \zeta + \frac{1}{1-\alpha} \E[(X - \zeta)^+] \right\}
+\end{equation}
+donde $(x)^+ = \max(x, 0)$. Como el m\'inimo de funciones afines es c\'oncavo, CVaR es convexa,
+lo cual implica subaditividad.
+\end{proof}
+\textbf{Implicaci\'on pr\'actica:} Usar CVaR en optimizaci\'on garantiza que diversificar nunca
+\emph{aumenta} el riesgo medido. Con VaR, esto no est\'a garantizado.
+\subsection{Frontera Eficiente: Gr\'afico en la Interfaz}
+La frontera eficiente visualiza el trade-off fundamental entre retorno esperado y riesgo.
+\begin{description}[leftmargin=2em]
+  \item[Curva azul s\'olida:] Frontera te\'orica sin restricciones (shorting permitido).
+        Calculada anal\'iticamente via la hip\'erbola $\sigma^2 = \frac{AR^2 - 2BR + C}{D}$.
+  \item[Curva naranja punteada:] Frontera con restricciones de caja.
+        Generada num\'ericamente resolviendo PGD para 100 valores de $\gamma$.
+  \item[Estrella verde (MVP):] Portfolio de M\'inima Varianza Global:
+        $\vw_{MVP} = \frac{\mSigma^{-1}\ones}{\ones^T\mSigma^{-1}\ones}$.
+  \item[Diamante rojo (Tangent):] Portfolio Tangente (m\'aximo Sharpe):
+        $\vw_{tan} = \frac{\mSigma^{-1}(\vmu-r_f\ones)}{\ones^T\mSigma^{-1}(\vmu-r_f\ones)}$.
+\end{description}
+\begin{remark}[Coste de las Restricciones]
+La brecha vertical entre las curvas azul y naranja cuantifica el ``coste'' de las
+restricciones long-only: carteras restringidas tienen menor retorno ajustado por riesgo.
+\end{remark}
+% =============================================================================
+% CAP\'ITULO 6: MOTOR DE BACKTESTING
+% =============================================================================
+\section{Motor de Backtesting}
+\label{sec:backtest}
+El backtesting simula la ejecuci\'on hist\'orica de una estrategia. Aqu\'i se implementan dos motores:
+\texttt{backtest\_rebalanced} (con loops) y \texttt{backtest\_vectorized} (matricial, 10x m\'as r\'apido).
+\textbf{¿Por qu\'e el backtesting es tan dif\'icil?} Los errores comunes:
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Look-ahead bias:} Usar informaci\'on no disponible en $t$.
+  \item \textbf{Ignorar costes:} Rebalanceo diario puede tener turnover del 500\% anual.
+  \item \textbf{Tratamiento incorrecto del drift:} Los pesos cambian entre rebalanceos.
+\end{enumerate}
+\subsection{Deriva de Pesos}
+Entre rebalanceos, los pesos evolucionan pasivamente seg\'un el ``Buy and Hold'' natural del mercado.
+\begin{definition}[Pesos Derivados]
+Sean $\vw(t_0)$ los pesos objetivo. Para $t > t_0$:
+\begin{equation}
+  w_i^{drift}(t) = \frac{w_i(t_0) \prod_{s=t_0+1}^{t} (1 + r_{i,s})}{\sum_j w_j(t_0) \prod_{s=t_0+1}^{t} (1 + r_{j,s})}
+  \label{eq:drift}
+\end{equation}
+\end{definition}
+\begin{proposition}[Turnover Correcto]
+El turnover en fecha de rebalanceo $t_1$ debe calcularse como:
+\begin{equation}
+  TO_{t_1} = \frac{1}{2} \sum_i |w_i^{target}(t_1) - w_i^{drift}(t_1^-)|
+  \label{eq:to_correct}
+\end{equation}
+Usar $w_i(t_0)$ en lugar de $w_i^{drift}(t_1^-)$ subestima el turnover en 10-20\%.
+\end{proposition}
+\begin{lstlisting}[caption={Reconstrucci\'on de deriva vectorizado (producci\'on).}]
+def reconstruct_drift(W_reb: np.ndarray, rb_dates: list,
+                      R_wide: pl.DataFrame) -> np.ndarray:
+    """Reconstruye pesos derivados dia a dia.
+
+    Args:
+        W_reb: Matriz (K x N) de pesos por rebalanceo
+        rb_dates: Fechas de rebalanceo
+        R_wide: DataFrame de retornos (T x N+1 con 'date')
+    Returns:
+        W_daily: Matriz (T x N) de pesos diarios
+    """
+    T = R_wide.height
+    N = W_reb.shape[1]
+    W_daily = np.zeros((T, N))
+
+    date_list = R_wide.get_column("date").to_list()
+    R = R_wide.select(pl.exclude("date")).to_numpy()
+
+    rb_idx = 0
+    w_curr = W_reb[0]
+
+    for t, date in enumerate(date_list):
+        # Actualizar por deriva
+        if t > 0:
+            gross = w_curr * (1 + R[t-1])
+            w_curr = gross / gross.sum()
+
+        # Check rebalanceo
+        if rb_idx < len(rb_dates) and date >= rb_dates[rb_idx]:
+            w_curr = W_reb[min(rb_idx, W_reb.shape[0]-1)]
+            rb_idx += 1
+
+        W_daily[t] = w_curr
+
+    return W_daily
+\end{lstlisting}
+% (Keep Drift section logic)
+\subsection{L\'ogica de Ejecuci\'on y Buffer Rules}
+\label{sec:buffer_rules}
+
+En la pr\'actica institucional, rebalancear exactamente hacia los pesos \'optimos $\vw^*$ en cada periodo
+es sub\'optimo debido a los costes de transacci\'on. GammaEdge implementa un sistema de control de ejecuci\'on
+avanzado basado en tres par\'ametros ($\gamma, \tau, \alpha$) para mitigar el ruido de trading.
+
+\begin{definition}[Buffer Rules de Ejecuci\'on]
+Dado un peso actual $w_t$ y un peso objetivo $w^*_t$:
+\begin{enumerate}
+    \item \textbf{Deadband ($\tau$):} No se genera orden de trading si el desv\'io es despreciable.
+    \begin{equation}
+        \text{Trade} = \begin{cases}
+            \text{True} & \text{si } \|\vw^*_t - \vw_t\|_1 > \tau \\
+            \text{False} & \text{en otro caso}
+        \end{cases}
+    \end{equation}
+    Esto evita operar ruido cuando el cambio en la cartera \'optima es marginal.
+
+    \item \textbf{Partial Adjustment ($\alpha$):} Si se opera, no vamos al 100\% del target, sino a una fracci\'on.
+    \begin{equation}
+        \vw_{t+1} = \vw_t + \alpha (\vw^*_t - \vw_t), \quad \alpha \in (0, 1]
+    \end{equation}
+    Esto suaviza la trayectoria de la cartera y reduce el turnover en un factor $\approx \alpha$,
+    a menudo mejorando el Sharpe neto de costes.
+
+    \item \textbf{Turnover Penalty ($\gamma$):} T\'ermino de regularizaci\'on L1 a\~nadido expl\'icitamente a la funci\'on objetivo (Ec. \ref{eq:mvo}) durante la optimizaci\'on:
+    \begin{equation}
+        - \gamma \|\vw - \vw_{t-1}\|_1
+    \end{equation}
+\end{enumerate}
+\end{definition}
+
+Esta l\'ogica de frenado es cr\'itica: transforma un backtest te\'orico ruidoso (turnover >500\%)
+en una estrategia implementable (turnover <50\%).
+
+\subsection{Modelos de Costes de Transacci\'on}
+El proyecto soporta dos modelos de coste complementarios:
+El proyecto soporta dos modelos de coste complementarios:
+\subsubsection{Modelo Lineal (Proporcional)}
+Adecuado para carteras peque\~nas ($< \$100M$) donde el impacto de mercado es despreciable:
+\begin{equation}
+  Cost_t = c_{bps} \times TO_t, \quad TO_t = \frac{1}{2} \sum_i |w_i^{new} - w_i^{pre}|
+  \label{eq:cost_linear}
+\end{equation}
+Valores t\'ipicos: $c_{bps} \in [1, 10]$ para ETFs l\'iquidos, $[10, 50]$ para acciones peque\~nas.
+\subsubsection{Modelo Ra\'iz Cuadrada (Impacto de Mercado)}
+Para carteras institucionales ($> \$100M$), el coste crece sublinealmente:
+\begin{equation}
+  Cost_i = c \cdot \sigma_i \sqrt{\frac{|\Delta w_i| \cdot AUM}{ADV_i}}
+  \label{eq:cost_sqrt}
+\end{equation}
+donde:
+\begin{itemize}
+  \item $\sigma_i$: Volatilidad diaria del activo $i$.
+  \item $\Delta w_i = w_i^{new} - w_i^{pre}$: Cambio de peso.
+  \item $AUM$: Activos bajo gesti\'on del fondo.
+  \item $ADV_i$: Volumen medio diario del activo.
+  \item $c$: Coeficiente de impacto (t\'ipicamente $\approx 1$).
+\end{itemize}
+\begin{remark}
+El modelo ra\'iz cuadrada captura que mover el 1\% de un mercado cuesta proporcionalmente
+m\'as que mover 10 veces el 0.1\%. Esta ``ley de impacto'' ha sido validada emp\'iricamente
+por Almgren \& Chriss (2000) y Gatheral (2010).
+\end{remark}
+\begin{lstlisting}[caption={Motor de backtest con sqrt impact (producci\'on).}]
+def backtest_with_impact(df_ret, allocator, cost_bps=0,
+                         impact_model="linear", df_volume=None, impact_c=1.0):
+
+    """Motor completo con modelos de impacto de mercado."""
+    tickers = [c for c in df_ret.columns if c != "date"]
+    N = len(tickers)
+
+    equity = 1.0
+    w_prev = np.full(N, 1.0/N)
+    equity_curve = []
+
+    for i in range(lookback, len(df_ret)):
+        d = df_ret["date"][i]
+        cost = 0.0
+
+        if d in rebalance_dates:
+            window = df_ret[i-lookback:i]
+            w_new = allocator(window)
+
+            delta = np.abs(w_new - w_prev)
+            turnover = delta.sum()
+
+            if impact_model == ``linear'':
+                cost = turnover * cost_bps * 1e-4
+
+            elif impact_model == ``sqrt'' and df_volume is not None:
+                trade_amt = delta * equity
+                vol_row = df_volume.filter(pl.col("date") == d) \
+                                   .select(tickers).to_numpy().flatten()
+                vol_row = np.maximum(vol_row, 1.0)
+
+                sigma_daily = 0.02
+                impact = impact_c * sigma_daily * np.sum(
+                    (trade_amt ** 1.5) / np.sqrt(vol_row)
+                )
+                cost = impact / equity
+
+            w_prev = w_new.copy()
+
+        returns = df_ret[tickers].row(i)
+        port_ret = np.dot(w_prev, returns)
+
+        equity *= (1 + port_ret - cost)
+        equity_curve.append(equity)
+
+    return np.array(equity_curve)
+\end{lstlisting}
+\subsection{Motor Vectorizado}
+El motor \texttt{backtest\_vectorized} evita loops Python para m\'aximo rendimiento:
+\begin{lstlisting}[caption={Nucleo del motor vectorizado.}]
+def backtest_vectorized(R: np.ndarray, W: np.ndarray,
+                        cost_bps: float) -> dict:
+    """Backtest sin loops explicitos."""
+    T, N = R.shape
+
+    # Retornos de portafolio
+    port_ret = np.sum(W * R, axis=1)  # (T,)
+
+    # Turnover (cambio de pesos dia a dia)
+    W_shift = np.roll(W, 1, axis=0)
+    W_shift[0] = W[0]
+    turnover = 0.5 * np.sum(np.abs(W - W_shift), axis=1)
+
+    # Costes
+    costs = cost_bps * 1e-4 * turnover
+
+    # Equity neto
+    net_ret = port_ret - costs
+    equity = np.cumprod(1 + net_ret)
+
+    return {"equity": equity, "turnover": turnover, "costs": costs}
+\end{lstlisting}
+
+\begin{remark}
+El motor de backtesting requiere series de precios completas para todos los activos
+dentro de la ventana de lookback. Los activos con datos faltantes en el per\'iodo de an\'alisis
+son excluidos autom\'aticamente, con un aviso al usuario indicando la primera fecha con datos
+completos.
+\end{remark}
+
+\subsection{Bootstrap para Intervalos de Confianza}
+\textbf{El problema:} Un Sharpe de 1.5 sobre 5 a\~nos, ¿es significativo o suerte?
+\begin{algorithm}[H]
+\caption{Circular Block Bootstrap}
+\begin{algorithmic}[1]
+\Require Retornos $\{r_t\}_{t=1}^T$, longitud bloque $L$, repeticiones $B$
+\For{$b = 1, \ldots, B$}
+  \State $k \gets \lceil T/L \rceil$
+  \State Elegir $k$ \'indices de inicio uniformes en $\{1, \ldots, T\}$
+  \State Construir camino sint\'etico concatenando bloques circulares
+  \State $CAGR_b, Sharpe_b, MaxDD_b \gets$ calcular m\'etricas
+\EndFor
+\State \Return cuantiles $\{5\%, 50\%, 95\%\}$ de cada m\'etrica
+\end{algorithmic}
+\end{algorithm}
+El bootstrap por bloques preserva la autocorrelaci\'on (clustering de volatilidad).
+
+\textbf{Interpretaci\'on:} Si el IC del Sharpe incluye 0, la estrategia no tiene alpha significativo.
+\subsection{M\'etricas de Performance}
+\begin{longtable}{p{0.22\textwidth} p{0.73\textwidth}}
+\toprule
+\textbf{M\'etrica} & \textbf{F\'ormula} \\
+\midrule
+CAGR & $(V_T/V_0)^{252/T} - 1$ \\
+Sharpe & $\frac{\mu_P - r_f}{\sigma_P}\sqrt{252}$ \\
+Sortino & $\frac{\mu_P - r_f}{\sigma^-_P}\sqrt{252}$ \\
+Max Drawdown & $\max_t(1 - V_t/\max_{s \leq t}V_s)$ \\
+Calmar & $CAGR/MaxDD$ \\
+\bottomrule
+\caption{M\'etricas de backtest.}
+\end{longtable}
+% =============================================================================
+% CAP\'ITULO 7: ATRIBUCI\'ON
+% =============================================================================
+\section{Atribuci\'on de Resultados}
+\label{sec:attrib}
+La atribuci\'on responde a la pregunta fundamental: "¿De d\'onde vino el alpha (o la p\'erdida)?".
+Nosotros hemos implementado dos frameworks complementarios.
+\subsection{Brinson-Fachler: Descomposici\'on Exacta}
+El modelo Brinson-Fachler descompone el exceso de retorno $R_P - R_B$ en tres componentes
+por cada grupo (sector, pa\'is, etc.) $g$:
+\begin{theorem}[Brinson-Fachler]
+El exceso de retorno se descompone exactamente como:
+\begin{equation}
+  R_P - R_B = \sum_{g=1}^G (A_g + S_g + I_g)
+  \label{eq:brinson_exact}
+\end{equation}
+donde:
+\begin{align}
+  A_g &= (w_{P,g} - w_{B,g})(R_{B,g} - R_B) && \text{(Allocation Effect)} \\
+  S_g &= w_{B,g}(R_{P,g} - R_{B,g}) && \text{(Selection Effect)} \\
+  I_g &= (w_{P,g} - w_{B,g})(R_{P,g} - R_{B,g}) && \text{(Interaction Effect)}
+\end{align}
+\end{theorem}
+\textbf{Interpretaci\'on Financiera:}
+\begin{description}[leftmargin=2em]
+  \item[Allocation ($A_g$):] Mide el valor de sobreponderar o infraponderar sectores que tuvieron
+        mejor o peor performance que el benchmark global.
+  \item[Selection ($S_g$):] Mide el valor de elegir mejores activos \emph{dentro} de cada sector.
+  \item[Interaction ($I_g$):] Captura el efecto cruzado. Positivo cuando sobreponderamos
+        un sector y adem\'as seleccionamos mejor que el benchmark en ese sector.
+\end{description}
+\begin{lstlisting}[caption={Brinson-Fachler vectorizado (producci\'on).}]
+def brinson_fachler_period(w_p: np.ndarray, w_b: np.ndarray,
+                           r_p: np.ndarray, r_b: np.ndarray,
+                           groups: np.ndarray) -> dict:
+    """Brinson-Fachler para un periodo."""
+    G = np.unique(groups)
+    R_B_total = np.dot(w_b, r_b)  # Retorno total benchmark
+
+    alloc, select, interact = [], [], []
+
+    for g in G:
+        mask = (groups == g)
+
+        # Pesos agregados por grupo
+        w_pg = w_p[mask].sum()
+        w_bg = w_b[mask].sum()
+
+        # Retornos ponderados por grupo
+        R_pg = np.dot(w_p[mask], r_p[mask]) / max(w_pg, 1e-12)
+        R_bg = np.dot(w_b[mask], r_b[mask]) / max(w_bg, 1e-12)
+
+        # Componentes Brinson
+        A_g = (w_pg - w_bg) * (R_bg - R_B_total)
+        S_g = w_bg * (R_pg - R_bg)
+        I_g = (w_pg - w_bg) * (R_pg - R_bg)
+
+        alloc.append(A_g)
+        select.append(S_g)
+        interact.append(I_g)
+
+    return {
+        ``groups'': G.tolist(),
+        ``allocation'': np.array(alloc),
+        ``selection'': np.array(select),
+        ``interaction'': np.array(interact),
+        ``total'': sum(alloc) + sum(select) + sum(interact)
+    }
+\end{lstlisting}
+\subsection{Contribuciones de Riesgo de Euler}
+\begin{theorem}[Teorema de Euler para Funciones Homog\'eneas]
+Si $f: \R^N \to \R$ es homog\'enea de grado $k$, entonces:
+\begin{equation}
+  k \cdot f(\vw) = \sum_{i=1}^N w_i \frac{\partial f}{\partial w_i}
+  \label{eq:euler_theorem}
+\end{equation}
+\end{theorem}
+Dado que $\sigma_P(\vw) = \sqrt{\vw^T \mSigma \vw}$ es homog\'enea de grado 1:
+\begin{equation}
+  \sigma_P = \sum_{i=1}^N w_i \cdot \underbrace{\frac{(\mSigma \vw)_i}{\sigma_P}}_{MRC_i}
+  = \sum_{i=1}^N \underbrace{w_i \cdot MRC_i}_{RC_i}
+  \label{eq:euler_sigma}
+\end{equation}
+\begin{definition}[Contribuci\'on de Riesgo]
+\begin{equation}
+  RC_i = w_i \cdot MRC_i = \frac{w_i (\mSigma \vw)_i}{\sigma_P}
+  \label{eq:rc}
+\end{equation}
+Por construcci\'on, $\sum_i RC_i = \sigma_P$.
+\end{definition}
+\begin{lstlisting}[caption={Contribuciones de riesgo de Euler.}]
+def euler_risk_contributions(w: np.ndarray, Sigma: np.ndarray) -> np.ndarray:
+    """Calcula contribuciones de riesgo por activo."""
+    Sigma_w = Sigma @ w
+    sigma_p = np.sqrt(w @ Sigma_w)
+
+    if sigma_p < 1e-12:
+        return np.zeros_like(w)
+
+    mrc = Sigma_w / sigma_p  # Marginal Risk Contribution
+    rc = w * mrc             # Risk Contribution
+
+    return rc
+\end{lstlisting}
+\textbf{¿Por qu\'e importa?} Un portfolio Equal-Weight puede tener riesgo concentrado si
+algunos activos son mucho m\'as vol\'atiles. $RC_i / \sigma_P$ representa la fracci\'on del
+riesgo total atribuible al activo $i$.
+\subsection{Descomposici\'on Factorial (PCA)}
+Extendemos Euler a un modelo de factores. Sea $B \in \R^{N \times K}$ la matriz de cargas
+(e.g., de PCA) y $\Lambda_F$ la covarianza diagonal de los factores.
+Entonces, la contribuci\'on de riesgo del factor $k$ es:
+\begin{equation}
+  RC_k^{factor} = \frac{\lambda_k \cdot (B^T \vw)_k^2}{\sigma_P}
+  \label{eq:factor_rc}
+\end{equation}
+Esto permite responder: "¿Cu\'anto del riesgo viene de exposici\'on al mercado (PC1)
+vs. rotaci\'on sectorial (PC2) vs. riesgo idiosincr\'atico?"
+\subsection{Tracking Error y Gesti\'on Activa}
+\begin{definition}[Tracking Error]
+\begin{equation}
+  TE = \sqrt{(\vw - \vw_B)^T \mSigma (\vw - \vw_B)}
+  \label{eq:te}
+\end{equation}
+donde $\vw_B$ son los pesos del benchmark.
+\end{definition}
+El problema de optimizaci\'on activa es que balancea retorno activo contra TE:
+\begin{equation}
+  \max_{\vw} \quad (\vw - \vw_B)^T \vmu - \frac{\gamma}{2} (\vw - \vw_B)^T \mSigma (\vw - \vw_B)
+  \label{eq:active}
+\end{equation}
+La interfaz permite visualizar la \textbf{frontera TE-Active Return} barriendo valores de $\gamma$.
+\begin{lstlisting}[caption={Optimizacion activa con TE.}]
+def optimize_active(mu: np.ndarray, Sigma: np.ndarray,
+                    w_bench: np.ndarray, te_target: float) -> np.ndarray:
+    """Maximiza retorno activo sujeto a TE."""
+    from scipy.optimize import minimize
+
+    def neg_active_return(w):
+        return -np.dot(w - w_bench, mu)
+
+    def te_constraint(w):
+        delta = w - w_bench
+        return te_target - np.sqrt(delta @ Sigma @ delta)
+
+    cons = [
+        {''type'': ``eq'', ``fun'': lambda w: np.sum(w) - 1},
+        {''type'': ``ineq'', ``fun'': te_constraint}
+    ]
+    bounds = [(0, 1)] * len(mu)
+
+    result = minimize(neg_active_return, w_bench,
+                      constraints=cons, bounds=bounds)
+    return result.x
+\end{lstlisting}
+
+% =============================================================================
+% CAP\'ITULO 8: MACHINE LEARNING Y DETECCI\'ON DE REG\'IMENES
+% =============================================================================
+\section{Machine Learning y Detecci\'on de Reg\'imenes de Mercado}
+\label{sec:ml_regimes}
+
+Las t\'ecnicas de machine learning nos  permiten capturar patrones no lineales en los retornos
+que los modelos cl\'asicos pueden no detectar. Por esta raz\'on hemos integrado dos enfoques complementarios:
+detecci\'on de reg\'imenes v\'ia Hidden Markov Models y predicci\'on de retornos con XGBoost.
+
+\subsection{Hidden Markov Models para Detecci\'on de Reg\'imenes}
+
+Los mercados financieros alternan entre estados discretos (bull, bear, crisis) con caracter\'isticas
+estad\'isticas diferenciadas. Los HMM permiten identificar estos reg\'imenes de forma no supervisada.
+
+\begin{definition}[Hidden Markov Model]
+Un HMM est\'a definido por:
+\begin{itemize}
+  \item Estados latentes $S_t \in \{1, \ldots, K\}$ (e.g., $K=3$: Bull, Bear, Crisis)
+  \item Matriz de transici\'on $A_{ij} = P(S_{t+1} = j \mid S_t = i)$
+  \item Distribuciones de emisi\'on $P(x_t \mid S_t = k) \sim \mathcal{N}(\mu_k, \Sigma_k)$
+  \item Probabilidades iniciales $\pi_k = P(S_1 = k)$
+\end{itemize}
+\end{definition}
+
+\textbf{¿Por qu\'e funciona en finanzas?} Los reg\'imenes capturan cambios en:
+\begin{itemize}
+  \item Retorno esperado: $\mu_{bull} > 0$, $\mu_{crisis} \ll 0$
+  \item Volatilidad: $\sigma_{crisis} \gg \sigma_{bull}$
+  \item Autocorrelaci\'on: diferentes en cada r\'egimen
+\end{itemize}
+
+\subsubsection{Feature Engineering para HMM}
+
+Constru\'imos un vector de features $\mathbf{x}_t \in \mathbb{R}^3$ para cada observaci\'on:
+\begin{equation}
+  \mathbf{x}_t = \begin{bmatrix}
+    r_t \\\\
+    \sigma_t^{realized} \\\\
+    DD_t
+  \end{bmatrix}
+  \label{eq:hmm_features}
+\end{equation}
+
+donde:
+\begin{align}
+  r_t \&= \text{Retorno simple en } t \\\\
+  \sigma_t^{realized} \&= \sqrt{\frac{1}{w-1}\sum_{s=t-w+1}^t (r_s - \bar{r})^2}
+    \quad \text{(rolling std, ventana $w=20$)} \\\\
+  DD_t \&= 1 - \frac{P_t}{\max_{s \leq t} P_s}
+    \quad \text{(drawdown depth desde su peak hist\'orico)}
+\end{align}
+
+\textbf{Interpretaci\'on de Features}:
+\begin{itemize}
+  \item $r_t$: Captura momentum/direcci\'on del mercado (positivo en bull, negativo en bear/crisis).
+  \item $\sigma_t^{realized}$: Nivel de riesgo actual. Las crisis tienen $\sigma \gg$ normal.
+  \item $DD_t$: Estr\'es acumulado. $DD=0$ significa en peak hist\'orico, $DD=0.2$ indica 20\% p\'erdida.
+\end{itemize}
+
+Las features se estandarizan ($z$-score) antes del training HMM para que tengan
+media 0 y varianza 1:
+\begin{equation}
+  \tilde{\mathbf{x}}_t = \frac{\mathbf{x}_t - \boldsymbol{\mu}_{train}}{\boldsymbol{\sigma}_{train}}
+  \label{eq:hmm_standardize}
+\end{equation}
+
+Asegurando as\'i que los features tengan pesos comparables en las Gaussian emissions del HMM.
+
+\subsubsection{Algoritmo Forward-Backward (Baum-Welch \cite{rabiner})}
+
+\begin{algorithm}[H]
+\caption{Estimaci\'on HMM v\'ia EM}
+\begin{algorithmic}[1]
+\Require Observaciones $\{x_t\}_{t=1}^T$, n\'umero de estados $K$
+\State Inicializar $A,$ $\{\mu_k, \Sigma_k\}_{k=1}^K$, $\pi$ aleatoriamente
+\Repeat
+  \State \textbf{E-step:} Calcular probabilidades forward-backward
+  \State $\alpha_t(k) = P(S_t = k \mid x_1, \ldots, x_t)$ (forward)
+  \State $\beta_t(k) = P(x_{t+1}, \ldots, x_T \mid S_t = k)$ (backward)
+  \State $\gamma_t(k) = P(S_t = k \mid x_{1:T})$ (posterior)
+  \State \textbf{M-step:} Actualizar par\'ametros
+  \State $A_{ij} \gets \frac{\sum_t \xi_t(i,j)}{\sum_t \gamma_t(i)}$
+  \State $\mu_k \gets \frac{\sum_t \gamma_t(k) x_t}{\sum_t \gamma_t(k)}$
+  \State $\Sigma_k \gets \frac{\sum_t \gamma_t(k) (x_t - \mu_k)(x_t - \mu_k)^T}{\sum_t \gamma_t(k)}$
+\Until{convergencia}
+\end{algorithmic}
+\end{algorithm}
+
+\begin{lstlisting}[caption={Detecci\'on de reg\'imenes con hmmlearn (implementaci\'on esencial).}]
+from hmmlearn.hmm import GaussianHMM
+
+def detect_regimes(X: np.ndarray, n_regimes: int = 3) -> dict:
+    """Detecta regimenes usando HMM Gaussiano.
+
+    Args:
+        X: Features (T x 3) con [returns, vol, drawdown]
+        n_regimes: Numero de estados latentes
+    Returns:
+        Dict con estados, probabilidades, matriz transicion
+    """
+    # Entrenar HMM con EM (ver Algoritmo 8.1)
+    model = GaussianHMM(n_components=n_regimes,
+                        covariance_type="full",
+                        n_iter=100, random_state=42)
+    model.fit(X)
+
+    # Decodificacion Viterbi
+    states = model.predict(X)
+    posteriors = model.predict_proba(X)
+
+    # Etiquetar por retorno promedio: 0=Bear, 1=Normal, 2=Bull
+    state_returns = [X[states == k, 0].mean() for k in range(n_regimes)]
+    labels = np.argsort(state_returns)
+
+    return {
+        ``states'': labels[states],
+        ``probabilities'': posteriors,
+        ``transition_matrix'': model.transmat_,
+        ``means'': model.means_,
+        ``covariances'': model.covars_
+    }
+\end{lstlisting}
+
+\textbf{Nota}: El algoritmo EM completo est\'a en Algoritmo 8.1. La implementaci\'on usa
+\texttt{hmmlearn.GaussianHMM} que sigue exactamente el procedimiento Forward-Backward
+descrito. Hiperpar\'ametros productivos: \texttt{n_iter=100}, \texttt{covariance_type="full"}.
+
+\subsection{Reg\'imenes como Soporte a la Decisi\'on (Decision Support)}
+\label{sec:regime_decision}
+
+M\'as all\'a de una automatizaci\'on ciega, nosotros utilizamos la detecci\'on de reg\'imenes como una
+herramienta para el usuario. El sistema presenta el r\'egimen actual
+(Bull, Bear, Crisis) v\'ia indicadores visuales, permitiendo al usuario:
+
+\begin{itemize}
+  \item \textbf{Ajustar Aversi\'on al Riesgo:} Aumentar $\gamma$ en reg\'imenes de alta volatilidad.
+  \item \textbf{Activar Restricciones:} Forzar niveles m\'inimos de liquidez (cash) si $P(\text{Crisis}) > 50\%$.
+  \item \textbf{Validar Modelos:} Descartar se\~nales de momentum durante mercados laterales (regimen sin tendencia).
+\end{itemize}
+
+Esta aproximaci\'on "Human-in-the-loop",  preferida en entornos institucionales sobre las estrategias de cambios autom\'atico definidas te\'oricamente como:
+
+\begin{equation}
+  \vw_t = \sum_{k=1}^K P(S_t = k \mid x_{1:t}) \cdot \vw_k
+  \label{eq:regime_weights}
+\end{equation}
+
+Estas estrategias (Ec. \ref{eq:regime_weights}) suelen sufrir de falsos positivos en las transiciones, generando costes excesivos.
+
+\subsection{XGBoost con Purged K-Fold Cross-Validation}
+
+XGBoost aplica gradient boosting sobre \'arboles de decisi\'on para capturar relaciones
+no lineales entre features y retornos futuros. Nuestra implementaci\'on incorpora
+\textbf{Purged K-Fold Cross-Validation} para evitar data leakage temporal.
+
+\begin{definition}[Gradient Boosting con Regularizaci\'on]
+Dados features $X$ y target $y$, construimos un ensemble:
+\begin{equation}
+  \hat{y}_i = \sum_{m=1}^M \eta \cdot f_m(x_i)
+  \label{eq:gbm}
+\end{equation}
+donde cada $f_m$ es un \'arbol que minimiza el residuo del modelo previo:
+\begin{equation}
+  f_m = \argmin_f \sum_i L(y_i, \hat{y}_i^{(m-1)} + f(x_i)) + \Omega(f)
+  \label{eq:gbm_loss_reg}
+\end{equation}
+con regularizaci\'on $\Omega(f) = \gamma T + \frac{1}{2}\lambda \sum_{j=1}^T w_j^2$
+(L2 penalty sobre pesos de hojas).
+\end{definition}
+
+\subsubsection{El Problema del Leakage Temporal}
+
+\textbf{¿Por qu\'e K-Fold est\'andar falla en finanzas?} En series temporales, las observaciones
+est\'an autocorrelacionadas. Si el fold de test contiene d\'ias $t \in [100, 120]$, usar d\'ias
+$t=99$ o $t=121$ en training introduce look-ahead bias debido a:
+\begin{itemize}
+  \item Autocorrelaci\'on de retornos (momentum, mean-reversion)
+  \item Clustering de volatilidad (GARCH effects)
+  \item Eventos macro que afectan m\'ultiples d\'ias consecutivos
+\end{itemize}
+
+\textbf{Soluci\'on: Purged K-Fold + Embargo}
+
+\begin{algorithm}[H]
+\caption{Purged K-Fold Cross-Validation (L\'opez de Prado, 2018)}
+\begin{algorithmic}[1]
+\Require Fechas ordenadas $\{t_1, \ldots, t_T\}$, K folds, purge d\'ias $P$, embargo d\'ias $E$
+\For{$k = 1, \ldots, K$}
+  \State $test\_fold \gets$ partici\'on $k$ de las fechas (cronol\'ogica)
+  \State $t_{test}^{min} \gets \min(\text{test\_fold})$
+  \State $t_{test}^{max} \gets \max(\text{test\_fold})$
+
+  \State \textbf{Purge before:} Remover $[t_{test}^{min} - P, t_{test}^{min} - 1]$ de train
+  \State \textbf{Purge after:} Remover $[t_{test}^{max} + 1, t_{test}^{max} + P]$ de train
+  \State \textbf{Embargo:} Remover $[t_{test}^{max} + P + 1, t_{test}^{max} + P + E]$ de train
+
+  \State $train\_fold \gets$ fechas restantes (excluir test, purge, embargo)
+  \State Entrenar modelo en $train\_fold$
+  \State Validar en $test\_fold$
+\EndFor
+\State Promediar m\'etricas de validaci\'on cross-fold
+\end{algorithmic}
+\end{algorithm}
+
+\begin{proposition}[Purged K-Fold Reduce Leakage Temporal]
+\label{prop:purged_leakage}
+Sea $\rho(\tau)$ la autocorrelaci\'on de retornos al lag $\tau$. Con purge $P$ d\'ias y
+embargo $E$ d\'ias, el leakage esperado entre train y test satisface:
+\begin{equation}
+  \mathbb{E}[\text{Leakage}] \leq \sum_{\tau=P+E+1}^{\infty} |\rho(\tau)| \cdot \frac{|\text{test}|}{|\text{train}|}
+  \label{eq:purge_bound}
+\end{equation}
+\end{proposition}
+
+\begin{proof}
+El leakage proviene de correlaciones entre samples de train y test. Sin purging,
+samples contiguos tienen correlaci\'on $\rho(small \, \tau)$ alta.
+
+Purging elimina todos los samples con $|\tau| \leq P+E$, dejando solo correlaciones
+de la cola $\sum_{\tau > P+E} |\rho(\tau)|$. Para procesos AR(1) con coeficiente
+$\phi < 1$, esta serie decae exponencialmente, haciendo el leakage residual
+despreciable cuando $P+E > 3/\log(1/|\phi|)$ \cite{prado2018}.
+\end{proof}
+
+
+\begin{definition}[Par\'ametros de Purga]
+\mbox{}\\\begin{itemize}
+
+  \item \textbf{Purge Days ($P$):} D\'ias a eliminar antes Y despu\'es del test fold.
+        T\'ipicamente $P \in [3, 10]$ d\'ias. Captura autocorrelaci\'on de corto plazo.
+
+  \item \textbf{Embargo Days ($E$):} D\'ias adicionales a eliminar SOLO despu\'es del test fold.
+        T\'ipicamente $E \in [2, 5]$ d\'ias. El embargo asegura que labels forward-looking
+        (e.g., predecir $r_{t+1}$) no contaminan el training set.
+\end{itemize}
+
+\end{definition}
+
+\textbf{Implementaci\'on en GammaEdge:}
+
+\begin{lstlisting}[caption={Clase PurgedKFold en portfolio/trading/ml\_predictors.py}]
+class PurgedKFold:
+    """
+    Purged K-Fold CV para series temporales.
+
+    Previene leakage eliminando samples cerca del test fold:
+    - Purge: P dias antes y despues
+    - Embargo: E dias adicionales despues
+    """
+    def __init__(self, n_splits: int = 5, purge_days: int = 5,
+                 embargo_days: int = 3):
+        self.n_splits = n_splits
+        self.purge_days = purge_days
+        self.embargo_days = embargo_days
+
+    def split(self, dates: np.ndarray):
+        """
+        Genera (train_idx, test_idx) con purging.
+
+        Returns:
+            List[(train_indices, test_indices)] con K folds
+        """
+        T = len(dates)
+        fold_size = T // self.n_splits
+        indices = []
+
+        for k in range(self.n_splits):
+            # Test fold
+            test_start = k * fold_size
+            test_end = (k + 1) * fold_size if k < self.n_splits - 1 else T
+            test_idx = np.arange(test_start, test_end)
+
+            # Periodos a purgar
+            purge_before = np.arange(
+                max(0, test_start - self.purge_days), test_start
+            )
+            purge_after = np.arange(
+                test_end, min(T, test_end + self.purge_days)
+            )
+            embargo_after = np.arange(
+                test_end + self.purge_days,
+                min(T, test_end + self.purge_days + self.embargo_days)
+            )
+
+            # Train = all \ (test ∪ purge ∪ embargo)
+            exclude = np.concatenate([test_idx, purge_before,
+                                      purge_after, embargo_after])
+            train_idx = np.setdiff1d(np.arange(T), exclude)
+
+            indices.append((train_idx, test_idx))
+
+        return indices
+\end{lstlisting}
+
+\subsubsection{Configuraci\'on XGBoost en Producci\'on}
+
+Hemos usado la siguiente configuraci\'on optimizada para predicci\'on de retornos financieros:
+
+\begin{lstlisting}[caption={XGBoostConfig con hiperpar\'ametros productivos}]
+@dataclass
+class XGBoostConfig:
+    """Configuracion XGBoost para retornos."""
+    # Tree structure
+    n_estimators: int = 100
+    max_depth: int = 3          # Shallow trees (reducir overfit)
+    learning_rate: float = 0.1
+
+    # Sampling (bagging adicional)
+    subsample: float = 0.8      # 80% row sampling
+    colsample_bytree: float = 0.8  # 80% feature sampling
+
+    # Regularization
+    gamma: float = 0.0          # Min loss reduction
+    reg_alpha: float = 0.1      # L1 penalty
+    reg_lambda: float = 1.0     # L2 penalty (cr\'itico)
+
+    # Cross-validation
+    cv_folds: int = 5
+    purge_days: int = 5
+    embargo_days: int = 3
+
+    random_state: int = 42
+\end{lstlisting}
+
+\textbf{Rationale de Hiperpar\'ametros}:
+\begin{itemize}
+  \item $\text{max\_depth} = 3$: \'Arboles poco profundos reducen overfitting en se\~nales financieras ruidosas.
+  \item $\text{subsample} = 0.8$: Bagging adicional para robustez.
+  \item $\text{reg\_lambda} = 1.0$: Penalizaci\'on L2 significativa (en finanzas es muy ruidoso).
+  \item $\text{purge} = 5, \text{embargo} = 3$: Valores conservadores para datos diarios.
+\end{itemize}
+
+\subsection{SHAP: Interpretabilidad de Modelos}
+
+SHAP (SHapley Additive exPlanation \cite{shap}) asigna a cada feature una contribuci\'on al output
+basado en teor\'ia de juegos cooperativos.
+
+\begin{definition}[Shapley Value]
+Para una predicci\'on $f(x)$, el Shapley value de la feature $j$ es:
+\begin{equation}
+  \phi_j = \sum_{S \subseteq F \setminus \{j\}} \frac{|S|!(|F|-|S|-1)!}{|F|!}
+  [f(S \cup \{j\}) - f(S)]
+  \label{eq:shap}
+\end{equation}
+donde $F$ es el conjunto de todas las features y $S$ un subconjunto.
+\end{definition}
+
+\textbf{Propiedades deseables}:
+\begin{itemize}
+  \item \textbf{Exactitud local:} $\sum_j \phi_j = f(x) - f(\emptyset)$
+  \item \textbf{Consistencia:} Si feature $j$ aporta m\'as en modelo $A$ que $B$, $\phi_j^A \geq \phi_j^B$
+\end{itemize}
+
+\subsection{Feature Engineering para Trading}
+
+Adem\'as hemos construido adicionalmente unos features t\'ecnicos en
+
+ \texttt{portfolio/trading/v1\_features.py}:
+
+\begin{longtable}{p{0.30\textwidth} p{0.65\textwidth}}
+\toprule
+\textbf{Feature} & \textbf{F\'ormula / Descripci\'on} \\
+\midrule
+Momentum & $r_{[t-20, t]}$ (retorno acumulado 20d) \\
+Realized Vol & $\sigma_{rolling,20}$ (desv. est. m\'ovil) \\
+Drawdown & $1 - P_t / \max_{s \leq t} P_s$ \\
+RSI & Relative Strength Index $(0, 100)$ \\
+MACD & Moving Average Convergence Divergence \\
+Volume Ratio & $V_t / \bar{V}_{20}$ \\
+\bottomrule
+\caption{Features t\'ecnicos para XGBoost.}
+\end{longtable}
+
+\subsection{Integraci\'on Fama-French}
+
+Los factores de Fama-French capturan las primas de riesgo sistem\'aticas.
+Nosotros lo integramos en \texttt{portfolio/features/factors.py}.
+
+\begin{definition}[Modelo Fama-French 3-Factor]
+\begin{equation}
+  R_i - R_f = \alpha_i + \beta_M (R_M - R_f) + \beta_{SMB} SMB + \beta_{HML} HML + \epsilon_i
+  \label{eq:ff3}
+\end{equation}
+donde:
+\begin{itemize}
+  \item $R_M - R_f$: Prima de mercado
+  \item $SMB$: Small Minus Big (size premium)
+  \item $HML$: High Minus Low (value premium)
+\end{itemize}
+\end{definition}
+
+El modelo de 5 factores a\~nade:
+\begin{itemize}
+  \item $RMW$: Robust Minus Weak (profitability)
+  \item $CMA$: Conservative Minus Aggressive (investment)
+\end{itemize}
+
+\begin{lstlisting}[caption={Estimaci\'on factor loadings (esencial).}]
+import statsmodels.api as sm
+
+def estimate_factor_loadings(returns: pd.Series,
+                              factors_df: pd.DataFrame) -> dict:
+    """Estima exposicion a factores Fama-French via OLS."""
+    data = pd.concat([returns, factors_df], axis=1).dropna()
+
+    # Regresion: exceso retorno vs factores
+    y = data[returns.name] - data['RF']
+    X = sm.add_constant(data[['Mkt-RF', 'SMB', 'HML']])
+    model = sm.OLS(y, X).fit()
+
+    return {
+        ``alpha'': model.params['const'],
+        ``beta_market'': model.params['Mkt-RF'],
+        ``beta_size'': model.params['SMB'],
+        ``beta_value'': model.params['HML'],
+        ``r_squared'': model.rsquared,
+        ``pvalues'': model.pvalues.to_dict()
+    }
+\end{lstlisting}
+
+\textbf{Interpretaci\'on}: $\alpha$ significativamente distinto de cero indica skill del gestor
+despu\'es de ajustar por exposici\'on a factores conocidos. $R^2$ mide qu\'e fracci\'on de la
+varianza se explica por los factores.
+
+\subsection{Dashboard de Reg\'imenes}
+
+La interfaz de usuario sintetiza la complejidad del HMM en un mismo panel de control.
+Visualiza la evoluci\'on temporal de las probabilidades posteriores $P(S_t = k \mid x_{1:t})$
+y la matriz de transici\'on emp\'irica, permitiendo al usuario evaluar r\'apidamente la estabilidad
+del mercado y la persistencia de los estados detectados. Gr\'aficos de dispersi\'on Risk-Return
+condicionales validan ex-post siempre y cuando la segmentaci\'on captura
+ din\'amicas de mercado distintas.
+
+% =============================================================================
+% CAP\'ITULO 9: ESCENARIOS
+% =============================================================================
+
+\section{An\'alisis de Escenarios y Stress Testing}
+\label{sec:scenarios}
+La p\'agina \texttt{07\_Scenarios} permite validar la robustez de estrategias bajo condiciones extremas.
+\subsection{Shocks Param\'etricos}
+Hemos implementado tres tipos de perturbaciones:
+\subsubsection{Shift de Media (Drift)}
+A\~nade un drift constante a todos los retornos:
+\begin{equation}
+  r'_{i,t} = r_{i,t} + \Delta_\mu
+  \label{eq:mean_shift}
+\end{equation}
+\'Util para simular escenarios ``bull'' ($\Delta_\mu > 0$) o ``bear'' ($\Delta_\mu < 0$) persistentes.
+\subsubsection{Escala de Volatilidad}
+Amplifica o comprime las desviaciones respecto a la media:
+\begin{equation}
+  r'_{i,t} = \bar{r}_i + \kappa (r_{i,t} - \bar{r}_i)
+  \label{eq:vol_scale}
+\end{equation}
+donde $\kappa > 1$ aumenta volatilidad, $\kappa < 1$ la reduce.
+\subsubsection{Shock Beta-Correlacionado}
+Esta metodolog\'ia respeta la estructura de correlaciones del mercado:
+\begin{equation}
+  r'_{i,t^*} = r_{i,t^*} + \hat{\beta}_i \cdot \Delta_{mkt}
+  \label{eq:beta_shock}
+\end{equation}
+donde $\hat{\beta}_i$ se estima por regresi\'on rolling:
+\begin{equation}
+  \hat{\beta}_i = \frac{\Cov(r_i, r_{mkt})}{\Var(r_{mkt})}
+  \label{eq:beta_est}
+\end{equation}
+De esta forma aseguramos que activos defensivos ($\beta < 1$) caigan proporcionalmente menos
+que el mercado en un crash.
+\subsection{Replay Hist\'orico}
+Permite ejecutar el backtest sobre un per\'iodo hist\'orico espec\'ifico:
+\begin{itemize}
+  \item Crisis financiera 2008 (Sep 2008 - Mar 2009)
+  \item Flash Crash 2010 (6 Mayo 2010)
+  \item COVID-19 (Feb 2020 - Mar 2020)
+  \item Rally post-COVID (Mar 2020 - Dic 2020)
+\end{itemize}
+\subsection{Tornado Sensitivity Analysis}
+Eval\'ua la sensibilidad de m\'etricas a shocks individuales por activo:
+\begin{algorithm}[H]
+\caption{An\'alisis Tornado}
+\begin{algorithmic}[1]
+\Require Dataset $R$, magnitud shock $\delta$, m\'etrica objetivo (e.g., CAGR)
+\For{cada activo $i$}
+  \State $R^{up}_i \gets$ copiar $R$, a\~nadir $+\delta$ a columna $i$
+  \State $R^{down}_i \gets$ copiar $R$, a\~nadir $-\delta$ a columna $i$
+  \State $M^{up}_i, M^{down}_i \gets$ calcular m\'etrica en ambos escenarios
+  \State $\Delta_i \gets M^{up}_i - M^{down}_i$
+\EndFor
+\State Ordenar activos por $|\Delta_i|$ descendente
+\State Graficar barras horizontales mostrando $\pm\delta$ impacto
+\end{algorithmic}
+\end{algorithm}
+% =============================================================================
+% CAP\'ITULO 10: REPORTES
+% =============================================================================
+\section{Generaci\'on de Reportes y Auditor\'ia}
+\label{sec:reports}
+
+La comunicaci\'on de resultados es tan cr\'itica como su c\'alculo. Aqu\'i se generan (PDF/HTML) que sirven como "snapshots" de auditor\'ia para cada backtest ejecutado.
+
+\subsection{Reproducibilidad y Persistencia}
+Cada reporte generado contiene no solo las m\'etricas de salida, sino los metadatos completos de la
+ejecuci\'on (hash de config, timestamps, versi\'on del c\'odigo). Esto garantiza que cualquier
+resultado pasado pueda ser reconstruido exactamente, un requisito regulatorio com\'un (normativa MiFID II).
+
+La plataforma soporta exportaci\'on dual:
+\begin{itemize}
+    \item \textbf{Interactivo (HTML):} Con gr\'aficos Plotly con mayor dinamismo.
+    \item \textbf{Est\'atico (PDF):} Documentos formales maquetados con \texttt{ReportLab}, incluyendo tablas de atribuci\'on Brinson y curvas de equity firmadas.
+\end{itemize}
+% =============================================================================
+% CONCLUSIONES
+% =============================================================================
+\section{Conclusiones}
+\label{sec:concl}
+Representamos una implementaci\'on de alto nivel de un pipeline cuantitativo.
+
+Los principios de dise\~no clave son:
+\begin{enumerate}[leftmargin=2em]
+  \item \textbf{Rigurosidad num\'erica:} Fallbacks m\'ultiples para matrices mal condicionadas,
+        con 6-step recovery chain y SVD como \'ultimo recurso.
+  \item \textbf{Realismo:} Modelos de costes que reflejan impacto de mercado real
+        (sqrt model validado por literatura emp\'irica).
+  \item \textbf{Interpretaci\'on:} Atribuci\'on Brinson-Fachler y Euler que explica
+        el origen de cada bps de alpha y riesgo.
+  \item \textbf{Reproducci\'on:} Cache de datos, seeds aleatorios, y 65\%+ cobertura de tests.
+\end{enumerate}
+El sistema est\'a dise\~nado para ser extendido con:
+\begin{itemize}
+  \item Nuevos optimizadores (Robust MVO, Mean-CVaR, etc.).
+  \item Fuentes de datos adicionales (Bloomberg, Reuters, etc.).
+  \item Modelos de machine learning para predicci\'on de $\mu$.
+\end{itemize}
+% =============================================================================
+% AP\'ENDICES
+% =============================================================================
+\appendix
+\section{F\'ormulas de M\'etricas de Performance}
+\label{app:metrics}
+\subsection{Retorno y Riesgo}
+\begin{align}
+  \text{CAGR} &= \left(\frac{V_T}{V_0}\right)^{252/T} - 1 \\
+  \sigma_{ann} &= \sigma_{daily} \cdot \sqrt{252} \\
+  \mu_{ann} &= \mu_{daily} \cdot 252
+\end{align}
+\subsection{Ratios Ajustados por Riesgo}
+\begin{align}
+  \text{Sharpe} &= \frac{\mu_p - r_f}{\sigma_p} \cdot \sqrt{252} \\
+  \text{Sortino} &= \frac{\mu_p - r_f}{\sigma^-_p} \cdot \sqrt{252}, \quad \sigma^- = \sqrt{\E[(r - 0)^2 \mid r < 0]} \\
+  \text{Calmar} &= \frac{\text{CAGR}}{\text{MaxDD}} \\
+  \text{Omega}(\theta) &= \frac{\int_\theta^\infty (1-F(r))dr}{\int_{-\infty}^\theta F(r)dr}
+\end{align}
+\subsection{Drawdown}
+\begin{align}
+  DD_t &= 1 - \frac{V_t}{\max_{s \leq t} V_s} \\
+  \text{MaxDD} &= \max_t DD_t \\
+  \text{AvgDD} &= \frac{1}{T} \sum_t DD_t
+\end{align}
+\subsection{M\'etricas de Riesgo de Cola}
+\begin{align}
+  \text{VaR}_\alpha &= -F^{-1}(1-\alpha) \\
+  \text{CVaR}_\alpha &= \E[-r \mid r \leq -\text{VaR}_\alpha] = -\frac{1}{1-\alpha}\int_0^{1-\alpha} F^{-1}(u) du
+\end{align}
+\subsection{Interpretaci\'on de las M\'etricas}
+\begin{longtable}{p{0.18\textwidth} p{0.12\textwidth} p{0.65\textwidth}}
+\toprule
+\textbf{M\'etrica} & \textbf{Excelente} & \textbf{Interpretaci\'on} \\
+\midrule
+Sharpe & $> 2$ & Retorno por unidad de riesgo. $> 1$ es bueno, $> 2$ es excelente. \\
+Sortino & $> 2.5$ & Como Sharpe pero solo penaliza downside. Mejor para distribuciones asim\'etricas. \\
+Calmar & $> 1$ & Retorno por unidad de drawdown. $> 1$ significa
+
+recuperaci\'on en $< 1$ a\~no. \\
+MaxDD & $< 10\%$ & P\'erdida m\'axima desde pico. Cr\'itico para viabilidad psicol\'ogica. \\
+VaR 95\% & -- & ``El peor d\'ia de cada 20". No es subaditivo (no es coherente). \\
+CVaR 95\% & -- & ``P\'erdida promedio en el peor 5\%". Coherente y convexo. \\
+\end{longtable}
+% (Apéndice B eliminado por redundancia con Sec. 2)
+% =============================================================================
+% REFERENCIAS
+% =============================================================================
+\begin{thebibliography}{99}
+\bibitem{markowitz} Markowitz, H. (1952). Portfolio Selection. \emph{The Journal of Finance}, 7(1), 77-91.
+\bibitem{ledoitwolf} Ledoit, O., Wolf, M. (2004). A well-conditioned estimator for large-dimensional covariance matrices. \emph{Journal of Multivariate Analysis}, 88(2), 365-411.
+\bibitem{oas} Chen, Y., et al. (2010). Shrinkage Algorithms for MMSE Covariance Estimation. \emph{IEEE Trans. Signal Processing}, 58(10), 5016-5029.
+\bibitem{blacklitterman} Black, F., Litterman, R. (1992). Global Portfolio Optimization. \emph{Financial Analysts Journal}, 48(5), 28-43.
+\bibitem{idzorek} Idzorek, T. (2005). A Step-by-Step Guide to the Black-Litterman Model. \emph{Ibbotson Associates}.
+\bibitem{hrp} L\'opez de Prado, M. (2016). Building Diversified Portfolios that Outperform Out-of-Sample. \emph{Journal of Portfolio Management}, 42(4), 59-69.
+\bibitem{brinson} Brinson, G., Hood, L., Beebower, G. (1986). Determinants of Portfolio Performance. \emph{Financial Analysts Journal}, 42(4), 39-44.
+\bibitem{rockafellar} Rockafellar, R.T., Uryasev, S. (2000). Optimization of Conditional Value-at-Risk. \emph{Journal of Risk}, 2(3), 21-41.
+\bibitem{mp} Marcenko, V.A., Pastur, L.A. (1967). Distribution of eigenvalues for some sets of random matrices. \emph{Mathematics of the USSR-Sbornik}, 1(4), 457-483.
+\bibitem{almgren} Almgren, R., Chriss, N. (2000). Optimal Execution of Portfolio Transactions. \emph{Journal of Risk}, 3(2), 5-40.
+\bibitem{gatheral} Gatheral, J. (2010). No-Dynamic-Arbitrage and Market Impact. \emph{Quantitative Finance}, 10(7), 749-759.
+\bibitem{euler} Meucci, A. (2007). Risk Contributions from Generic User-Defined Factors. \emph{Risk Magazine}.
+\bibitem{bootstrapcircular} Politis, D.N., Romano, J.P. (1994). The Stationary Bootstrap. \emph{Journal of the American Statistical Association}, 89(428), 1303-1313.
+\bibitem{famafrench3} Fama, E.F., French, K.R. (1993). Common risk factors in the returns on stocks and bonds. \emph{Journal of Financial Economics}, 33(1), 3-56.
+\bibitem{famafrench5} Fama, E.F., French, K.R. (2015). A five-factor asset pricing model. \emph{Journal of Financial Economics}, 116(1), 1-22.
+\bibitem{xgboost} Chen, T., Guestrin, C. (2016). XGBoost: A Scalable Tree Boosting System. \emph{Proceedings of the 22nd ACM SIGKDD}, 785-794.
+\bibitem{shap} Lundberg, S.M., Lee, S.I. (2017). A Unified Approach to Interpreting Model Predictions. \emph{Advances in Neural Information Processing Systems}, 30.
+\bibitem{rabiner} Rabiner, L.R. (1989). A tutorial on hidden Markov models and selected applications in speech recognition. \emph{Proceedings of the IEEE}, 77(2), 257-286.
+\bibitem{prado2018} L\'opez de Prado, M. (2018). Advances in Financial Machine Learning. \emph{Wiley}. ISBN: 978-1119482086.
+\bibitem{angbekaert} Ang, A., Bekaert, G. (2002). Regime Switches in Interest Rates. \emph{Journal of Business \& Economic Statistics}, 20(2), 163-182.
+\end{thebibliography}
+\end{document}

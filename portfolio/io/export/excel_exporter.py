@@ -21,6 +21,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 
 import polars as pl
 
@@ -41,7 +42,7 @@ class GoldenDatasetConfig:
     description: str = "QQQ/VOO/BIL 20-year dataset for ML training"
 
     # Universe
-    tickers: list[str] = None
+    tickers: list[str] | None = None
 
     # Time range
     start_date: date | None = None
@@ -56,9 +57,9 @@ class GoldenDatasetConfig:
     calendar_id: str = "NYSE"
 
     # Features to include
-    features: list[str] = None
+    features: list[str] | None = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         if self.tickers is None:
             self.tickers = ["QQQ", "VOO", "BIL"]
         if self.features is None:
@@ -114,7 +115,7 @@ class GoldenExcelExporter:
 
     def __init__(self, config: GoldenDatasetConfig):
         self.config = config
-        self._content_hash = None
+        self._content_hash: str | None = None
 
     def export(
         self,
@@ -152,7 +153,7 @@ class GoldenExcelExporter:
 
         # Exportar
         try:
-            import xlsxwriter
+            import xlsxwriter  # noqa: F401  # availability check; used by _export_with_xlsxwriter
 
             self._export_with_xlsxwriter(df_data, df_instruments, metadata, output_path)
         except ImportError:
@@ -175,7 +176,7 @@ class GoldenExcelExporter:
                 columns_to_include.append(col)
 
         # Features
-        for feat in self.config.features:
+        for feat in self.config.features or []:
             if feat in df.columns:
                 columns_to_include.append(feat)
 
@@ -265,9 +266,9 @@ class GoldenExcelExporter:
         self,
         df_data: pl.DataFrame,
         df_instruments: pl.DataFrame,
-        metadata: dict,
+        metadata: dict[str, Any],
         output_path: Path,
-    ):
+    ) -> None:
         """Exporta usando xlsxwriter (mejor formato)."""
         import xlsxwriter
 
@@ -282,7 +283,6 @@ class GoldenExcelExporter:
                 "border": 1,
             }
         )
-        date_format = workbook.add_format({"num_format": "yyyy-mm-dd"})
         number_format = workbook.add_format({"num_format": "#,##0.00"})
         pct_format = workbook.add_format({"num_format": "0.00%"})
 
@@ -317,14 +317,14 @@ class GoldenExcelExporter:
         ws_meta.write(0, 0, "Key", header_format)
         ws_meta.write(0, 1, "Value", header_format)
 
-        row = 1
+        meta_row = 1
         for key, value in metadata.items():
-            ws_meta.write(row, 0, key)
+            ws_meta.write(meta_row, 0, key)
             if isinstance(value, list):
-                ws_meta.write(row, 1, ", ".join(map(str, value)))
+                ws_meta.write(meta_row, 1, ", ".join(map(str, value)))
             else:
-                ws_meta.write(row, 1, str(value) if value else "")
-            row += 1
+                ws_meta.write(meta_row, 1, str(value) if value else "")
+            meta_row += 1
 
         ws_meta.set_column(0, 0, 25)
         ws_meta.set_column(1, 1, 80)
@@ -348,12 +348,13 @@ class GoldenExcelExporter:
         self,
         df_data: pl.DataFrame,
         df_instruments: pl.DataFrame,
-        metadata: dict,
+        metadata: dict[str, Any],
         output_path: Path,
-    ):
+    ) -> None:
         """Fallback export usando Polars → Excel."""
         # Polars puede escribir Excel directamente
-        with pl.ExcelWriter(str(output_path)) as writer:
+        # pl.ExcelWriter is not part of public polars typing stubs but exists at runtime.
+        with pl.ExcelWriter(str(output_path)) as writer:  # type: ignore[attr-defined]
             df_data.write_excel(writer, worksheet="DATA")
             df_instruments.write_excel(writer, worksheet="INSTRUMENTS")
 
@@ -373,8 +374,8 @@ def export_golden_dataset(
     df_raw: pl.DataFrame,
     output_path: str | Path = "golden_dataset.xlsx",
     dataset_id: str = "qqq_voo_bil_v1",
-    features: list[str] = None,
-) -> dict:
+    features: list[str] | None = None,
+) -> dict[str, Any]:
     """
     Pipeline completo: raw → features → Excel golden.
 
@@ -434,10 +435,10 @@ def export_golden_dataset(
 
 
 def quick_export_from_yahoo(
-    tickers: list[str] = None,
+    tickers: list[str] | None = None,
     years: int = 3,
     output_path: str = "golden_dataset.xlsx",
-) -> dict:
+) -> dict[str, Any]:
     """
     Descarga datos de Yahoo y exporta Excel golden.
 

@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import inspect
 import sys
-import os
 from pathlib import Path
 from typing import Any
 
@@ -12,10 +11,10 @@ root_path = str(Path(__file__).parent.parent)
 if root_path not in sys.path:
     sys.path.append(root_path)
 
-import streamlit as st
+import streamlit as st  # noqa: E402  # Import after sys.path setup
 
 # Design System
-from app.design_system import COLORS, get_global_styles
+from app.design_system import COLORS, get_global_styles  # noqa: E402
 
 # ============================================================================
 # Plotly compatibility monkey-patch
@@ -115,7 +114,8 @@ st.set_page_config(
 st.markdown(get_global_styles(), unsafe_allow_html=True)
 
 # Hero Section - Clean and Spacious
-st.markdown(f"""
+st.markdown(
+    f"""
 <div style="padding: 80px 0 64px 0; text-align: center; max-width: 1200px; margin: 0 auto;">
 <h1 style="font-size: 3.5rem; font-weight: 700; letter-spacing: -0.02em; margin-bottom: 16px; color: {COLORS['text_primary']};">
 GammaEdge
@@ -124,10 +124,13 @@ GammaEdge
 Quantitative Portfolio Analytics · Precise. Powerful. Professional.
 </p>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # Module Cards Grid
-st.markdown(f"""
+st.markdown(
+    f"""
 <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 24px; max-width: 1200px; margin: 0 auto 64px auto;">
 <div class="module-card" style="background: {COLORS['bg_secondary']}; border: 1px solid rgba(255, 255, 255, 0.1); border-radius: 12px; padding: 32px 24px; transition: box-shadow 0.3s ease;">
 <div style="font-size: 2.5rem; margin-bottom: 16px; text-align: center;">📊</div>
@@ -162,18 +165,23 @@ Attribute performance, generate reports, stress-test with regime detection
 box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
 }}
 </style>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # Quick Start Section
 st.markdown("---")
 
-st.markdown(f"""
+st.markdown(
+    f"""
 <div style="margin: 48px 0 24px 0;">
 <h2 style="font-size: 2rem; font-weight: 600; margin-bottom: 32px; text-align: center; color: {COLORS['text_primary']};">
 Quick Start
 </h2>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 col1, col2, col3 = st.columns(3, gap="large")
 
@@ -183,9 +191,7 @@ with col1:
         label="📦 Data Module",
         use_container_width=True,
     )
-    st.caption(
-        "Load historical data, clean series, compute quantitative metrics"
-    )
+    st.caption("Load historical data, clean series, compute quantitative metrics")
 
 with col2:
     st.page_link(
@@ -193,9 +199,7 @@ with col2:
         label="🔬 Optimizer",
         use_container_width=True,
     )
-    st.caption(
-        "Run HRP, Risk Parity, Mean-Variance, Black-Litterman, CVaR optimization"
-    )
+    st.caption("Run HRP, Risk Parity, Mean-Variance, Black-Litterman, CVaR optimization")
 
 with col3:
     st.page_link(
@@ -203,20 +207,21 @@ with col3:
         label="📈 Backtest",
         use_container_width=True,
     )
-    st.caption(
-        "Rolling rebalance, transaction costs, bootstrap metrics, grid search"
-    )
+    st.caption("Rolling rebalance, transaction costs, bootstrap metrics, grid search")
 
 st.markdown("---")
 
 # All Modules Section
-st.markdown(f"""
+st.markdown(
+    f"""
 <div style="margin: 48px 0 24px 0;">
 <h2 style="font-size: 1.5rem; font-weight: 600; margin-bottom: 24px; color: {COLORS['text_primary']};">
 All Modules
 </h2>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 col1, col2, col3 = st.columns(3, gap="large")
 
@@ -240,8 +245,11 @@ with col3:
 st.markdown("---")
 
 # Footer
-st.markdown(f"""
+st.markdown(
+    f"""
 <div style="text-align: center; margin-top: 64px; padding: 24px 0; color: {COLORS['text_tertiary']}; font-size: 0.875rem;">
 GammaEdge is a research sandbox. Results are for educational and prototyping purposes only – not investment advice.
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)

@@ -16,11 +16,10 @@ Standards:
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any
 
 import numpy as np
 import polars as pl
-
 
 # ============================================================================
 # Constants
@@ -39,13 +38,13 @@ RF_DAILY_DEFAULT = (1 + RF_ANNUAL_DEFAULT) ** (1 / TRADING_DAYS_PER_YEAR) - 1  #
 def _as_pl_date(s: pl.Series) -> pl.Series:
     """
     Normalize any date-like Series to Polars Date.
-    
+
     Handles:
       - pl.Date (already correct)
       - pl.Datetime (cast to Date)
       - Python date/datetime stored as object
       - ISO strings
-    
+
     This prevents "Hash Inner Join between object and object" errors.
     """
     if s.dtype == pl.Date:
@@ -110,9 +109,7 @@ def calculate_returns(
         ret_col = f"ret_{ticker}"
 
         # Simple return: (P_t - P_{t-1}) / P_{t-1}
-        returns_exprs.append(
-            (pl.col(price_col) / pl.col(price_col).shift(1) - 1.0).alias(ret_col)
-        )
+        returns_exprs.append((pl.col(price_col) / pl.col(price_col).shift(1) - 1.0).alias(ret_col))
 
     return prices_wide.select(returns_exprs)
 
@@ -130,9 +127,16 @@ def calculate_beta_alpha(
     min_obs: int = 60,  # Aligned with Sharpe Ratio for consistency
 ) -> dict[str, float | None]:
     """
-    Calculate Beta and Alpha via OLS regression.
+    Compute beta and alpha via OLS regression of asset on market.
 
     Model: r_i = alpha + beta * r_m + epsilon
+
+    Returns:
+        beta:  Cov(r_p, r_m) / Var(r_m)
+        alpha: E[r_p] - beta · E[r_m]   (OLS intercept, NOT Jensen's alpha)
+
+    For Jensen's alpha, pre-subtract rf from both r_p and r_m before calling:
+        jensen_alpha = alpha(r_p - rf, r_m - rf)
 
     Args:
         returns: Ticker returns (daily)
@@ -141,14 +145,14 @@ def calculate_beta_alpha(
         benchmark_dates: Dates for benchmark
         min_obs: Minimum observations required
 
-    Returns:
+    Returns dict:
         {
             "beta": float | None,
-            "alpha_daily": float | None,
-            "alpha_annual": float | None,  # alpha_daily * 252
+            "alpha_daily": float | None,       # OLS intercept (mean residual), daily
+            "alpha_annual": float | None,      # alpha_daily * 252 (approximation)
             "r_squared": float | None,
             "n_obs": int,
-            "data_loss_pct": float,  # % lost in inner join
+            "data_loss_pct": float,            # % lost in inner join
         }
 
     Notes:
@@ -252,7 +256,7 @@ def calculate_sharpe_ratio(
     rf_annual: float = RF_ANNUAL_DEFAULT,
     min_obs: int = 60,
     annualize: bool = True,
-) -> dict[str, float | None]:
+) -> dict[str, float | str | None]:
     """
     Calculate Sharpe Ratio.
 
@@ -397,12 +401,12 @@ def calculate_max_drawdown(
 
     # Find peak and trough indices
     mdd_idx = np.argmin(drawdown)
-    peak_idx = np.argmax(running_max[:mdd_idx + 1]) if mdd_idx > 0 else 0
+    peak_idx = np.argmax(running_max[: mdd_idx + 1]) if mdd_idx > 0 else 0
 
     # Find recovery (if any)
     recovery_idx = None
     if mdd_idx < len(p) - 1:
-        future_prices = p[mdd_idx + 1:]
+        future_prices = p[mdd_idx + 1 :]
         peak_price = running_max[mdd_idx]
         recovery_mask = future_prices >= peak_price
         if np.any(recovery_mask):
@@ -619,7 +623,7 @@ def calculate_moments(
 def calculate_correlation_matrix(
     returns_wide: pl.DataFrame,
     return_col_prefix: str = "ret_",
-) -> dict[str, pl.DataFrame | None]:
+) -> dict[str, pl.DataFrame | str | None]:
     """
     Calculate pairwise correlation matrix on returns.
 
@@ -635,7 +639,9 @@ def calculate_correlation_matrix(
         }
 
     Notes:
-        - Inner join on dates per pair
+        - Global complete-case: rows with NaN in ANY ticker are excluded
+          before computing the full N x N correlation matrix in a single
+          batch np.corrcoef call (industry-standard quant convention).
         - Diagonal = 1.0
         - If only 1 ticker → None
         - Calculated on returns, not prices
@@ -658,45 +664,35 @@ def calculate_correlation_matrix(
         }
 
     tickers = [col.replace(return_col_prefix, "") for col in ret_cols]
-
-    # Calculate correlation matrix
     n_tickers = len(tickers)
-    corr_matrix = np.ones((n_tickers, n_tickers))
-    sample_sizes = np.zeros((n_tickers, n_tickers), dtype=int)
 
-    for i, ticker_i in enumerate(tickers):
-        for j, ticker_j in enumerate(tickers):
-            if i == j:
-                sample_sizes[i, j] = len(returns_wide)
-                continue
+    # Global complete-case drop: any row with NaN in ANY ticker is excluded.
+    # This yields a single common sample for the full correlation matrix,
+    # enabling one batch np.corrcoef call instead of N^2 pairwise calls.
+    returns_array = returns_wide.select(ret_cols).drop_nulls().to_numpy()
+    n_obs = returns_array.shape[0]
 
-            # Get returns for both tickers
-            col_i = f"{return_col_prefix}{ticker_i}"
-            col_j = f"{return_col_prefix}{ticker_j}"
+    if n_obs < 2:
+        # Not enough data: identity diagonal, NaN off-diagonal
+        corr_matrix = np.full((n_tickers, n_tickers), np.nan)
+        np.fill_diagonal(corr_matrix, 1.0)
+    else:
+        # Single batch correlation across all tickers — rowvar=False since
+        # observations are rows and variables are columns.
+        corr_matrix = np.corrcoef(returns_array, rowvar=False)
 
-            df_pair = returns_wide.select(["date", col_i, col_j]).drop_nulls()
-
-            r_i = df_pair[col_i].to_numpy()
-            r_j = df_pair[col_j].to_numpy()
-
-            n_obs = len(r_i)
-            sample_sizes[i, j] = n_obs
-
-            if n_obs < 2:
-                corr_matrix[i, j] = np.nan
-            else:
-                corr_matrix[i, j] = np.corrcoef(r_i, r_j)[0, 1]
+    # Sample size is identical for every pair under the global complete-case
+    # semantic; the diagonal preserves the pre-fix semantic of returning the
+    # full row count of the input.
+    sample_sizes = np.full((n_tickers, n_tickers), n_obs, dtype=int)
+    np.fill_diagonal(sample_sizes, len(returns_wide))
 
     # Create DataFrames
     corr_df = pl.DataFrame(corr_matrix, schema=tickers)
-    corr_df = corr_df.with_columns(pl.Series("ticker", tickers)).select(
-        ["ticker"] + tickers
-    )
+    corr_df = corr_df.with_columns(pl.Series("ticker", tickers)).select(["ticker"] + tickers)
 
     sample_df = pl.DataFrame(sample_sizes, schema=tickers)
-    sample_df = sample_df.with_columns(pl.Series("ticker", tickers)).select(
-        ["ticker"] + tickers
-    )
+    sample_df = sample_df.with_columns(pl.Series("ticker", tickers)).select(["ticker"] + tickers)
 
     return {
         "correlation_matrix": corr_df,
@@ -714,7 +710,7 @@ def calculate_data_quality(
     dates: pl.Series,
     benchmark_dates: pl.Series,
     ticker: str,
-) -> dict[str, any]:
+) -> dict[str, Any]:
     """
     Calculate data coverage and gaps.
 
@@ -830,7 +826,7 @@ def calculate_sortino_ratio(
     target_return: float = 0.0,
     min_obs: int = 60,
     annualize: bool = True,
-) -> dict[str, float | None]:
+) -> dict[str, float | str | None]:
     """
     Calculate Sortino Ratio (penalizes only downside volatility).
 
@@ -872,17 +868,22 @@ def calculate_sortino_ratio(
     rf_daily = (1 + rf_annual) ** (1 / TRADING_DAYS_PER_YEAR) - 1
     excess_returns = r - rf_daily
 
-    # Downside deviation (only negative excess returns)
-    downside_returns = excess_returns[excess_returns < target_return]
+    # Canonical Sortino downside deviation (Sortino & Price 1994):
+    # DD = sqrt(mean(min(0, excess - target)^2)) over the FULL series.
+    # Upside observations are zero-padded (NOT excluded) and the
+    # denominator is N (not k-1 over the negative subset). This avoids
+    # the std-of-subset pathology where Sortino explodes / collapses
+    # when downside returns are (near-)identical or sparse.
+    shortfall = np.minimum(0.0, excess_returns - target_return)
 
-    if downside_returns.size < 2:
+    if shortfall.size < 2:
         return {
             "sortino_ratio": None,
             "downside_deviation": None,
             "warning": "No downside returns for Sortino calculation",
         }
 
-    downside_dev = np.std(downside_returns, ddof=1)
+    downside_dev = float(np.sqrt(np.mean(shortfall**2)))
 
     if downside_dev < 1e-10:
         return {
@@ -891,7 +892,7 @@ def calculate_sortino_ratio(
             "warning": "Zero downside deviation",
         }
 
-    # Calculate Sortino
+    # Calculate Sortino (per-period)
     mean_excess = np.mean(excess_returns)
     sortino = mean_excess / downside_dev
 
@@ -919,7 +920,7 @@ def calculate_information_ratio(
     dates: pl.Series,
     benchmark_dates: pl.Series,
     min_obs: int = 30,
-) -> dict[str, float | None]:
+) -> dict[str, float | str | None]:
     """
     Calculate Information Ratio (excess return / tracking error).
 
@@ -1050,10 +1051,7 @@ def calculate_tail_ratio(
     downside_tail = float(np.percentile(r, (1 - percentile) * 100))
 
     # Tail ratio
-    if abs(downside_tail) < 1e-10:
-        tail_ratio = np.nan
-    else:
-        tail_ratio = abs(upside_tail) / abs(downside_tail)
+    tail_ratio = np.nan if abs(downside_tail) < 1e-10 else abs(upside_tail) / abs(downside_tail)
 
     return {
         "tail_ratio": float(tail_ratio),
@@ -1201,7 +1199,7 @@ def calculate_ulcer_index(
     drawdown = ((p / running_max) - 1.0) * 100  # Convert to percentage
 
     # Ulcer Index = sqrt(mean(drawdown²))
-    drawdown_squared = drawdown ** 2
+    drawdown_squared = drawdown**2
     ulcer_index = np.sqrt(np.mean(drawdown_squared))
 
     # Average drawdown
@@ -1227,7 +1225,7 @@ def calculate_treynor_ratio(
     beta: float,
     rf_annual: float = RF_ANNUAL_DEFAULT,
     min_obs: int = 60,
-) -> dict[str, float | None]:
+) -> dict[str, float | str | None]:
     """
     Calculate Treynor Ratio (return per unit of systematic risk).
 
@@ -1301,7 +1299,7 @@ def calculate_capture_ratios(
     dates: pl.Series,
     benchmark_dates: pl.Series,
     min_obs: int = 30,
-) -> dict[str, float | None]:
+) -> dict[str, float | str | None]:
     """
     Calculate Up/Down Capture Ratios (asymmetry vs benchmark).
 
@@ -1381,10 +1379,7 @@ def calculate_capture_ratios(
     else:
         mean_p_up = np.mean(r_p_up)
         mean_b_up = np.mean(r_b_up)
-        if abs(mean_b_up) < 1e-10:
-            up_capture = None
-        else:
-            up_capture = (mean_p_up / mean_b_up) * 100
+        up_capture = None if abs(mean_b_up) < 1e-10 else (mean_p_up / mean_b_up) * 100
 
     # Down Capture
     if n_down < 2:
@@ -1392,10 +1387,7 @@ def calculate_capture_ratios(
     else:
         mean_p_down = np.mean(r_p_down)
         mean_b_down = np.mean(r_b_down)
-        if abs(mean_b_down) < 1e-10:
-            down_capture = None
-        else:
-            down_capture = (mean_p_down / mean_b_down) * 100
+        down_capture = None if abs(mean_b_down) < 1e-10 else (mean_p_down / mean_b_down) * 100
 
     # Capture Ratio
     if up_capture is not None and down_capture is not None and abs(down_capture) > 1e-10:
@@ -1467,15 +1459,19 @@ def calculate_monthly_extremes(
 
     # Convert to monthly returns
     # Add year-month column
-    df = df.with_columns([
-        pl.col("date").dt.year().alias("year"),
-        pl.col("date").dt.month().alias("month"),
-    ])
+    df = df.with_columns(
+        [
+            pl.col("date").dt.year().alias("year"),
+            pl.col("date").dt.month().alias("month"),
+        ]
+    )
 
     # Group by year-month and calculate cumulative return
-    monthly = df.group_by(["year", "month"]).agg([
-        ((1 + pl.col("ret")).product() - 1).alias("monthly_ret")
-    ]).sort(["year", "month"])
+    monthly = (
+        df.group_by(["year", "month"])
+        .agg([((1 + pl.col("ret")).product() - 1).alias("monthly_ret")])
+        .sort(["year", "month"])
+    )
 
     if monthly.height == 0:
         return {
@@ -1493,11 +1489,11 @@ def calculate_monthly_extremes(
     # Best month
     best_idx = np.argmax(monthly_rets)
     best_month = float(monthly_rets[best_idx])
-    
+
     # Convert to lists for indexing
     years_list = monthly["year"].to_list()
     months_list = monthly["month"].to_list()
-    
+
     best_year = int(years_list[best_idx])
     best_mon = int(months_list[best_idx])
     best_month_date = f"{best_year}-{best_mon:02d}"
@@ -1517,7 +1513,9 @@ def calculate_monthly_extremes(
     avg_negative = float(np.mean(negative_months)) if len(negative_months) > 0 else 0.0
 
     # % positive months
-    pct_positive = (len(positive_months) / len(monthly_rets) * 100) if len(monthly_rets) > 0 else 0.0
+    pct_positive = (
+        (len(positive_months) / len(monthly_rets) * 100) if len(monthly_rets) > 0 else 0.0
+    )
 
     return {
         "best_month": best_month,

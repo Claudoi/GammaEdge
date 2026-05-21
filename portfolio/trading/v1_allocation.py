@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from datetime import date
 
@@ -138,7 +139,7 @@ class AllocationLabelBuilder:
         # Pivot a wide format
         df_wide = df.select([date_col, ticker_col, "forward_return"]).pivot(
             index=date_col,
-            columns=ticker_col,
+            on=ticker_col,
             values="forward_return",
         )
 
@@ -196,26 +197,20 @@ class MeanVarianceOptimizer:
         mu = expected_returns
 
         # Default covariance (identity scaled)
-        if covariance is None:
-            sigma = np.eye(n) * 0.01
-        else:
-            sigma = covariance
+        sigma = np.eye(n) * 0.01 if covariance is None else covariance
 
         # Default prev weights
-        if prev_weights is None:
-            w_prev = np.ones(n) / n
-        else:
-            w_prev = prev_weights
+        w_prev = np.ones(n) / n if prev_weights is None else prev_weights
 
         lam = self.config.risk_aversion
         gamma = self.config.turnover_penalty
 
-        def objective(w):
+        def objective(w: np.ndarray) -> float:
             # Mean-variance + turnover penalty
             ret = w @ mu
             risk = lam * w @ sigma @ w
             turnover = gamma * np.sum(np.abs(w - w_prev))
-            return -(ret - risk - turnover)
+            return float(-(ret - risk - turnover))
 
         # Constraints
         constraints = [
@@ -224,7 +219,7 @@ class MeanVarianceOptimizer:
 
         # Bounds (0 <= w <= cap)
         bounds = []
-        for i, asset in enumerate(self.config.assets):
+        for _i, asset in enumerate(self.config.assets):
             if asset == "BIL":
                 bounds.append((self.config.min_weight, self.config.max_weight_cash))
             else:
@@ -245,10 +240,10 @@ class MeanVarianceOptimizer:
             # Normalize in case of numerical issues
             w_opt = np.clip(w_opt, 0, 1)
             w_opt = w_opt / w_opt.sum()
-            return w_opt
+            return np.asarray(w_opt, dtype=np.float64)
         else:
             logger.warning("Optimization failed, returning previous weights")
-            return w_prev
+            return np.asarray(w_prev, dtype=np.float64)
 
     def apply_daily_change_cap(
         self,
@@ -271,7 +266,7 @@ class MeanVarianceOptimizer:
         new_weights = np.clip(new_weights, 0, 1)
         new_weights = new_weights / new_weights.sum()
 
-        return new_weights
+        return np.asarray(new_weights, dtype=np.float64)
 
 
 # =============================================================================
@@ -336,8 +331,8 @@ class AllocationBacktest:
     def run(
         self,
         df_returns: pl.DataFrame,
-        expected_returns_func: callable | None = None,
-        covariance_func: callable | None = None,
+        expected_returns_func: Callable[..., np.ndarray] | None = None,
+        covariance_func: Callable[..., np.ndarray] | None = None,
     ) -> BacktestResult:
         """
         Ejecuta backtest event-driven.
@@ -365,7 +360,7 @@ class AllocationBacktest:
 
         current_weights = np.ones(n_assets) / n_assets  # Equal weight inicial
 
-        for i, row in enumerate(df.iter_rows(named=True)):
+        for _i, row in enumerate(df.iter_rows(named=True)):
             d = row["date"]
 
             # Forward returns del día
@@ -379,10 +374,7 @@ class AllocationBacktest:
                 exp_rets = rets  # Simplificación para V1
 
             # Covariance
-            if covariance_func:
-                cov = covariance_func(df.filter(pl.col("date") < d))
-            else:
-                cov = None
+            cov = covariance_func(df.filter(pl.col("date") < d)) if covariance_func else None
 
             # Optimizar nuevos pesos
             target_weights = self.optimizer.optimize(
@@ -420,7 +412,7 @@ class AllocationBacktest:
             equity.append(new_equity)
 
             # Guardar histórico
-            weights_history.append({a: w for a, w in zip(assets, new_weights)})
+            weights_history.append(dict(zip(assets, new_weights, strict=False)))
             returns_history.append(port_return)
             turnovers.append(turnover)
 

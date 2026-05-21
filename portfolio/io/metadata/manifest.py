@@ -56,9 +56,9 @@ def get_gammaedge_version() -> str:
     """Obtiene la versión de GammaEdge."""
     # Intentar leer de __version__ o pyproject.toml
     try:
-        from portfolio import __version__
+        from portfolio import __version__  # type: ignore[attr-defined]
 
-        return __version__
+        return str(__version__)
     except ImportError:
         pass
     return "0.0.0-dev"

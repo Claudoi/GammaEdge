@@ -1,46 +1,187 @@
-*.pyc
-.venv/
+# =============================================================================
+# GammaEdge — .gitignore
+# Python 3.11 quantitative finance project (TFG / Final Degree Project)
+# =============================================================================
+
+# ─── Python ──────────────────────────────────────────────────────────────────
 __pycache__/
-.env
-*.sqlite3
-/data/*.parquet
-/data/*.csv
-/.vscode/
-/docker/*.log
-data/cache/
-.DS_Store
+*.py[cod]
+*$py.class
+*.so
+
+# Distribution / packaging
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+sdist/
+wheels/
+MANIFEST
+pip-log.txt
+pip-delete-this-directory.txt
+pip-wheel-metadata/
+
+# ─── Virtual environments ───────────────────────────────────────────────────
+.venv/
+venv/
+env/
+ENV/
+# Note: .python-version is intentionally NOT here — it pins the Python
+# runtime version for deployment (pyenv, Streamlit Cloud, etc.).
+
+# ─── Type checking / linting / testing caches ───────────────────────────────
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
-.ipynb_checkpoints/
-.venv/*
-.venv/
-venv/
-.logs/
-*.log
+.tox/
+.cache/
+.hypothesis/
+
+# Coverage
 .coverage
-.coverageger
+.coverage.*
+coverage.xml
+*.cover
+htmlcov/
 .htmlcov/
 
-# Coverage artifacts
-.coverage*
-coverage.xml
-htmlcov/
-results/logs/
+# ─── IDE / editors ───────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.cursorrules
+.cursor/
+*.code-workspace
+
+# ─── OS-generated ────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+desktop.ini
+
+# ─── Jupyter ─────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*-checkpoint.ipynb
+
+# ─── LaTeX compile artifacts (LaTeX.txt is source; outputs ignored) ─────────
+# Note: LaTeX.txt is the official TFG documentation source — tracked.
+# Only compiled output (LaTeX.pdf) and intermediate artifacts are ignored.
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.idx
+*.ilg
+*.ind
+*.lof
+*.lol
+*.lot
+*.nav
+*.out
+*.run.xml
+*.snm
+*.synctex.gz
+*.synctex(busy)
+*.toc
+*.vrb
+*.xdv
+LaTeX.pdf
+
+# Local-only Claude Code config (not part of the published product)
+.claude/
+CLAUDE.md
+
+# ─── Secrets / credentials ──────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+!.env.example
+secrets/
+*.pem
+*.p12
+*.pfx
+
+# Keys folder — entirely local; never publish (even public keys) to keep
+# the signing infrastructure off the public repository.
+keys/
+
+# ─── Logs ────────────────────────────────────────────────────────────────────
+*.log
+.logs/
 logs/
+results/logs/
+docker/*.log
 
-# Local datasets / caches / artifacts
-datasets/
+# ─── Local data, market data, and released datasets ─────────────────────────
+# Treat all data as ephemeral / locally generated. Re-fetchable from yfinance or
+# regenerated from scripts. Never commit data files to git.
+#
+# Exceptions: small metadata / manifests (INDEX.json, dataset_card.md, etc.)
+# can be tracked explicitly with `git add -f <file>` if needed for reproducibility.
+data/
 data_lake/
-*.xlsx
-*.parquet
-*.csv
-*.sig
-RELEASE.json
-RELEASE.sig
+datasets/
 
-# Local scratch files
+# Common binary data file extensions (catches stray files anywhere)
+*.parquet
+*.feather
+*.arrow
+*.h5
+*.hdf5
+*.npy
+*.npz
+
+# ─── Generated reports / exports / results ──────────────────────────────────
+exports/
+outputs/
+results/
+reports/generated/
+reports/*.html
+reports/*.pdf
+
+# Excel exports (data files; only commit if part of a release artifact)
+*.xlsx
+!docs/**/*.xlsx
+
+# ─── Databases / persistence ────────────────────────────────────────────────
+*.sqlite3
+*.sqlite3-journal
+*.db
+
+# ─── Local scratch files (prototyping, never commit) ────────────────────────
 probe_*.py
 verify_*.py
+scratch_*.py
+scratch/
+tmp/
+.tmp/
 
+# ─── Misc test outputs at root ──────────────────────────────────────────────
+/test_*.xlsx
+/test_*.csv
+/test_*.parquet
+
+# ─── Editor / tooling artifacts ─────────────────────────────────────────────
+.ipython/
+.jupyter/
+profile_*/
+
+# ─── Memory / personal notes ────────────────────────────────────────────────
 TFG.txt
+NOTES.txt
+NOTES.md
+SCRATCH.md
+
+# ─── Internal engineering process docs (not part of product) ────────────────
+# Sprint plans, brainstorming specs, code-review records — kept locally
+# but not part of the published codebase.
+docs/superpowers/

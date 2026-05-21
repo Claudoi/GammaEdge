@@ -285,7 +285,8 @@ class CorporateActionsProcessor:
         close_col = "close_raw" if "close_raw" in df_raw.columns else "close"
         before = df_raw.filter(pl.col("date") < ex_date).sort("date", descending=True)
         if before.height > 0:
-            return before[close_col][0]
+            val = before[close_col][0]
+            return float(val) if val is not None else None
         return None
 
     def _apply_adjustments(
@@ -455,7 +456,7 @@ class CorporateActionsProcessor:
                 how="left",
             )
             .with_columns(
-                pl.when(pl.col("_is_anomaly") == True)
+                pl.when(pl.col("_is_anomaly"))
                 .then(pl.lit("suspect"))
                 .when(pl.col("is_event_day"))
                 .then(pl.lit("event_day"))

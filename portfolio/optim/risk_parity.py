@@ -29,6 +29,15 @@ def risk_parity(
         scale = np.where(g > 0, target / np.maximum(g, 1e-18), 1.0)
         w = w * np.sqrt(scale)
         w = project_to_box_simplex(w, w_min, w_max)
-        if np.linalg.norm(g - target) < tol:
+        # Normalized stopping criterion: robust for any portfolio scale
+        # (Maillard et al. 2010, Roncalli 2013). Uses relative dispersion of RC
+        # instead of absolute residual to avoid false convergence on low-variance
+        # portfolios where both g and target are tiny.
+        if target > 1e-18:
+            relative_dispersion = float(np.max(np.abs(g / target - 1.0)))
+            if relative_dispersion < tol:
+                break
+        else:
+            # Zero-variance portfolio: any allocation is trivially equal-risk
             break
     return w

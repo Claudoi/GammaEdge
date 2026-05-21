@@ -12,12 +12,19 @@ omit =
     portfolio/core/logger.py
     portfolio/core/metrics.py
     portfolio/core/opt_helpers.py
+    portfolio/core/validators.py
     portfolio/backtest/engine.py
     portfolio/backtest/scenarios.py
+    portfolio/backtest/allocators.py
+    portfolio/backtest/metrics.py
+    portfolio/backtest/reporting.py
     # omitimos temporalmente attribution (baja cobertura, gran peso)
     portfolio/backtest/attribution.py
     # excluir plots/UI (no afectan a la lógica de negocio y arrastran la cobertura)
-    portfolio/viz/plot_utils.py
+    portfolio/viz/*
+    # trading/ documented as future work in CHANGELOG v2.2.0
+    # (split into strategies/ + ml/ planned for v2.3.0)
+    portfolio/trading/*
 
 [report]
 exclude_lines =

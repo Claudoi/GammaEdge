@@ -5,62 +5,10 @@ from collections.abc import Sequence
 
 import numpy as np
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Utilidades numéricas (robustas)
-# ──────────────────────────────────────────────────────────────────────────────
-
-
-def ensure_psd(S: np.ndarray, eps: float = 1e-10) -> np.ndarray:
-    """
-    Saneo + proyección PSD robusta:
-    - simetriza
-    - reemplaza no finitos por 0
-    - asegura diagonal mínima
-    - si eigh falla, aplica jitter creciente en la diagonal (hasta 6 intentos)
-    - último recurso: SVD con clip
-    """
-    if S.size == 0:
-        return S
-
-    A = 0.5 * (S + S.T)
-    A = np.asarray(A, dtype=float)
-    A[~np.isfinite(A)] = 0.0
-
-    d = np.diag(A).copy()
-    d[~np.isfinite(d)] = 0.0
-    d = np.maximum(d, eps)
-    np.fill_diagonal(A, d)
-
-    jitter = 0.0
-    for _ in range(6):
-        try:
-            w, V = np.linalg.eigh(A)
-            w = np.clip(w, eps, None)
-            R = V @ np.diag(w) @ V.T
-            return np.asarray(0.5 * (R + R.T), dtype=np.float64)
-        except np.linalg.LinAlgError:
-            jitter = eps if jitter == 0.0 else jitter * 10.0
-            A = A + np.eye(A.shape[0]) * jitter
-
-    # Fallback muy raro
-    U, s, VT = np.linalg.svd(0.5 * (A + A.T), full_matrices=False)
-    s = np.clip(s, eps, None)
-    R = (U * s) @ VT
-    return np.asarray(0.5 * (R + R.T), dtype=np.float64)
-
-
-def cond_number(S: np.ndarray) -> float:
-    """Número de condición κ(Σ)."""
-    if S.size == 0:
-        return float("nan")
-    Ssym = 0.5 * (S + S.T)
-    w = np.linalg.eigvalsh(Ssym)
-    if w.size == 0:
-        return float("nan")
-    lam_min = float(np.min(w))
-    lam_max = float(np.max(w))
-    return float(lam_max / max(lam_min, 1e-16))
-
+# Canonical numerical utilities live in ``portfolio.core.utils``; re-exported
+# here so existing importers (``black_litterman``, ``risk_parity``,
+# ``hrp``, ``te``, tests…) keep working unchanged.
+from portfolio.core.utils import cond_number, ensure_psd  # noqa: F401  (re-export)
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Markowitz sin caja (short permitido)
@@ -109,6 +57,12 @@ def frontier_closed_form(
     mu = np.asarray(mu, dtype=np.float64).reshape(-1)
     Sigma = np.asarray(Sigma, dtype=np.float64)
     n = len(mu)
+
+    if n <= 1:
+        raise ValueError(
+            f"frontier_closed_form requires at least 2 assets; got {n}. "
+            "For single-asset analysis, use markowitz_closed_form directly."
+        )
 
     if Sigma.shape != (n, n):
         raise ValueError("Sigma shape must be (N,N) aligned with mu")

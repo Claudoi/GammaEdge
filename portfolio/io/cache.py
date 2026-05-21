@@ -139,8 +139,7 @@ def _pandas_compression_from(
     - Para el resto, mapeamos 1:1.
     """
     if comp in ("snappy", "gzip", "brotli", "lz4", "zstd"):
-        # cast garantiza a mypy que el valor pertenece al literal reducido
-        return cast(PandasParquetCompression, comp)
+        return comp
     return None
 
 
@@ -195,7 +194,7 @@ def save_pl(
     with _file_lock(lock):
         tmp = p.with_suffix(p.suffix + ".tmp")
         p.parent.mkdir(parents=True, exist_ok=True)
-        df.write_parquet(tmp, compression=compression)
+        df.write_parquet(tmp, compression=compression)  # type: ignore[arg-type]
         os.replace(tmp, p)
     return p
 

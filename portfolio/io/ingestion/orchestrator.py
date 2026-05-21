@@ -244,14 +244,14 @@ class DataOrchestrator:
             self._save_to_raw(df, "bars_1d", tickers_list, start, end, ingestion_id)
 
         # Cross-validation (opcional)
-        if cross_validate and len(self._providers) > 1:
+        if cross_validate and len(self._providers) > 1 and used_provider is not None:
             self._cross_validate(df, tickers_list, start, end, used_provider)
 
         duration = time.perf_counter() - t0
 
         result = IngestionResult(
             ingestion_id=ingestion_id,
-            provider=used_provider,
+            provider=used_provider or "unknown",
             data_type="bars_1d",
             tickers=tickers_list,
             start_date=start,
@@ -288,7 +288,8 @@ class DataOrchestrator:
         for attempt in range(1, self.max_retries + 1):
             try:
                 func = getattr(provider, method)
-                return func(tickers, start, end)
+                result: pl.DataFrame = func(tickers, start, end)
+                return result
 
             except RateLimitError:
                 raise  # No reintentar rate limits
@@ -379,7 +380,7 @@ class DataOrchestrator:
 
     def health_check(self) -> dict[str, dict]:
         """Verifica el estado de todos los proveedores."""
-        results = {}
+        results: dict[str, dict] = {}
         for provider in self._providers:
             results[provider.name] = provider.health_check()
         return results

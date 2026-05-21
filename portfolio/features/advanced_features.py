@@ -416,7 +416,7 @@ def compute_rolling_beta(
     return df.with_columns(
         [
             (
-                pl.col("ret_1d").rolling_cov(pl.col("bench_ret"), window).over("ticker")
+                pl.col("ret_1d").rolling_cov(pl.col("bench_ret"), window).over("ticker")  # type: ignore[attr-defined]
                 / pl.col("bench_ret").rolling_var(window)
             ).alias(f"beta_{window}d")
         ]

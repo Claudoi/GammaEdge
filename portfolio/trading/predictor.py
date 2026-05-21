@@ -19,7 +19,7 @@ import json
 import logging
 from dataclasses import asdict, dataclass, field
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
 import numpy as np
 import polars as pl
@@ -68,7 +68,7 @@ class ReturnPredictor:
 
     def __init__(self, config: PredictorConfig | None = None):
         self.config = config or PredictorConfig()
-        self.models = {}  # asset → trained model
+        self.models: dict[str, Any] = {}  # asset → trained model
         self._is_fitted = False
 
     def fit(
@@ -229,7 +229,7 @@ class WalkForwardValidator:
     def __init__(
         self,
         predictor_config: PredictorConfig | None = None,
-        allocation_config=None,  # V1AllocationConfigV2
+        allocation_config: Any = None,  # V1AllocationConfigV2
         wf_config: WalkForwardConfig | None = None,
     ):
         self.predictor_config = predictor_config or PredictorConfig()
@@ -310,17 +310,22 @@ class WalkForwardValidator:
             predictor.fit(df_train_feat, df_train_ret)
 
             # Función para expected returns
-            def expected_returns_func(df_history):
+            # Bind loop vars via defaults so each closure captures this iteration's values.
+            def expected_returns_func(
+                df_history: pl.DataFrame,
+                _df_test_feat: pl.DataFrame = df_test_feat,
+                _predictor: Any = predictor,
+            ) -> np.ndarray:
                 # Merge con features
                 if df_history.height == 0:
                     return np.zeros(len(self.allocation_config.assets))
 
                 last_date = df_history["date"].max()
-                feat_row = df_test_feat.filter(pl.col(date_col) <= last_date).tail(1)
-                return predictor.predict(feat_row)
+                feat_row = _df_test_feat.filter(pl.col(date_col) <= last_date).tail(1)
+                return np.asarray(_predictor.predict(feat_row))
 
             # Rolling covariance
-            def covariance_func(df_history):
+            def covariance_func(df_history: pl.DataFrame) -> np.ndarray | None:
                 if df_history.height < 60:
                     return None
 

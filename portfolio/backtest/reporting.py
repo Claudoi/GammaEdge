@@ -23,6 +23,7 @@ from .attribution import (
     align_returns_and_weights,
     contributions_by_asset,
     contributions_by_group,
+    expand_rebalance_weights,
 )
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -382,6 +383,7 @@ def _kaleido_available() -> bool:
     """Check if kaleido can render (requires Chrome on newer versions)."""
     try:
         import kaleido  # noqa: F401
+
         # Quick smoke-test: create a tiny figure and try to render it
         _test_fig = go.Figure(go.Scatter(x=[0], y=[0]))
         _test_fig.to_image(format="png", width=50, height=50, engine="kaleido")
@@ -682,9 +684,7 @@ def _render_figures_block_interactive(
                 config={"responsive": True, "displayModeBar": True},
             )
             parts.append(
-                f'<div class="imgwrap">'
-                f'{fig_html}'
-                f'<div class="caption">{rf.title}</div></div>'
+                f'<div class="imgwrap">{fig_html}<div class="caption">{rf.title}</div></div>'
             )
 
     return "\n".join(parts) if parts else "<p>No figures.</p>"
@@ -799,7 +799,7 @@ def render_pdf(
             except Exception:
                 continue
 
-        for i, (fig_title, png_bytes) in enumerate(rendered):
+        for _i, (fig_title, png_bytes) in enumerate(rendered):
             c.showPage()
             # Page header
             c.setFont("Helvetica-Bold", 16)
@@ -814,8 +814,13 @@ def render_pdf(
             x = margin
             y = (h_page - margin - 40) - draw_h
             c.drawImage(
-                img, x, y, width=draw_w, height=draw_h,
-                preserveAspectRatio=True, mask="auto",
+                img,
+                x,
+                y,
+                width=draw_w,
+                height=draw_h,
+                preserveAspectRatio=True,
+                mask="auto",
             )
             c.setFont("Helvetica", 10)
             c.drawString(margin, y - 14, fig_title)
@@ -826,11 +831,13 @@ def render_pdf(
         c.drawString(margin, h_page - margin, "Figures")
         c.setFont("Helvetica", 10)
         c.drawString(
-            margin, h_page - margin - 20,
+            margin,
+            h_page - margin - 20,
             "Interactive charts are available in the HTML export.",
         )
         c.drawString(
-            margin, h_page - margin - 36,
+            margin,
+            h_page - margin - 36,
             "(Static PNG rendering requires Chrome/kaleido, not available in this environment.)",
         )
         # List figure titles
@@ -908,9 +915,7 @@ def export_backtest_report(
         rb_dates_list = rb_dates_any
 
     # Expand rebalance weights to daily grid
-    from portfolio.backtest import attribution as bt_attr  # local import to avoid cycles
-
-    daily_W = bt_attr.expand_rebalance_weights(
+    daily_W = expand_rebalance_weights(
         dates=df_ret_bt.get_column("date").to_list(),
         rb_dates=list(rb_dates_list),
         W_reb=W_reb,

@@ -4,6 +4,7 @@ from __future__ import annotations
 import inspect
 
 # --- stdlib ---
+import logging
 import os
 import sys
 from typing import Any, Literal, cast
@@ -20,6 +21,9 @@ import streamlit as st
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
 # --- local modules ---
+# Design System
+from app.design_system import get_global_styles
+from app.utils import ensure_turnover_with_drift
 from portfolio.backtest import metrics as bt_metrics
 from portfolio.backtest.allocators import make_allocator
 from portfolio.backtest.engine import backtest_rebalanced
@@ -42,14 +46,21 @@ from portfolio.viz.plot_utils import (
     show_plot,
 )
 
+logger = logging.getLogger(__name__)
+
 # ─────────────────────────────────────────────────────────────────────
 # Page config
 # ─────────────────────────────────────────────────────────────────────
 st.set_page_config(page_title="Scenarios", layout="wide")
-st.title("🧪 Scenarios")
+st.markdown(get_global_styles(), unsafe_allow_html=True)
+st.title("Scenarios")
 st.caption(
     "Stress-tests on the return matrix with robust turnover reconstruction and clean comparisons vs Baseline."
 )
+
+# Initialize session_state counters used by this page
+if "_auto_key_counter" not in st.session_state:
+    st.session_state["_auto_key_counter"] = 0
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -112,103 +123,26 @@ def _extract_metric_scalar(
     return float(default)
 
 
-def _ensure_turnover_with_drift(bt: dict, df_wide: pl.DataFrame) -> tuple[list, np.ndarray]:
-    """
-    Ensure we have a turnover time series:
-    1) Try to use what the engine returns (DataFrame or array).
-    2) If missing, reconstruct turnover between rebalance dates using drifted weights.
-    """
-    # 1) Try engine output
-    to_obj = bt.get("turnover")
-    if to_obj is not None:
-        try:
-            if isinstance(to_obj, pl.DataFrame) and "turnover" in to_obj.columns:
-                dates = (
-                    to_obj.get_column("date").to_list()
-                    if "date" in to_obj.columns
-                    else list(range(to_obj.height))
-                )
-                vals = to_obj.get_column("turnover").to_numpy()
-                return dates, np.asarray(vals, float)
-            if isinstance(to_obj, pd.DataFrame) and "turnover" in to_obj.columns:
-                dates = (
-                    to_obj["date"].tolist()
-                    if "date" in to_obj.columns
-                    else list(range(len(to_obj)))
-                )
-                return dates, np.asarray(to_obj["turnover"].values, float)
-            arr = np.asarray(to_obj, float).ravel()
-            if arr.size > 0:
-                rb_dates = bt.get("rebalance_dates")
-                dates = (
-                    list(rb_dates)[-arr.size :]
-                    if rb_dates is not None
-                    else list(bt["dates"][-arr.size :])
-                )
-                return dates, arr
-        except Exception:
-            pass
-
-    # 2) Reconstruct from pre/post-drift weights
-    rb_dates = list(bt.get("rebalance_dates", []))
-    W_reb = np.asarray(bt.get("weights", []), float)
-    tick = list(bt.get("tickers", []))
-    if W_reb.size == 0 or len(rb_dates) != W_reb.shape[0] or df_wide is None:
-        return [], np.array([], float)
-
-    have = set(df_wide.columns)
-    miss = [t for t in tick if t not in have]
-    if miss:
-        df_wide = df_wide.with_columns(**{c: pl.lit(0.0, dtype=pl.Float64) for c in miss})
-    df_wide = df_wide.select(["date", *tick]).sort("date")
-    idx_map = {d: i for i, d in enumerate(df_wide.get_column("date").to_list())}
-
-    def _norm(w: np.ndarray) -> np.ndarray:
-        s = float(np.sum(w))
-        return (w / s) if s > 1e-12 else w
-
-    turns, out_dates = [], []
-    w_prev = _norm(W_reb[0])
-    for k in range(len(rb_dates) - 1):
-        d0, d1 = rb_dates[k], rb_dates[k + 1]
-        i0, i1 = idx_map.get(d0), idx_map.get(d1)
-
-        if i0 is None or i1 is None or i1 <= i0:
-            w_pre = w_prev
-        else:
-            R_seg = df_wide.slice(i0, i1 - i0).select(tick).to_numpy()
-            G = np.prod(1.0 + np.nan_to_num(R_seg, nan=0.0), axis=0)
-            w_pre = _norm(w_prev * G)
-
-        w_new = _norm(W_reb[k + 1])
-        to_k = 0.5 * float(np.sum(np.abs(w_new - w_pre)))
-        turns.append(to_k)
-        out_dates.append(d1)
-        w_prev = w_new
-
-    return out_dates, np.asarray(turns, float)
-
-
 # ─────────────────────────────────────────────────────────────────────
 # Data handoff from previous pages
 # ─────────────────────────────────────────────────────────────────────
-df_ret_wide = st.session_state.get("df_ret_wide", st.session_state.get("returns_wide", None))
-if df_ret_wide is None:
+returns_wide = st.session_state.get("returns_wide")
+if returns_wide is None:
     st.warning("Missing `returns_wide`. Run pages 01→04 first.")
     st.stop()
 
-if isinstance(df_ret_wide, pd.DataFrame):
-    df_ret_wide = pl.from_pandas(df_ret_wide)
-if not isinstance(df_ret_wide, pl.DataFrame):
+if isinstance(returns_wide, pd.DataFrame):
+    returns_wide = pl.from_pandas(returns_wide)
+if not isinstance(returns_wide, pl.DataFrame):
     st.error("`returns_wide` must be Polars or Pandas.")
     st.stop()
 
-if df_ret_wide.schema.get("date") != pl.Datetime:
-    df_ret_wide = df_ret_wide.with_columns(pl.col("date").cast(pl.Datetime))
+if returns_wide.schema.get("date") != pl.Datetime:
+    returns_wide = returns_wide.with_columns(pl.col("date").cast(pl.Datetime))
 
-tickers = [c for c in df_ret_wide.columns if c != "date"]
+tickers = [c for c in returns_wide.columns if c != "date"]
 N = len(tickers)
-if N == 0 or df_ret_wide.height < 10:
+if N == 0 or returns_wide.height < 10:
     st.error("Dataset too small for scenarios.")
     st.stop()
 
@@ -368,7 +302,7 @@ def _run_engine(df_wide: pl.DataFrame) -> dict[str, Any]:
 # ─────────────────────────────────────────────────────────────────────
 st.subheader("Baseline (reference)")
 with st.spinner("Running baseline..."):
-    df_base = df_ret_wide.select(["date", *tickers]).sort("date")
+    df_base = returns_wide.select(["date", *tickers]).sort("date")
     base_bt = _run_engine(df_base)
 
 show_plot(
@@ -394,7 +328,7 @@ show_plot(
     key=next_key("baseline-weights"),
 )
 
-dates_to, vals_to = _ensure_turnover_with_drift(base_bt, df_base)
+dates_to, vals_to = ensure_turnover_with_drift(base_bt, df_base)
 if vals_to.size > 0 and len(dates_to) == vals_to.size:
     show_plot(
         plot_turnover(dates_to, vals_to, title="Baseline · Turnover"),
@@ -495,7 +429,7 @@ with st.sidebar:
     )
     crash_enable = st.checkbox("One-day crash", value=False)
     crash_day = st.number_input(
-        "Crash day index (0-based)", 0, max(1, df_ret_wide.height - 1), 0, 1
+        "Crash day index (0-based)", 0, max(1, returns_wide.height - 1), 0, 1
     )
     crash_drop_bps = st.number_input(
         "Crash size (bps)", -5000.0, 5000.0, -500.0, 10.0, help="e.g., −500 bps = −5% one-day gap."
@@ -567,7 +501,7 @@ def _flatten_metrics_row(m: pl.DataFrame | pd.DataFrame) -> dict[str, float]:
                     except Exception:
                         pass
     except Exception:
-        pass
+        logger.exception("Scenarios page: failed to flatten metrics row")
     return out
 
 
@@ -793,7 +727,7 @@ def _try_engine_cagr(df_wide: pl.DataFrame) -> float:
             rp = eq[1:] / eq[:-1] - 1.0
             return _cagr_from_portfolio_returns(rp)
     except Exception:
-        pass
+        logger.debug("Scenarios page: engine CAGR fallback to NaN", exc_info=True)
     return float("nan")
 
 
@@ -875,4 +809,4 @@ try:
             key=next_key("dl-scenario-metrics"),
         )
 except Exception:
-    pass
+    logger.exception("Scenarios page: failed to render export download buttons")

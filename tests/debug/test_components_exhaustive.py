@@ -2,16 +2,24 @@
 Prueba exhaustiva de componentes de design_system
 para detectar errores de runtime
 """
+
 import sys
-sys.path.insert(0, '.')
+
+sys.path.insert(0, ".")
 
 print("=" * 70)
 print("PRUEBA EXHAUSTIVA DE COMPONENTES")
 print("=" * 70)
 
-from app.design_system import (
-    COLORS, TYPOGRAPHY, SPACING,
-    get_global_styles, data_hero_card, metric_grid, section_header, info_panel
+from app.design_system import (  # noqa: E402  # imported after print banner
+    COLORS,
+    SPACING,
+    TYPOGRAPHY,
+    data_hero_card,
+    get_global_styles,
+    info_panel,
+    metric_grid,
+    section_header,
 )
 
 print("\n1. Probando data_hero_card con diferentes valores...")
@@ -39,28 +47,34 @@ for i, (title, value, subtitle, trend, icon, fmt) in enumerate(test_cases, 1):
 print("\n2. Probando metric_grid con diferentes configuraciones...")
 grid_tests = [
     # Simple 1 column
-    ([{'label': 'Test', 'value': 123.45, 'icon': '📊'}], 1),
+    ([{"label": "Test", "value": 123.45, "icon": "📊"}], 1),
     # 3 columns with different value types
-    ([
-        {'label': 'Returns', 'value': 0.156, 'icon': '📈'},
-        {'label': 'Vol', 'value': 0.182, 'icon': '📊'},
-        {'label': 'Sharpe', 'value': 2.34, 'icon': '⚡'},
-    ], 3),
+    (
+        [
+            {"label": "Returns", "value": 0.156, "icon": "📈"},
+            {"label": "Vol", "value": 0.182, "icon": "📊"},
+            {"label": "Sharpe", "value": 2.34, "icon": "⚡"},
+        ],
+        3,
+    ),
     # With trends and negatives
-    ([
-        {'label': 'CAGR', 'value': 0.12, 'icon': '📈', 'trend': 0.05},
-        {'label': 'Max DD', 'value': -0.23, 'icon': '⚠️', 'negative': True},
-    ], 2),
+    (
+        [
+            {"label": "CAGR", "value": 0.12, "icon": "📈", "trend": 0.05},
+            {"label": "Max DD", "value": -0.23, "icon": "⚠️", "negative": True},
+        ],
+        2,
+    ),
     # String values
-    ([
-        {'label': 'Status', 'value': 'Active', 'icon': '✅'},
-        {'label': 'Mode', 'value': 'Live', 'icon': '🔴'},
-    ], 2),
+    (
+        [
+            {"label": "Status", "value": "Active", "icon": "✅"},
+            {"label": "Mode", "value": "Live", "icon": "🔴"},
+        ],
+        2,
+    ),
     # 5 columns (max)
-    ([
-        {'label': f'Metric {i}', 'value': i * 10.5, 'icon': '📊'}
-        for i in range(1, 6)
-    ], 5),
+    ([{"label": f"Metric {i}", "value": i * 10.5, "icon": "📊"} for i in range(1, 6)], 5),
 ]
 
 for i, (metrics, cols) in enumerate(grid_tests, 1):
@@ -92,7 +106,7 @@ for title, subtitle, icon in header_tests:
         sys.exit(1)
 
 print("\n4. Probando info_panel...")
-panel_types = ['info', 'warning', 'success', 'error']
+panel_types = ["info", "warning", "success", "error"]
 for panel_type in panel_types:
     try:
         result = info_panel(f"Test {panel_type} panel", panel_type)
@@ -111,7 +125,7 @@ try:
     assert ".stApp" in styles
     assert "background:" in styles
     # Check for critical styles
-    assert COLORS['bg_primary'] in styles
+    assert COLORS["bg_primary"] in styles
     assert "stTabs" in styles  # Tab styling present
     assert "stButton" in styles  # Button styling present
     print("  ✓ Global styles complete")
@@ -123,24 +137,29 @@ print("\n6. Verificando que COLORS/TYPOGRAPHY/SPACING son consistentes...")
 try:
     # Verify essential color keys
     essential_colors = [
-        'bg_primary', 'bg_secondary', 'text_primary', 'text_secondary',
-        'data_positive', 'data_negative', 'accent_primary'
+        "bg_primary",
+        "bg_secondary",
+        "text_primary",
+        "text_secondary",
+        "data_positive",
+        "data_negative",
+        "accent_primary",
     ]
     for key in essential_colors:
         assert key in COLORS, f"Missing color: {key}"
         assert isinstance(COLORS[key], str), f"Color {key} not string"
     print(f"  ✓ {len(COLORS)} colors defined")
-    
+
     # Verify typography
-    essential_typo = ['hero', 'title_1', 'title_2', 'body', 'caption']
+    essential_typo = ["hero", "title_1", "title_2", "body", "caption"]
     for key in essential_typo:
         assert key in TYPOGRAPHY, f"Missing typography: {key}"
     print(f"  ✓ {len(TYPOGRAPHY)} typography scales defined")
-    
+
     # Verify spacing
     assert len(SPACING) >= 7, "Not enough spacing units"
     print(f"  ✓ {len(SPACING)} spacing units defined")
-    
+
 except Exception as e:
     print(f"  ✗ Tokens verification FAILED: {e}")
     sys.exit(1)
@@ -153,7 +172,7 @@ print(f"  - {len(test_cases)} casos de data_hero_card")
 print(f"  - {len(grid_tests)} configuraciones de metric_grid")
 print(f"  - {len(header_tests)} variantes de section_header")
 print(f"  - {len(panel_types)} tipos de info_panel")
-print(f"  - Estilos globales completos")
+print("  - Estilos globales completos")
 print(f"  - {len(COLORS)} color tokens")
 print(f"  - {len(TYPOGRAPHY)} typography scales")
 print(f"  - {len(SPACING)} spacing units")

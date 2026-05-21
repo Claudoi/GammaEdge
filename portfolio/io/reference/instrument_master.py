@@ -19,6 +19,7 @@ import logging
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import polars as pl
@@ -120,7 +121,7 @@ class InstrumentMaster:
         asset_class: str = "equity",
         figi: str | None = None,
         ipo_date: date | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> str:
         """
         Crea un nuevo instrumento y retorna su instrument_id.
@@ -187,10 +188,12 @@ class InstrumentMaster:
 
         # Lookup histórico
         for mapping in self._ticker_history:
-            if mapping.ticker.upper() == ticker.upper():
-                if mapping.valid_from <= as_of:
-                    if mapping.valid_to is None or mapping.valid_to > as_of:
-                        return mapping.instrument_id
+            if (
+                mapping.ticker.upper() == ticker.upper()
+                and mapping.valid_from <= as_of
+                and (mapping.valid_to is None or mapping.valid_to > as_of)
+            ):
+                return mapping.instrument_id
 
         return None
 
@@ -204,10 +207,12 @@ class InstrumentMaster:
     def get_ticker_as_of(self, instrument_id: str, as_of: date) -> str | None:
         """Obtiene el ticker que tenía un instrumento en una fecha."""
         for mapping in self._ticker_history:
-            if mapping.instrument_id == instrument_id:
-                if mapping.valid_from <= as_of:
-                    if mapping.valid_to is None or mapping.valid_to > as_of:
-                        return mapping.ticker
+            if (
+                mapping.instrument_id == instrument_id
+                and mapping.valid_from <= as_of
+                and (mapping.valid_to is None or mapping.valid_to > as_of)
+            ):
+                return mapping.ticker
         return None
 
     def get_instrument(self, instrument_id: str) -> Instrument | None:
@@ -451,6 +456,7 @@ class InstrumentMaster:
 
     def _load(self) -> None:
         """Carga el master desde disco."""
+        assert self.path is not None  # caller guarantees in __init__
         instruments_path = self.path / "instruments.parquet"
         history_path = self.path / "ticker_history.parquet"
 

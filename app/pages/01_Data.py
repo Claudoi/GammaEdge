@@ -5,6 +5,7 @@ import base64
 import hashlib
 import io
 import json
+import logging
 import os
 import struct
 import sys
@@ -12,17 +13,28 @@ import time
 from datetime import date, datetime
 from pathlib import Path
 
-
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import polars as pl
 import streamlit as st
 
-
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../..")))
 
+# Design System
+from app.design_system import COLORS, get_global_styles, metric_grid, section_header
+from app.viz.plotly_theme import apply_gammaedge_theme
 from portfolio.core.compat import UTC
+from portfolio.features.quant_charts import (
+    generate_correlation_heatmap_preview,
+    generate_drawdown_chart,
+    generate_equity_curve_normalized,
+    generate_monthly_returns_bar,
+    generate_returns_distribution,
+    generate_rolling_sharpe,
+    generate_rolling_volatility,
+)
+from portfolio.features.quant_preview import generate_metrics_summary
 from portfolio.features.returns import (
     compute_returns_from_prices_long,
     long_to_wide,
@@ -34,20 +46,9 @@ from portfolio.features.returns import (
 from portfolio.io.cache import age_seconds, cache_path, invalidate, load_pl, save_json, save_pl
 from portfolio.io.data_loader import get_prices_long
 from portfolio.io.excel_export import export_quant_metrics_to_excel
-from portfolio.features.quant_preview import generate_metrics_summary
-from portfolio.features.quant_charts import (
-    generate_equity_curve_normalized,
-    generate_drawdown_chart,
-    generate_rolling_volatility,
-    generate_correlation_heatmap_preview,
-    generate_rolling_sharpe,
-    generate_returns_distribution,
-    generate_monthly_returns_bar,
-)
 from portfolio.viz.plot_utils import show_plot
 
-# Design System
-from app.design_system import COLORS, get_global_styles, metric_grid, section_header
+logger = logging.getLogger(__name__)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -449,11 +450,11 @@ def _verify_openssh_signature_pure(
     try:
         from cryptography.hazmat.primitives import hashes
         from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
-    except ImportError:
+    except ImportError as exc:
         raise ImportError(
             "Audit Mode requires the 'cryptography' package. "
             "Install it with: pip install cryptography"
-        )
+        ) from exc
 
     try:
         # 1. Load Public Key
@@ -519,7 +520,7 @@ def _verify_openssh_signature_pure(
         return True
 
     except Exception as e:
-        print(f"Verification Failed: {e}")
+        logger.exception("Verification Failed: %s", e)
         raise e
 
 
@@ -535,7 +536,7 @@ def _verify_and_load_dataset(dataset_path: Path) -> dict:
             Path("keys/allowed_signers"),
         )
     except Exception as e:
-        res["error"] = f"❌ Signature Verification Failed: {e}"
+        res["error"] = f"Signature Verification Failed: {e}"
         return res
 
     # 2. Verify Content Hash check
@@ -556,11 +557,11 @@ def _verify_and_load_dataset(dataset_path: Path) -> dict:
         actual_hash = sha256.hexdigest()
 
         if actual_hash != expected_hash:
-            res["error"] = "❌ Content Hash Mismatch! integrity compromised."
+            res["error"] = "Content Hash Mismatch! integrity compromised."
             return res
 
     except Exception as e:
-        res["error"] = f"❌ Hash Check Error: {e}"
+        res["error"] = f"Hash Check Error: {e}"
         return res
 
     # 3. Load logic
@@ -622,7 +623,7 @@ def _verify_and_load_dataset(dataset_path: Path) -> dict:
         return res
 
     except Exception as e:
-        res["error"] = f"❌ Loading Error: {e}"
+        res["error"] = f"Loading Error: {e}"
         return res
 
 
@@ -635,16 +636,19 @@ st.set_page_config(page_title="Data", layout="wide")
 st.markdown(get_global_styles(), unsafe_allow_html=True)
 
 # Page title with Apple-style
-st.markdown(f"""
+st.markdown(
+    f"""
 <div style="margin-bottom: 32px;">
 <h1 style="font-size: 2.5rem; font-weight: 600; color: {COLORS['text_primary']}; margin-bottom: 8px;">
-📦 Data Module
+Data Module
 </h1>
 <p style="font-size: 1rem; color: {COLORS['text_secondary']}; line-height: 1.5;">
 Load historical data, clean series, and compute quantitative metrics
 </p>
 </div>
-""", unsafe_allow_html=True)
+""",
+    unsafe_allow_html=True,
+)
 
 # Initialise session_state
 if "data_payload" not in st.session_state:
@@ -669,7 +673,7 @@ mode = st.radio(
 price_cfg = {}  # Scope safety
 
 if mode == "Audit Mode (Frozen)":
-    st.info("🔒 **Audit Mode**: Loading signed datasets verified with Ed25519 keys.")
+    st.info("**Audit Mode**: Loading signed datasets verified with Ed25519 keys.")
 
     datasets_index = _load_frozen_dataset_index()
     if not datasets_index:
@@ -685,7 +689,7 @@ if mode == "Audit Mode (Frozen)":
 
         col_verify, col_status = st.columns([1, 4])
 
-        if col_verify.button("🛡️ Verify & Load", type="primary"):
+        if col_verify.button("Verify & Load", type="primary"):
             with st.spinner("Cryptographic Verification in progress (ssh-keygen)..."):
                 # Construct path
                 ds_path = Path("datasets") / selected_meta["path"]
@@ -695,7 +699,7 @@ if mode == "Audit Mode (Frozen)":
                 if result["verified"]:
                     st.session_state["data_payload"] = result["payload"]
                     st.session_state["data_ready"] = True
-                    st.success("✅ **Signature Validated**. Dataset Integrity Confirmed.")
+                    st.success("**Signature Validated**. Dataset Integrity Confirmed.")
                     st.balloons()
                 else:
                     st.error(result["error"])
@@ -782,7 +786,7 @@ elif mode == "Live Mode (Research)":
     # ──────────────────────────────────────────────────────────────────────────────
     # Action (compute) – store in session_state
     # ──────────────────────────────────────────────────────────────────────────────
-    if st.button("🔄 Load & Preview", type="primary", use_container_width=True):
+    if st.button("Load & Preview", type="primary", use_container_width=True):
         if not tickers:
             st.error("Please provide at least one ticker.")
             st.stop()
@@ -801,14 +805,16 @@ elif mode == "Live Mode (Research)":
             gap_thr=int(gap_thr),
             topk_out=int(topk_out),
         )
-        st.session_state["data_payload"] = payload # Keep original name for consistency with render block
-        
+        st.session_state["data_payload"] = (
+            payload  # Keep original name for consistency with render block
+        )
+
         # Save tickers and dates for auto-population in Quant Metrics
         st.session_state["loaded_tickers"] = ",".join(tickers)
         st.session_state["loaded_start_date"] = start
         st.session_state["loaded_end_date"] = end
-        
-        st.success(f"✅ Loaded {len(tickers)} tickers")
+
+        st.success(f"Loaded {len(tickers)} tickers")
         st.session_state["data_ready"] = True
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -870,37 +876,47 @@ if st.session_state.get("data_ready"):
         st.dataframe(df_ret_wide.tail(10).to_pandas().round(6), width="stretch")
 
     # Data Health - Apple-style metric grid
-    st.markdown(section_header(
-        "Data Health",
-        "Overview of dataset completeness and freshness",
-        "🩺"
-    ), unsafe_allow_html=True)
-    
+    st.markdown(
+        section_header("Data Health", "Overview of dataset completeness and freshness", "🩺"),
+        unsafe_allow_html=True,
+    )
+
     n_rows = df_prices.height
     n_tickers = df_prices.select(pl.col("ticker").n_unique()).item()
     n_dates = df_prices.select(pl.col("date").n_unique()).item()
     missing_prices = df_prices.filter(pl.col("price").is_null()).height
     data_age = age_seconds("prices_long", price_cfg)
-    
-    st.markdown(metric_grid([
-        {'label': 'Assets in Universe', 'value': n_tickers, 'icon': '📊'},
-        {'label': 'Trading Days', 'value': f"{n_dates:,}", 'icon': '📅'},
-        {'label': 'Total Observations', 'value': f"{n_rows:,}", 'icon': '🔢'},
-        {'label': 'Missing Data Points', 'value': missing_prices, 'icon': '⚠️', 'negative': missing_prices > 0},
-        {'label': 'Data Freshness', 'value': _fmt_age(data_age), 'icon': '⏱️'},
-    ], columns=5), unsafe_allow_html=True)
+
+    st.markdown(
+        metric_grid(
+            [
+                {"label": "Assets in Universe", "value": n_tickers},
+                {"label": "Trading Days", "value": f"{n_dates:,}"},
+                {"label": "Total Observations", "value": f"{n_rows:,}"},
+                {
+                    "label": "Missing Data Points",
+                    "value": missing_prices,
+                    "negative": missing_prices > 0,
+                },
+                {"label": "Data Freshness", "value": _fmt_age(data_age)},
+            ],
+            columns=5,
+        ),
+        unsafe_allow_html=True,
+    )
 
     # Universe snapshot
     uni = df_prices.group_by("ticker").agg(pl.len().alias("n_obs")).sort("n_obs", descending=True)
     st.write("Universe snapshot (observations per ticker)")
     fig_uni = px.bar(
-        uni.to_pandas(), 
-        x="n_obs", 
-        y="ticker", 
+        uni.to_pandas(),
+        x="n_obs",
+        y="ticker",
         orientation="h",
         title="Number of Observations per Ticker",
-        labels={"n_obs": "Observations", "ticker": "Ticker"}
+        labels={"n_obs": "Observations", "ticker": "Ticker"},
     )
+    fig_uni = apply_gammaedge_theme(fig_uni)
     show_plot(fig_uni, config={"scrollZoom": True, "displayModeBar": True})
 
     # Missing report (returns, wide)
@@ -908,11 +924,11 @@ if st.session_state.get("data_ready"):
     st.dataframe(mr.sort("missing_pct", descending=True).to_pandas(), width="stretch")
 
     # Gaps & Calendar
-    st.subheader("🧩 Gaps & Calendar")
+    st.subheader("Gaps & Calendar")
     st.dataframe(gaps.to_pandas(), width="stretch")
 
     # Outliers (pre-winsor)
-    st.subheader("⚠️ Outliers (pre-winsor)")
+    st.subheader("Outliers (pre-winsor)")
     col_prev, col_k = st.columns([3, 1])
     with col_k:
         st.caption(f"Top-{int(topk_out)} por ticker")
@@ -924,26 +940,30 @@ if st.session_state.get("data_ready"):
 
     # Summary stats (per asset)
     if st.checkbox("Show summary stats", value=True, key="show_stats"):
-        st.markdown(section_header(
-            "Summary Statistics",
-            "Risk-return metrics computed from historical data",
-            "📊"
-        ), unsafe_allow_html=True)
+        st.markdown(
+            section_header(
+                "Summary Statistics",
+                "Risk-return metrics computed from historical data",
+            ),
+            unsafe_allow_html=True,
+        )
         st.dataframe(
             stats.sort("sharpe", nulls_last=True, descending=True).to_pandas(),
             width="stretch",
         )
 
     # Metadata
-    st.markdown(section_header(
-        "Metadata",
-        "Data pipeline execution details",
-        "🔖"
-    ), unsafe_allow_html=True)
+    st.markdown(
+        section_header(
+            "Metadata",
+            "Data pipeline execution details",
+        ),
+        unsafe_allow_html=True,
+    )
     st.dataframe(eff.to_pandas(), width="stretch")
 
     # Export
-    st.subheader("📤 Export")
+    st.subheader("Export")
     colP, colR, colJ = st.columns(3)
     with colP:
         buf_p = io.BytesIO()
@@ -977,7 +997,7 @@ if st.session_state.get("data_ready"):
         )
 
     # Excel Export with Quant Metrics
-    st.subheader("📊 Quant Metrics Export (Excel)")
+    st.subheader("Quant Metrics Export (Excel)")
     st.caption(
         "Export log-returns, relative volume, and intraday volatility to Excel. "
         "Data is dividend-adjusted (availability depends on ticker history)."
@@ -1035,20 +1055,23 @@ if st.session_state.get("data_ready"):
                 "Volatility Estimator",
                 ["parkinson", "garman_klass"],
                 key="quant_vol_method",
-                help="Parkinson: Uses High/Low. Garman-Klass: Uses OHLC."
+                help="Parkinson: Uses High/Low. Garman-Klass: Uses OHLC.",
             )
-            
-            rf_annual = st.number_input(
-                "Risk-Free Rate (Annual %)",
-                min_value=0.0,
-                max_value=10.0,
-                value=4.2,
-                step=0.1,
-                format="%.1f",
-                key="quant_rf_annual",
-                help="Annual risk-free rate for Sharpe, Sortino, and Treynor ratios. Default: 2% (US 10Y Treasury ~2024)"
-            ) / 100.0  # Convert percentage to decimal
-        
+
+            rf_annual = (
+                st.number_input(
+                    "Risk-Free Rate (Annual %)",
+                    min_value=0.0,
+                    max_value=10.0,
+                    value=4.2,
+                    step=0.1,
+                    format="%.1f",
+                    key="quant_rf_annual",
+                    help="Annual risk-free rate for Sharpe, Sortino, and Treynor ratios. Default: 2% (US 10Y Treasury ~2024)",
+                )
+                / 100.0
+            )  # Convert percentage to decimal
+
         # Benchmark selector
         st.markdown("**Benchmark Selection**")
         col_bench, col_custom = st.columns([2, 2])
@@ -1056,18 +1079,18 @@ if st.session_state.get("data_ready"):
             benchmark_preset = st.selectbox(
                 "Benchmark",
                 options=[
-                    "^GSPC (S&P 500)", 
-                    "^NDX (Nasdaq 100)", 
-                    "^RUT (Russell 2000)", 
-                    "^TNX (US 10Y Treasury Yield)", 
-                    "^XAU (Gold/Silver Index)", 
-                    "Custom"
+                    "^GSPC (S&P 500)",
+                    "^NDX (Nasdaq 100)",
+                    "^RUT (Russell 2000)",
+                    "^TNX (US 10Y Treasury Yield)",
+                    "^XAU (Gold/Silver Index)",
+                    "Custom",
                 ],
                 index=0,
                 key="benchmark_preset",
                 help="Benchmarks to use Indices/Yields for maximum historical data availability.",
             )
-        
+
         with col_custom:
             if "Custom" in benchmark_preset:
                 benchmark_ticker = st.text_input(
@@ -1096,7 +1119,7 @@ if st.session_state.get("data_ready"):
                     quant_tickers = [
                         t.strip().upper() for t in quant_tickers_input.split(",") if t.strip()
                     ]
-                    
+
                     if not quant_tickers:
                         st.warning("Please enter at least one ticker.")
                     else:
@@ -1108,53 +1131,71 @@ if st.session_state.get("data_ready"):
                             benchmark=benchmark_ticker,  # Use selected benchmark
                             rf_annual=0.02,
                         )
-                        
+
                         # Display summary table
-                        st.subheader("📊 Metrics Summary")
+                        st.subheader("Metrics Summary")
                         summary_df = result["summary_df"]
-                        
+
                         # Format for display (convert to pandas for better formatting)
                         summary_pd = summary_df.to_pandas()
-                        
+
                         # Format numeric columns to 4 decimal places
                         numeric_cols = [
-                            "total_return", "volatility", "sharpe_ratio", "sortino_ratio",
-                            "treynor_ratio", "information_ratio", "beta", "alpha", 
-                            "max_drawdown", "ulcer_index", "cagr", "calmar", 
-                            "up_capture", "down_capture", "tail_ratio", "win_rate", 
-                            "profit_factor", "best_month", "worst_month",
-                            "skewness", "kurtosis"
+                            "total_return",
+                            "volatility",
+                            "sharpe_ratio",
+                            "sortino_ratio",
+                            "treynor_ratio",
+                            "information_ratio",
+                            "beta",
+                            "alpha",
+                            "max_drawdown",
+                            "ulcer_index",
+                            "cagr",
+                            "calmar",
+                            "up_capture",
+                            "down_capture",
+                            "tail_ratio",
+                            "win_rate",
+                            "profit_factor",
+                            "best_month",
+                            "worst_month",
+                            "skewness",
+                            "kurtosis",
                         ]
                         for col in numeric_cols:
                             if col in summary_pd.columns:
                                 summary_pd[col] = summary_pd[col].apply(
                                     lambda x: f"{x:.4f}" if pd.notna(x) else "N/A"
                                 )
-                        
-                        st.dataframe(summary_pd, width='stretch')
-                        
+
+                        st.dataframe(summary_pd, width="stretch")
+
                         # Display data quality table
-                        st.subheader("🔍 Data Quality Report")
+                        st.subheader("Data Quality Report")
                         data_quality_df = result["data_quality_df"]
-                        st.dataframe(data_quality_df.to_pandas(), width='stretch')
-                        
+                        st.dataframe(data_quality_df.to_pandas(), width="stretch")
+
                         # Display warnings if any
                         if result["warnings"]:
-                            st.warning("⚠️ **Warnings:**")
+                            st.warning("**Warnings:**")
                             for warning in result["warnings"]:
                                 st.caption(f"• {warning}")
                         else:
-                            st.success("✅ No data quality issues detected")
-                        
+                            st.success("No data quality issues detected")
+
                         # Visual Analysis Section
-                        st.markdown(section_header(
-                            "Visual Analysis",
-                            "Interactive charts for risk-return exploration",
-                            "📈"
-                        ), unsafe_allow_html=True)
-                        
+                        st.markdown(
+                            section_header(
+                                "Visual Analysis",
+                                "Interactive charts for risk-return exploration",
+                            ),
+                            unsafe_allow_html=True,
+                        )
+
                         # Apply tab styling
-                        st.markdown(f"""
+                        st.markdown(
+                            f"""
                         <style>
                         .stTabs [data-baseweb="tab-list"] {{
                             gap: 8px;
@@ -1162,7 +1203,7 @@ if st.session_state.get("data_ready"):
                             border-radius: 12px;
                             padding: 4px;
                         }}
-                        
+
                         .stTabs [data-baseweb="tab"] {{
                             padding: 12px 24px;
                             border-radius: 8px;
@@ -1170,103 +1211,95 @@ if st.session_state.get("data_ready"):
                             transition: background-color 0.2s ease;
                             color: {COLORS['text_secondary']};
                         }}
-                        
+
                         .stTabs [aria-selected="true"] {{
                             background-color: {COLORS['accent_primary']} !important;
                             color: {COLORS['text_primary']} !important;
                         }}
                         </style>
-                        """, unsafe_allow_html=True)
-                        
-                        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs([
-                            "📈 Equity Curves",
-                            "📉 Drawdown",
-                            "📊 Rolling Vol",
-                            "📈 Rolling Sharpe",
-                            "📊 Returns Dist",
-                            "📊 Monthly Returns",
-                            "🔥 Correlation"
-                        ])
-                        
+                        """,
+                            unsafe_allow_html=True,
+                        )
+
+                        tab1, tab2, tab3, tab4, tab5, tab6, tab7 = st.tabs(
+                            [
+                                "Equity Curves",
+                                "Drawdown",
+                                "Rolling Vol",
+                                "Rolling Sharpe",
+                                "Returns Dist",
+                                "Monthly Returns",
+                                "Correlation",
+                            ]
+                        )
+
                         with tab1:
                             try:
                                 fig = generate_equity_curve_normalized(
-                                    result["df_prices"],
-                                    quant_tickers,
-                                    benchmark=benchmark_ticker
+                                    result["df_prices"], quant_tickers, benchmark=benchmark_ticker
                                 )
                                 show_plot(fig, key="quant_equity")
                             except Exception as e:
                                 st.error(f"Error generating equity curve: {e}")
-                        
+
                         with tab2:
                             try:
-                                fig = generate_drawdown_chart(
-                                    result["df_prices"],
-                                    quant_tickers
-                                )
+                                fig = generate_drawdown_chart(result["df_prices"], quant_tickers)
                                 show_plot(fig, key="quant_drawdown")
                             except Exception as e:
                                 st.error(f"Error generating drawdown chart: {e}")
-                        
+
                         with tab3:
                             try:
                                 fig = generate_rolling_volatility(
-                                    result["df_returns"],
-                                    quant_tickers,
-                                    window=30
+                                    result["df_returns"], quant_tickers, window=30
                                 )
                                 show_plot(fig, key="quant_rolling_vol")
                             except Exception as e:
                                 st.error(f"Error generating rolling volatility: {e}")
-                        
+
                         with tab4:
                             try:
                                 fig = generate_rolling_sharpe(
-                                    result["df_returns"],
-                                    quant_tickers,
-                                    window=252,
-                                    rf_annual=0.02
+                                    result["df_returns"], quant_tickers, window=252, rf_annual=0.02
                                 )
                                 show_plot(fig, key="quant_rolling_sharpe")
                             except Exception as e:
                                 st.error(f"Error generating rolling Sharpe: {e}")
-                        
+
                         with tab5:
                             try:
                                 fig = generate_returns_distribution(
-                                    result["df_returns"],
-                                    quant_tickers
+                                    result["df_returns"], quant_tickers
                                 )
                                 show_plot(fig, key="quant_returns_dist")
                             except Exception as e:
                                 st.error(f"Error generating returns distribution: {e}")
-                        
+
                         with tab6:
                             try:
                                 fig = generate_monthly_returns_bar(
-                                    result["df_returns"],
-                                    quant_tickers
+                                    result["df_returns"], quant_tickers
                                 )
                                 show_plot(fig, key="quant_monthly_returns")
                             except Exception as e:
                                 st.error(f"Error generating monthly returns: {e}")
-                        
+
                         with tab7:
                             try:
                                 fig = generate_correlation_heatmap_preview(
-                                    result["df_returns"],
-                                    quant_tickers
+                                    result["df_returns"], quant_tickers
                                 )
                                 show_plot(fig, key="quant_corr_heatmap")
                             except Exception as e:
                                 st.error(f"Error generating correlation heatmap: {e}")
-                            
+
                 except ValueError as e:
                     st.error(f"Error: {e}")
                 except Exception as e:
                     st.error(f"Unexpected error: {e}")
                     import traceback
+
                     st.code(traceback.format_exc())
 
     with col_download:
@@ -1292,17 +1325,18 @@ if st.session_state.get("data_ready"):
                             vol_method=vol_method,
                         )
                         st.session_state["quant_excel_bytes"] = excel_bytes
-                        st.success("✅ Excel file generated successfully!")
+                        st.success("Excel file generated successfully!")
                 except Exception as e:
                     st.error(f"Error generating Excel: {e}")
                     # Show full traceback for debugging
                     import traceback
+
                     st.code(traceback.format_exc(), language="python")
 
     # Show download button if Excel was generated
     if "quant_excel_bytes" in st.session_state:
         st.download_button(
-            "📥 Download Quant Metrics (Excel)",
+            "Download Quant Metrics (Excel)",
             data=st.session_state["quant_excel_bytes"],
             file_name="quant_metrics.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
