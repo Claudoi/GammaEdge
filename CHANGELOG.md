@@ -87,6 +87,38 @@
   - Added `\begin{remark}` blocks on numerical stability, data completeness
     in the backtest engine, and the REST API as implemented (not future work).
 
+### Future Work (tracked, not blocking)
+Items identified during the v2.2.0 audit that are deferred to a later sprint:
+
+- **Module split — `portfolio/viz/plot_utils.py`** (2492 lines, 60 functions)
+  is planned to be split into four focused modules: `correlation_plots`,
+  `portfolio_plots`, `scenario_plots`, `backtest_plots`.
+- **Module split — `portfolio/trading/`** (3000+ LOC, v1 and v2 allocation
+  variants plus ML predictors) is planned to be reorganized into
+  `portfolio/strategies/` and `portfolio/ml/`; legacy v1 will be archived.
+- **Accessibility**: custom HTML components (`metric_grid`, `data_hero_card`)
+  lack ARIA labels and Plotly charts are not exposed to screen readers.
+  Keyboard navigation hints are planned.
+- **Responsive design**: 4-column layouts in pages `01_Data` and `02_Risk`
+  do not degrade well below ~800 px. A media query in
+  `app/viz/styles.get_global_styles()` is planned.
+- **REST API**: the `/api/v1/backtest` endpoint is still a stub returning
+  `{"backtest": True}`; async handlers, rate limiting, and cache headers
+  are planned for v2.3.0.
+- **Cache layer**: the file-based Parquet cache has a small race window
+  (lock acquired after the existence check) and lacks TTL/LRU eviction
+  and on-load schema validation. A migration path to Redis is documented
+  as a known limitation.
+- **Persistence**: there is no relational database; multi-user access,
+  audit trails, and resumable jobs are out of scope for the single-user
+  TFG release.
+- **Rolling-window perf**: `portfolio/viz/quant_charts.py` (rolling Sharpe,
+  lines 299-320) still uses an explicit Python loop. A `pandas.rolling()`
+  rewrite is a low-impact micro-optimization.
+- **Streamlit caching**: `app/pages/05_Attribution.py` does not wrap the
+  Brinson decomposition in `@st.cache_data`. Only relevant if decomposition
+  cost exceeds ~500 ms in practice.
+
 ## 2.0.0 — stable
 - CI verde: ruff, black, mypy en portfolio y api, pytest con cobertura 75.22%
 - Cobertura mínima fijada en 65%

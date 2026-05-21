@@ -294,6 +294,30 @@ and remote pip-based hosts stay in sync.
 
 **Testing**: 65%+ coverage on core portfolio modules, property-based testing with Hypothesis
 
+### Known Limitations
+
+The following items were identified in the v2.2.0 audit and are deferred to
+later sprints. They are surfaced here for transparency; see `CHANGELOG.md`
+("Future Work") for the full list.
+
+- **Large modules pending split**: `portfolio/viz/plot_utils.py` (2492 lines)
+  and `portfolio/trading/` (3000+ LOC, v1 + v2 + ML mixed) are planned to be
+  reorganized into smaller, single-responsibility modules.
+- **Accessibility**: custom Streamlit HTML components have no ARIA labels and
+  Plotly charts are not exposed to assistive technologies. Improving screen-
+  reader support and keyboard navigation is planned UX work.
+- **Responsive layout**: pages 01/02 use 4-column grids that compress poorly
+  below 800 px. Streamlit is desktop-first; a CSS media query is planned.
+- **REST API surface**: `/api/v1/backtest` is currently a stub; async
+  handling, rate limiting, and cache headers are tracked for v2.3.0.
+- **Cache layer**: the Parquet cache has a small race window in the
+  existence-check / lock sequence and no TTL/LRU eviction. Migration to
+  Redis is documented as a known limitation, not a blocker for single-user
+  use.
+- **Persistence**: GammaEdge runs without a database. Multi-user access,
+  audit trails, and resumable long-running jobs are out of scope for the
+  TFG release.
+
 ---
 
 ## References
