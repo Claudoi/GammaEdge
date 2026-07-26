@@ -12,7 +12,7 @@ Portfolio optimization and backtesting framework implementing modern quantitativ
 
 The implementation prioritizes numerical stability and addresses common issues with sample covariance matrices in limited time series. We use a multi-step fallback approach for ill-conditioned matrices and apply spectral filtering to separate signal from noise.
 
-GammaEdge is developed as a final-degree project (TFG) for educational and research use at Universidad de Las Palmas de Gran Canaria.
+GammaEdge is developed as a final-degree project (TFG) for educational and research use at Universidad de La Laguna.
 
 ---
 
